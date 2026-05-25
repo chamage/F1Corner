@@ -191,7 +191,7 @@ async function fetchRaceData(session) {
       let status = 'FINISHED';
       if (lapsCompleted <= 1) { // User rule: laps <= 1 is a DNS
         status = 'DNS';
-      } else if (lapsCompleted < maxLaps - 4) {
+      } else if (lapsCompleted <= maxLaps - 5) {
         status = 'DNF';
       }
 
