@@ -187,11 +187,11 @@ async function fetchRaceData(session) {
     const updatedResults = results.map(r => {
       const dn = r.driver_number;
       const lapsCompleted = lapsByDriver.get(dn) || 0;
-      
+
       let status = 'FINISHED';
       if (lapsCompleted <= 1) { // User rule: laps <= 1 is a DNS
         status = 'DNS';
-      } else if (lapsCompleted < maxLaps - 2) {
+      } else if (lapsCompleted < maxLaps - 4) {
         status = 'DNF';
       }
 
@@ -298,15 +298,15 @@ export function computeStandingsFromSeason(seasonData) {
         });
       }
       const stats = driverStats.get(driver_number);
-      
+
       // Points only if not disqualified (DSQ)
       let pts = status === 'DSQ' ? 0 : getPointsForPosition(position, isSprint);
-      
+
       // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
       if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
         pts += 1;
       }
-      
+
       stats.points += pts;
 
       if (!isSprint) {
@@ -315,7 +315,7 @@ export function computeStandingsFromSeason(seasonData) {
         if (status === 'DNF') stats.dnfs++;
         if (status === 'DNS') stats.dnss++;
         if (status === 'DSQ') stats.dsqs++;
-        
+
         if (status === 'FINISHED' || status === 'DNF') {
           stats.raceResults.push(position);
         }
@@ -333,7 +333,7 @@ export function computeStandingsFromSeason(seasonData) {
     for (const driverNum of activeDrivers) {
       if (!raceDrivers.has(driverNum)) {
         const firstDate = driverFirstRaceDate.get(driverNum);
-        
+
         if (!driverStats.has(driverNum)) {
           driverStats.set(driverNum, {
             points: 0,
@@ -347,7 +347,7 @@ export function computeStandingsFromSeason(seasonData) {
           });
         }
         const stats = driverStats.get(driverNum);
-        
+
         let status = 'ABSENT';
         if (firstDate && raceDate >= firstDate) {
           status = 'DNS';
@@ -377,7 +377,7 @@ export function computeStandingsFromSeason(seasonData) {
         team_colour: '666666',
         headshot_url: '',
       };
-      
+
       return {
         driver_number: driverNum,
         ...info,
@@ -386,18 +386,18 @@ export function computeStandingsFromSeason(seasonData) {
     })
     .sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points;
-      
+
       // Official FIA F1 tiebreaker rule: compare counts of finishing positions sequentially from P1 to P20
       const countsA = new Array(21).fill(0);
       const countsB = new Array(21).fill(0);
-      
+
       (a.raceResults || []).forEach(pos => {
         if (pos >= 1 && pos <= 20) countsA[pos]++;
       });
       (b.raceResults || []).forEach(pos => {
         if (pos >= 1 && pos <= 20) countsB[pos]++;
       });
-      
+
       for (let pos = 1; pos <= 20; pos++) {
         if (countsB[pos] !== countsA[pos]) {
           return countsB[pos] - countsA[pos]; // Driver with more/better finishes ranks higher
