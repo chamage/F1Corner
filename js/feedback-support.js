@@ -58,21 +58,26 @@ export function showSupportModal() {
     <button class="driver-modal-close" id="fbm-close" aria-label="Close">✕</button>
     <div style="padding: var(--space-2xl) var(--space-lg); text-align: center; font-family:'Outfit', sans-serif; position: relative; z-index: 5;">
       <div class="success-checkmark-circle" style="background: rgba(225, 6, 0, 0.08); border-color: var(--f1-red); color: var(--f1-red); margin: 0 auto 20px auto; box-shadow: 0 0 25px rgba(225, 6, 0, 0.15);">
-        <i class="fa-solid fa-heart"></i>
+        <i class="fa-solid fa-mug-hot"></i>
       </div>
       <h2 style="font-weight: 800; font-size: 1.6rem; color: var(--text-primary); margin-bottom: 12px;">Support F1 Corner</h2>
-      <p style="font-size: 0.9rem; color: var(--text-secondary); max-width: 420px; margin: 0 auto 16px auto; line-height: 1.6;">
-        Support channels are not set up yet! 🛠️
+      <p style="font-size: 0.88rem; color: var(--text-secondary); max-width: 420px; margin: 0 auto 16px auto; line-height: 1.6;">
+        F1 Corner is completely free and always will be. If you're enjoying it and feel like buying me a coffee, it genuinely means the world.
       </p>
-      <p style="font-size: 0.82rem; color: var(--text-muted); max-width: 380px; margin: 0 auto 24px auto; line-height: 1.5;">
-        Thank you so much for your interest! Knowing you wanted to support F1 Corner means the absolute world to me. Stay tuned!
+      <p style="font-size: 0.78rem; color: var(--text-muted); max-width: 380px; margin: 0 auto 24px auto; line-height: 1.5;">
+        No pressure at all — using the app and sharing it with fellow fans is more than enough. 🏁
       </p>
-      <button class="feedback-submit-btn" id="fbm-support-ok" style="margin-top: 10px;">Close</button>
+      <a href="https://ko-fi.com/professorstankleton" target="_blank" rel="noopener noreferrer" id="fbm-kofi-btn" class="feedback-submit-btn" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; margin-top: 6px;">
+        <i class="fa-solid fa-mug-hot"></i> Buy Me a Coffee on Ko-fi
+      </a>
     </div>
   `;
 
   document.getElementById('fbm-close').addEventListener('click', closeModal);
-  document.getElementById('fbm-support-ok').addEventListener('click', closeModal);
+  document.getElementById('fbm-kofi-btn').addEventListener('click', () => {
+    showSupportToast('Ko-fi');
+    setTimeout(() => closeModal(), 600);
+  });
 
   document.body.style.overflow = 'hidden';
   overlay.classList.add('open');
