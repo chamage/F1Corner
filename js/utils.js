@@ -122,9 +122,14 @@ export function isThisWeek(startStr, endStr) {
   const now = new Date();
   const start = new Date(startStr);
   const end = new Date(endStr);
-  // Give a 1-day buffer before
+
+  // If the race weekend has already concluded, it is no longer "this week's" active race
+  if (now > end) {
+    return false;
+  }
+
+  // Give a 1-day buffer before the start (build-up starts on Thursday/Friday)
   start.setDate(start.getDate() - 1);
-  end.setDate(end.getDate() + 1);
   return now >= start && now <= end;
 }
 
@@ -241,7 +246,8 @@ const OFFICIAL_F1_PHOTOS = {
   HAD: 'hadjar01',
   ZHO: 'guanyu01',
   MAG: 'magnus01',
-  SAR: 'sargea01'
+  SAR: 'sargea01',
+  LIN: 'lindba01'
 };
 
 export function getDriverHeadshot(acronym, year = 2025) {

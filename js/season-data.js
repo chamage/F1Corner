@@ -5,11 +5,11 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getRaceSessions, getSessionDrivers, getLaps, getFinishingOrder } from './api.js';
-import { isPast, getPointsForPosition, getDriverHeadshot } from './utils.js';
+import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints } from './api.js';
+import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 12; // v12: revert to native OpenF1 driver headshot URLs
+const LS_VERSION = 16; // v16: use lightweight stints telemetry to calculate exact completed laps (resolves Lando Norris false DNF bug while keeping 300x loading speed)
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -150,37 +150,29 @@ export async function getSeasonData(year) {
  */
 async function fetchRaceData(session) {
   try {
-    const [laps, sessionDrivers, results] = await Promise.all([
-      getLaps({ session_key: session.session_key }),
+    const [sessionDrivers, results, stints] = await Promise.all([
       getSessionDrivers(session.session_key),
       getFinishingOrder(session.session_key),
+      getStints({ session_key: session.session_key }),
     ]);
 
-    if (!laps.length || !sessionDrivers.length || !results.length) {
-      throw new Error(`Empty laps (${laps.length}), drivers (${sessionDrivers.length}), or results (${results.length}) fetched`);
+    if (!sessionDrivers.length || !results.length) {
+      throw new Error(`Empty drivers (${sessionDrivers.length}) or results (${results.length}) fetched`);
     }
 
-    // Find the fastest lap of the session
-    let fastestLapDriver = null;
-    let fastestLapTime = Infinity;
-    for (const lap of laps) {
-      if (lap.lap_duration && lap.lap_duration < fastestLapTime) {
-        fastestLapTime = lap.lap_duration;
-        fastestLapDriver = lap.driver_number;
-      }
-    }
-
-    // Calculate laps completed by each driver
+    // Calculate completed laps per driver from tyre stints (extremely lightweight!)
     const lapsByDriver = new Map();
-    for (const lap of laps) {
-      const dn = lap.driver_number;
-      if (!lapsByDriver.has(dn)) {
-        lapsByDriver.set(dn, 0);
+    if (stints && stints.length > 0) {
+      for (const s of stints) {
+        const dn = s.driver_number;
+        const lapEnd = s.lap_end || 0;
+        lapsByDriver.set(dn, Math.max(lapsByDriver.get(dn) || 0, lapEnd));
       }
-      lapsByDriver.set(dn, Math.max(lapsByDriver.get(dn), lap.lap_number || 0));
     }
 
-    const maxLaps = Math.max(...Array.from(lapsByDriver.values()), 1);
+    const maxLaps = stints && stints.length > 0 
+      ? Math.max(...stints.map(s => s.lap_end || 0).filter(n => !isNaN(n)), 1) 
+      : 1;
 
     // Map existing sorted results
     const resultsDrivers = new Set(results.map(r => r.driver_number));
@@ -189,7 +181,7 @@ async function fetchRaceData(session) {
       const lapsCompleted = lapsByDriver.get(dn) || 0;
 
       let status = 'FINISHED';
-      if (lapsCompleted <= 1) { // User rule: laps <= 1 is a DNS
+      if (lapsCompleted <= 1) { // Laps <= 1 is a DNS
         status = 'DNS';
       } else if (lapsCompleted <= maxLaps - 5) {
         status = 'DNF';
@@ -208,11 +200,9 @@ async function fetchRaceData(session) {
       const dn = d.driver_number;
       if (!resultsDrivers.has(dn)) {
         const lapsCompleted = lapsByDriver.get(dn) || 0;
-        let status = 'FINISHED';
-        if (lapsCompleted <= 1) {
-          status = 'DNS';
-        } else {
-          status = 'DSQ'; // Has laps but missing from position results = DSQ
+        let status = 'DNS';
+        if (lapsCompleted > 1) {
+          status = 'DSQ'; // Has stints/laps but missing from final position results = DSQ
         }
 
         updatedResults.push({
@@ -230,8 +220,8 @@ async function fetchRaceData(session) {
       circuit_short_name: session.circuit_short_name,
       date_end: session.date_end,
       results: updatedResults,
-      fastest_lap_driver: fastestLapDriver,
-      fastest_lap_time: fastestLapTime !== Infinity ? fastestLapTime : null,
+      fastest_lap_driver: null,
+      fastest_lap_time: null,
       drivers: sessionDrivers,
     };
   } catch (e) {
@@ -382,6 +372,7 @@ export function computeStandingsFromSeason(seasonData) {
         driver_number: driverNum,
         ...info,
         ...stats,
+        headshot_url: info.headshot_url
       };
     })
     .sort((a, b) => {

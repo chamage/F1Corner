@@ -5,7 +5,7 @@
 
 import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
-import { formatLapTime, getTeamColor, getCompoundClass, buildDriverMap, getPointsForPosition, getDriverHeadshot, $ } from './utils.js';
+import { formatLapTime, getTeamColor, getCompoundClass, buildDriverMap, getPointsForPosition, $ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
@@ -134,6 +134,34 @@ function renderResults(container) {
     return;
   }
 
+  // 1. Calculate and correct driver lap counts using max lap number and backwards propagation
+  const computedLapCounts = new Map();
+  let maxSessionLap = 0;
+  if (laps && laps.length > 0) {
+    for (const { driver_number, status } of order) {
+      if (status === 'DNS') {
+        computedLapCounts.set(driver_number, 0);
+      } else {
+        const driverLaps = laps.filter(l => l.driver_number === driver_number);
+        const maxLap = driverLaps.length > 0 ? Math.max(...driverLaps.map(l => l.lap_number || 0).filter(n => !isNaN(n))) : 0;
+        computedLapCounts.set(driver_number, maxLap);
+        if (maxLap > maxSessionLap) {
+          maxSessionLap = maxLap;
+        }
+      }
+    }
+
+    // Backwards propagation to correct missing telemetry records for lead lap finishers
+    const validOrder = order.filter(o => o.status !== 'DNS' && o.status !== 'DSQ');
+    for (let i = validOrder.length - 2; i >= 0; i--) {
+      const currentDriver = validOrder[i].driver_number;
+      const nextDriver = validOrder[i+1].driver_number;
+      const currentLap = computedLapCounts.get(currentDriver) || 0;
+      const nextLap = computedLapCounts.get(nextDriver) || 0;
+      computedLapCounts.set(currentDriver, Math.max(currentLap, nextLap));
+    }
+  }
+
   // Find fastest lap
   let fastestLap = Infinity;
   let fastestLapDriver = null;
@@ -147,7 +175,7 @@ function renderResults(container) {
   }
 
   // Key stats
-  const totalLaps = laps ? Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 0) : '…';
+  const totalLaps = laps ? maxSessionLap : '…';
   const leaderChanges = overtakes ? new Set(
     overtakes.filter(o => o.position === 1).map(o => o.overtaking_driver_number)
   ).size : '…';
@@ -217,7 +245,7 @@ function renderResults(container) {
     const driverLaps = laps ? laps.filter(l => l.driver_number === driver_number && l.lap_duration && !l.is_pit_out_lap && l.lap_number > 2) : [];
     const bestLap = driverLaps.length > 0 ? Math.min(...driverLaps.map(l => l.lap_duration)) : null;
     const isFastest = laps ? driver_number === fastestLapDriver : false;
-    const driverLapCount = laps ? laps.filter(l => l.driver_number === driver_number).length : '…';
+    const driverLapCount = laps ? (computedLapCounts.get(driver_number) ?? 0) : '…';
     const driverPits = pits ? pits.filter(p => p.driver_number === driver_number) : null;
     let pts = isDSQ ? 0 : getPointsForPosition(position);
     const awardFastestLap = raceDataCache.meetingInfo.year < 2025;
@@ -237,7 +265,7 @@ function renderResults(container) {
         statusText = '<span style="color:#ffd700;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Winner</span>';
       } else {
         const entry = latestIntervals.get(driver_number);
-        const maxLaps = laps ? Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 0) : 0;
+        const maxLaps = laps ? maxSessionLap : 0;
         const lapsDiff = maxLaps - driverLapCount;
 
         if (laps && lapsDiff > 0 && lapsDiff < 10) {
