@@ -24,6 +24,24 @@
 </head>
 <body>
 
+  <!-- API Live Loading Banner (fixed overlay) -->
+  <div id="api-loading-banner" class="api-loading-banner">
+    <div class="api-loading-inner">
+      <div class="api-loading-spinner">
+        <i class="fa-solid fa-satellite-dish"></i>
+      </div>
+      <div class="api-loading-text">
+        <strong>Streaming Live OpenF1 Data...</strong>
+        <span>F1 Corner is 100% free &amp; fetches real-time data. This may take a moment — thank you for your patience! 🏁</span>
+      </div>
+      <button class="api-loading-dismiss" onclick="this.parentElement.parentElement.classList.remove('show')" aria-label="Dismiss">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="api-loading-progress"><div class="api-loading-progress-bar"></div></div>
+  </div>
+
+
   <!-- ── Navigation ── -->
   <nav class="nav" id="main-nav">
     <div class="nav-inner">
@@ -233,7 +251,11 @@
       Data powered by <a href="https://openf1.org" target="_blank" rel="noopener">OpenF1 API</a><br>
       <small>Not affiliated with Formula 1, FIA, or any F1 teams. F1 and related marks are trademarks of Formula One Licensing B.V.</small>
     </p>
-    <div id="cache-status" style="margin-top:12px;font-size:0.7rem;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:8px;">
+    <div style="margin-top:16px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+      <button id="footer-feedback-btn" class="footer-action-btn"><i class="fa-solid fa-comments"></i> Send Feedback</button>
+      <button id="footer-support-btn" class="footer-action-btn"><i class="fa-solid fa-heart" style="color: var(--f1-red);"></i> Support Me</button>
+    </div>
+    <div id="cache-status" style="margin-top:16px;font-size:0.7rem;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:8px;">
       <span id="cache-info"></span>
       <button id="clear-cache-btn" style="background:var(--bg-glass);border:1px solid var(--border-subtle);color:var(--text-muted);padding:3px 10px;border-radius:100px;font-size:0.65rem;cursor:pointer;font-family:inherit;transition:all 150ms ease;">Clear Cache</button>
     </div>

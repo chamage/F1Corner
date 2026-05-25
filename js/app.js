@@ -10,6 +10,7 @@ import { initH2H } from './h2h.js';
 import { getCacheStats, clearCache } from './api.js';
 import { clearSeasonCache } from './season-data.js';
 import { setupRevealAnimations, $ } from './utils.js';
+import { initFeedbackSupport } from './feedback-support.js';
 
 // Available years (OpenF1 data from 2023+)
 const AVAILABLE_YEARS = [2026, 2025, 2024, 2023];
@@ -45,6 +46,9 @@ async function init() {
   // Setup navigation
   setupNav();
 
+  // Setup feedback & support event listeners
+  initFeedbackSupport();
+
   // Setup race select callback
   setRaceSelectHandler((sessionKey, meetingInfo) => {
     loadRaceDetail(sessionKey, meetingInfo);
@@ -68,6 +72,12 @@ async function init() {
 async function loadAll(year) {
   // Increment generation — any in-flight load for a previous year will bail out
   const gen = ++loadGeneration;
+
+  // Show loading banner
+  const loadingBanner = $('#api-loading-banner');
+  if (loadingBanner) {
+    loadingBanner.classList.add('show');
+  }
 
   // Reset race detail
   const raceDetail = $('#race-detail');
@@ -103,6 +113,11 @@ async function loadAll(year) {
 
   // Update cache stats in footer
   updateCacheStatus();
+
+  // Hide loading banner when loaded successfully
+  if (loadingBanner) {
+    loadingBanner.classList.remove('show');
+  }
 }
 
 function showLoadingStates() {
