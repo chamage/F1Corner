@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Team Profile Modal
+// PITCORNER — Team Profile Modal
 // Shows detailed constructor stats and driver contributions
 // Uses cached standings data — zero extra API calls
 // =============================================

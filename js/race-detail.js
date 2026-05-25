@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Race Deep-Dive Section
+// PITCORNER — Race Deep-Dive Section
 // Lazy-loads heavy charts and feeds to avoid API timeouts
 // =============================================
 

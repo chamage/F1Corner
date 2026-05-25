@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Driver Profile Modal
+// PITCORNER — Driver Profile Modal
 // Shows detailed stats when clicking a driver
 // Uses cached data only — zero extra API calls
 // =============================================

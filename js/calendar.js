@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Race Calendar
+// PITCORNER — Race Calendar
 // Uses compiled season data (shared)
 // =============================================
 

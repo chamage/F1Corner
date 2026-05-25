@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Feedback & Support System
+// PITCORNER — Feedback & Support System
 // Interactive modals for user feedback and developer tips
 // =============================================
 
@@ -60,9 +60,9 @@ export function showSupportModal() {
       <div class="success-checkmark-circle" style="background: rgba(225, 6, 0, 0.08); border-color: var(--f1-red); color: var(--f1-red); margin: 0 auto 20px auto; box-shadow: 0 0 25px rgba(225, 6, 0, 0.15);">
         <i class="fa-solid fa-mug-hot"></i>
       </div>
-      <h2 style="font-weight: 800; font-size: 1.6rem; color: var(--text-primary); margin-bottom: 12px;">Support F1 Corner</h2>
+      <h2 style="font-weight: 800; font-size: 1.6rem; color: var(--text-primary); margin-bottom: 12px;">Support PitCorner</h2>
       <p style="font-size: 0.88rem; color: var(--text-secondary); max-width: 420px; margin: 0 auto 16px auto; line-height: 1.6;">
-        F1 Corner is completely free and always will be. If you're enjoying it and feel like buying me a coffee, it genuinely means the world.
+        PitCorner is completely free and always will be. If you're enjoying it and feel like buying me a coffee, it genuinely means the world.
       </p>
       <p style="font-size: 0.78rem; color: var(--text-muted); max-width: 380px; margin: 0 auto 24px auto; line-height: 1.5;">
         No pressure at all — using the app and sharing it with fellow fans is more than enough. 🏁
@@ -218,7 +218,7 @@ export function showFeedbackModal() {
           </div>
           <h2 style="font-family:'Outfit', sans-serif; font-weight: 800; font-size: 1.5rem; color: var(--text-primary); margin-bottom: 8px;">Feedback Submitted!</h2>
           <p style="font-size: 0.85rem; color: var(--text-secondary); max-width: 340px; line-height: 1.5; margin: 0 auto;">
-            Thank you for helping us refine F1 Corner! We read every single bug report and feature request to build the ultimate dashboard.
+            Thank you for helping us refine PitCorner! We read every single bug report and feature request to build the ultimate dashboard.
           </p>
         </div>
       `;

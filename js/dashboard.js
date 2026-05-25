@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Hero Dashboard Section
+// PITCORNER — Hero Dashboard Section
 // Uses compiled season data (shared)
 // =============================================
 

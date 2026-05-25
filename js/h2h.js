@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Head-to-Head Comparison
+// PITCORNER — Head-to-Head Comparison
 // Uses compiled season data (shared)
 // =============================================
 

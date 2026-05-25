@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — API Abstraction Layer
+// PITCORNER — API Abstraction Layer
 // Handles all OpenF1 API requests with:
 //  - localStorage persistence (survives page reloads)
 //  - Smart TTLs (past data cached forever, current data refreshes)

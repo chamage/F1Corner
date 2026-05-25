@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Lightweight Canvas Charts
+// PITCORNER — Lightweight Canvas Charts
 // No dependencies — pure canvas rendering
 // =============================================
 

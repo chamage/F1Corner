@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Season Data Compiler
+// PITCORNER — Season Data Compiler
 // Fetches each race individually, compiles,
 // and caches compiled output per-race in localStorage.
 // Dynamic standings are built from individual race records.

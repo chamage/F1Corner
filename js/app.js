@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Main App Orchestrator
+// PITCORNER — Main App Orchestrator
 // =============================================
 
 import { initDashboard } from './dashboard.js';

@@ -1,5 +1,5 @@
 // =============================================
-// F1 CORNER — Championship Standings
+// PITCORNER — Championship Standings
 // Uses compiled season data (zero extra API calls)
 // =============================================
 
