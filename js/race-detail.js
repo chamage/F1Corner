@@ -5,7 +5,7 @@
 
 import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
-import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, isPast, $, $$ } from './utils.js';
+import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, isPast, buildDriverMap, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
