@@ -255,3 +255,48 @@ export function getDriverHeadshot(acronym, year = 2025) {
   if (!file) return null;
   return `https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/${year}Drivers/${file}.png`;
 }
+
+// ── Official F1 Nationalities & Universal Flags ──
+
+export const DRIVER_NATIONALITY = {
+  HAM: { country: 'United Kingdom', code: 'gb' },
+  VER: { country: 'Netherlands', code: 'nl' },
+  LEC: { country: 'Monaco', code: 'mc' },
+  NOR: { country: 'United Kingdom', code: 'gb' },
+  SAI: { country: 'Spain', code: 'es' },
+  PIA: { country: 'Australia', code: 'au' },
+  RUS: { country: 'United Kingdom', code: 'gb' },
+  PER: { country: 'Mexico', code: 'mx' },
+  ALO: { country: 'Spain', code: 'es' },
+  STR: { country: 'Canada', code: 'ca' },
+  GAS: { country: 'France', code: 'fr' },
+  OCO: { country: 'France', code: 'fr' },
+  ALB: { country: 'Thailand', code: 'th' },
+  TSU: { country: 'Japan', code: 'jp' },
+  LAW: { country: 'New Zealand', code: 'nz' },
+  BOT: { country: 'Finland', code: 'fi' },
+  ZHO: { country: 'China', code: 'cn' },
+  HUL: { country: 'Germany', code: 'de' },
+  MAG: { country: 'Denmark', code: 'dk' },
+  SAR: { country: 'United States', code: 'us' },
+  BEA: { country: 'United Kingdom', code: 'gb' },
+  COL: { country: 'Argentina', code: 'ar' },
+  HAD: { country: 'France', code: 'fr' },
+  BOR: { country: 'Brazil', code: 'br' },
+  ANT: { country: 'Italy', code: 'it' },
+  LIN: { country: 'United Kingdom', code: 'gb' },
+};
+
+/**
+ * Get miniature country flag image tag via flagcdn
+ */
+export function getDriverFlagImg(acronym, extraStyles = '') {
+  const norm = acronym ? acronym.toUpperCase() : '';
+  const info = DRIVER_NATIONALITY[norm];
+  if (!info || !info.code) {
+    return `<i class="fa-solid fa-flag-checkered" style="color: var(--text-muted); ${extraStyles}" title="${norm}"></i>`;
+  }
+  const defaultStyles = 'width: 20px; height: auto; border-radius: 2px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.25); display: inline-block;';
+  return `<img src="https://flagcdn.com/w40/${info.code}.png" alt="${info.country}" title="${info.country}" style="${defaultStyles} ${extraStyles}">`;
+}
+

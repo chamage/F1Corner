@@ -42,7 +42,7 @@ export async function initH2H(year) {
     if (h2hCompletedRaces.length === 0) {
       container.innerHTML = `
         <div class="no-data">
-          <div class="no-data-icon">🏁</div>
+          <div class="no-data-icon"><i class="fa-solid fa-flag-checkered fa-2x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
           <div class="no-data-text">No completed races yet for ${year}</div>
         </div>
       `;

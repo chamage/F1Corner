@@ -66,7 +66,7 @@ export async function initCalendar(year) {
         : '';
 
       const winnerHtml = winner
-        ? `<div class="race-card-winner"><span class="trophy">🏆</span><span class="winner-name">${winner.fullName}</span></div>`
+        ? `<div class="race-card-winner"><span class="trophy" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-trophy" style="color: #ffd700; margin-right: 4px;"></i></span><span class="winner-name">${winner.fullName}</span></div>`
         : '';
 
       card.innerHTML = `

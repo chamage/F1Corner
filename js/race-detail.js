@@ -5,7 +5,7 @@
 
 import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
-import { formatLapTime, getTeamColor, getCompoundClass, buildDriverMap, getPointsForPosition, $ } from './utils.js';
+import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, isPast, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
@@ -174,7 +174,7 @@ function renderResults(container) {
   const { order, driverMap, laps, overtakes, pits } = raceDataCache;
 
   if (order.length === 0) {
-    container.innerHTML = '<div class="no-data"><div class="no-data-icon">🏎️</div><div class="no-data-text">No results data available for this race</div></div>';
+    container.innerHTML = '<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-car-side fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No results data available for this race</div></div>';
     return;
   }
 
@@ -560,7 +560,7 @@ function renderStrategy(container) {
   const { stints, order, driverMap, laps } = raceDataCache;
 
   if (stints.length === 0) {
-    container.innerHTML = '<div class="no-data"><div class="no-data-icon">🛞</div><div class="no-data-text">No strategy data available</div></div>';
+    container.innerHTML = '<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-circle-notch fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No strategy data available</div></div>';
     return;
   }
 
@@ -608,7 +608,7 @@ function renderOvertakes(container) {
   const { overtakes, driverMap } = raceDataCache;
 
   if (overtakes.length === 0) {
-    container.innerHTML = '<div class="no-data"><div class="no-data-icon">🏎️</div><div class="no-data-text">No overtake data available</div></div>';
+    container.innerHTML = '<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-car-side fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No overtake data available</div></div>';
     return;
   }
 
@@ -686,11 +686,11 @@ async function loadAndRenderWeather(sessionKey, container) {
     const avgWind = validWind.length > 0 ? (validWind.reduce((a, b) => a + b, 0) / validWind.length).toFixed(1) : null;
 
     container.innerHTML = `
-      <div class="weather-item" title="Average Air Temperature">🌡️ Air: <span>${avgAir}°C</span></div>
-      <div class="weather-item" title="Average Track Temperature">🛣️ Track: <span>${avgTrack}°C</span></div>
-      ${avgHum ? `<div class="weather-item" title="Average Humidity">💧 Humid: <span>${avgHum}%</span></div>` : ''}
-      ${avgWind ? `<div class="weather-item" title="Average Wind Speed">💨 Wind: <span>${avgWind} m/s</span></div>` : ''}
-      <div class="weather-item">${hasRain ? '🌧️ <span>Wet</span>' : '☀️ <span>Dry</span>'}</div>
+      <div class="weather-item" title="Average Air Temperature"><i class="fa-solid fa-temperature-half" style="margin-right: 5px; color: var(--text-secondary);"></i>Air: <span>${avgAir}°C</span></div>
+      <div class="weather-item" title="Average Track Temperature"><i class="fa-solid fa-road" style="margin-right: 5px; color: var(--text-secondary);"></i>Track: <span>${avgTrack}°C</span></div>
+      ${avgHum ? `<div class="weather-item" title="Average Humidity"><i class="fa-solid fa-droplet" style="margin-right: 5px; color: #2b7bcd;"></i>Humid: <span>${avgHum}%</span></div>` : ''}
+      ${avgWind ? `<div class="weather-item" title="Average Wind Speed"><i class="fa-solid fa-wind" style="margin-right: 5px; color: var(--text-secondary);"></i>Wind: <span>${avgWind} m/s</span></div>` : ''}
+      <div class="weather-item">${hasRain ? '<i class="fa-solid fa-cloud-showers-heavy" style="margin-right: 5px; color: #2b7bcd;"></i><span>Wet</span>' : '<i class="fa-solid fa-sun" style="margin-right: 5px; color: #ffd000;"></i><span>Dry</span>'}</div>
     `;
     container.style.display = 'flex';
   } catch (err) {
@@ -719,7 +719,7 @@ function renderIncidents(container) {
   const { incidents } = raceDataCache;
 
   if (!incidents || incidents.length === 0) {
-    container.innerHTML = '<div class="no-data"><div class="no-data-icon">🏳️</div><div class="no-data-text">No race control incidents recorded for this session</div></div>';
+    container.innerHTML = '<div class="no-data"><div class="no-data-icon"><i class="fa-regular fa-flag fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No race control incidents recorded for this session</div></div>';
     return;
   }
 
@@ -736,23 +736,23 @@ function renderIncidents(container) {
     const msg = inc.message || '';
     const msgUpper = msg.toUpperCase();
     let catClass = 'incident-info';
-    let icon = 'ℹ️';
+    let icon = '<i class="fa-solid fa-circle-info" style="color: var(--text-muted);"></i>';
 
     if (inc.category === 'SafetyCar' || msgUpper.includes('SAFETY CAR') || msgUpper.includes('VSC') || msgUpper.includes('TRACK STATUS')) {
       catClass = 'incident-sc';
-      icon = '🚨';
+      icon = '<i class="fa-solid fa-triangle-exclamation" style="color: #ffd000;"></i>';
     } else if (inc.flag === 'RED' || msgUpper.includes('RED FLAG') || msgUpper.includes('SUSPENDED')) {
       catClass = 'incident-flag-red';
-      icon = '🔴';
+      icon = '<i class="fa-solid fa-flag" style="color: var(--f1-red);"></i>';
     } else if (inc.flag === 'YELLOW' || inc.flag === 'DOUBLE YELLOW' || msgUpper.includes('YELLOW FLAG')) {
       catClass = 'incident-flag-yellow';
-      icon = '🟡';
+      icon = '<i class="fa-solid fa-flag" style="color: #ffd000;"></i>';
     } else if (inc.flag === 'GREEN' || msgUpper.includes('GREEN FLAG') || msgUpper.includes('RESUMED') || msgUpper.includes('CLEAR')) {
       catClass = 'incident-flag-green';
-      icon = '🟢';
+      icon = '<i class="fa-solid fa-flag" style="color: #39b54a;"></i>';
     } else if (msgUpper.includes('INVESTIGAT') || msgUpper.includes('PENALTY') || msgUpper.includes('TIME PENALTY') || msgUpper.includes('STEWARDS')) {
       catClass = 'incident-stewards';
-      icon = '🔍';
+      icon = '<i class="fa-solid fa-magnifying-glass" style="color: #38bdf8;"></i>';
     }
 
     const lapText = inc.lap_number ? `Lap ${inc.lap_number}` : 'Pre-Race';
@@ -901,14 +901,14 @@ export async function showRaceDriverDetail(driverNumber) {
     if (typeof startPos === 'number' && typeof finishPos === 'number') {
       const diff = startPos - finishPos;
       if (diff > 0) {
-        gainLossText = `📈 Gained ${diff} position${diff > 1 ? 's' : ''} from starting grid`;
-        gainLossClass = 'style="color:var(--f1-green); font-weight:700;"';
+        gainLossText = `<i class="fa-solid fa-circle-up" style="color:var(--f1-green); margin-right:6px;"></i>Gained ${diff} position${diff > 1 ? 's' : ''} from starting grid`;
+        gainLossClass = 'style="color:var(--f1-green); font-weight:700; display:flex; align-items:center;"';
       } else if (diff < 0) {
-        gainLossText = `📉 Lost ${Math.abs(diff)} position${Math.abs(diff) > 1 ? 's' : ''} from starting grid`;
-        gainLossClass = 'style="color:var(--f1-red); font-weight:700;"';
+        gainLossText = `<i class="fa-solid fa-circle-down" style="color:var(--f1-red); margin-right:6px;"></i>Lost ${Math.abs(diff)} position${Math.abs(diff) > 1 ? 's' : ''} from starting grid`;
+        gainLossClass = 'style="color:var(--f1-red); font-weight:700; display:flex; align-items:center;"';
       } else {
-        gainLossText = `➡️ Maintained grid position`;
-        gainLossClass = 'style="color:var(--text-muted); font-weight:700;"';
+        gainLossText = `<i class="fa-solid fa-circle-right" style="color:var(--text-muted); margin-right:6px;"></i>Maintained grid position`;
+        gainLossClass = 'style="color:var(--text-muted); font-weight:700; display:flex; align-items:center;"';
       }
     }
 
@@ -990,7 +990,7 @@ export async function showRaceDriverDetail(driverNumber) {
                   <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Lap ${p.lap_number}</span>
                 </div>
                 <div style="text-align:right; font-family:'JetBrains Mono', monospace; font-size:0.85rem; font-weight:700; color:var(--text-primary);">
-                  ⏱️ Duration: ${dur}
+                  <i class="fa-solid fa-stopwatch" style="color: var(--text-muted); margin-right: 4px;"></i> Duration: ${dur}
                 </div>
               </div>
             `;
@@ -1025,11 +1025,11 @@ export async function showRaceDriverDetail(driverNumber) {
             const msg = inc.message || '';
             const msgUpper = msg.toUpperCase();
             let catClass = 'incident-info';
-            let icon = 'ℹ️';
+            let icon = '<i class="fa-solid fa-circle-info" style="color: var(--text-muted);"></i>';
 
             if (msgUpper.includes('INVESTIGAT') || msgUpper.includes('PENALTY') || msgUpper.includes('TIME PENALTY') || msgUpper.includes('STEWARDS')) {
               catClass = 'incident-stewards';
-              icon = '🔍';
+              icon = '<i class="fa-solid fa-magnifying-glass" style="color: #38bdf8;"></i>';
             }
             const lapText = inc.lap_number ? `Lap ${inc.lap_number}` : 'Pre-Race';
             const timeStr = new Date(inc.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1056,11 +1056,11 @@ export async function showRaceDriverDetail(driverNumber) {
       <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
       
       <!-- Modal Header Banner -->
-      <div style="background: linear-gradient(135deg, ${teamColor}33 0%, rgba(25,25,40,0.98) 100%); padding: 32px 24px 24px 24px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-wrap: wrap; gap: 20px; align-items: center; position: relative;">
-        <div style="position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: ${teamColor};"></div>
+      <div class="dm-header-banner" style="--dm-team-color: ${teamColor}; --dm-team-color-alpha: ${teamColor}33;">
+        <div class="dm-header-bar"></div>
         
-        <div style="position: relative; width: 84px; height: 84px; border-radius: 50%; background: rgba(255,255,255,0.03); border: 2px solid ${teamColor}; overflow: hidden; display:flex; align-items:center; justify-content:center;">
-          <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" style="width: 100%; height: auto; object-fit: cover;" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/><text y=%2250%%22 x=%2250%%22 font-family=%22sans-serif%22 font-size=%2224%22 fill=%22%23777%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22>${d.name_acronym}</text></svg>'">
+        <div class="dm-header-avatar">
+          <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/><text y=%2250%%22 x=%2250%%22 font-family=%22sans-serif%22 font-size=%2224%22 fill=%22%23777%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22>${d.name_acronym}</text></svg>'">
         </div>
         
         <div style="flex: 1; min-width: 200px;">
@@ -1068,13 +1068,16 @@ export async function showRaceDriverDetail(driverNumber) {
             <span style="font-family:'JetBrains Mono',monospace; font-size:0.9rem; font-weight:800; color:${teamColor}; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:4px;">#${driverNumber}</span>
             <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:var(--text-muted);">${d.team_name}</span>
           </div>
-          <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; margin: 6px 0 2px 0; color:var(--text-primary);">${d.full_name}</h2>
+          <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; margin: 6px 0 2px 0; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+            <span>${d.full_name}</span>
+            ${getDriverFlagImg(d.name_acronym, 'width:20px; border-radius:2px;')}
+          </h2>
           <div ${gainLossClass} style="font-size:0.85rem; margin-top:4px;">${gainLossText || 'Maintained position'}</div>
         </div>
       </div>
 
       <!-- Quick Race Stats Metrics -->
-      <div style="padding: 16px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; background: rgba(0,0,0,0.12); border-bottom:1px solid var(--border-subtle);">
+      <div class="dm-grid-stats">
         <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
           <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Start Grid</div>
           <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">P${startPos}</div>
@@ -1102,9 +1105,9 @@ export async function showRaceDriverDetail(driverNumber) {
         <!-- Sector Times -->
         <div>
           <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
-            <span>⏱️</span> Sector Best Times
+            <i class="fa-solid fa-stopwatch" style="color: var(--text-secondary); width: 14px;"></i> Sector Best Times
           </div>
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px;">
+          <div class="dm-grid-sector">
             <div style="padding: 10px 14px; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
               <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Personal Best Lap</div>
               <div style="font-family:'JetBrains Mono',monospace; font-size:1rem; font-weight:800; color:#a855f7; margin-top:4px;">${bestLap < Infinity ? formatLapTime(bestLap) : '—'}</div>
@@ -1131,7 +1134,7 @@ export async function showRaceDriverDetail(driverNumber) {
         <!-- Tyre Stints Timeline -->
         <div>
           <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <span>🛞</span> Tyre Stints Timeline
+            <i class="fa-solid fa-circle-notch" style="color: var(--text-secondary); width: 14px;"></i> Tyre Stints Timeline
           </div>
           ${stintsHtml}
         </div>
@@ -1139,7 +1142,7 @@ export async function showRaceDriverDetail(driverNumber) {
         <!-- Pit Stop Records -->
         <div>
           <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <span>🔧</span> Pit Stop Telemetry
+            <i class="fa-solid fa-wrench" style="color: var(--text-secondary); width: 14px;"></i> Pit Stop Telemetry
           </div>
           ${pitsHtml}
         </div>
@@ -1147,7 +1150,7 @@ export async function showRaceDriverDetail(driverNumber) {
         <!-- Stewarding & Personal Incidents Feed -->
         <div>
           <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <span>🚨</span> Stewards Decisions & Incidents
+            <i class="fa-solid fa-triangle-exclamation" style="color: var(--text-secondary); width: 14px;"></i> Stewards Decisions & Incidents
           </div>
           ${incidentsHtml}
         </div>

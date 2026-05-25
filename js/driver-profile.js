@@ -4,37 +4,8 @@
 // Uses cached data only — zero extra API calls
 // =============================================
 
-import { getTeamColor, getPointsForPosition, $ } from './utils.js';
+import { getTeamColor, getPointsForPosition, getDriverFlagImg, DRIVER_NATIONALITY, $ } from './utils.js';
 import { drawSparkline } from './charts.js';
-
-const DRIVER_NATIONALITY = {
-  HAM: { country: 'United Kingdom', flag: '🇬🇧' },
-  VER: { country: 'Netherlands', flag: '🇳🇱' },
-  LEC: { country: 'Monaco', flag: '🇲🇨' },
-  NOR: { country: 'United Kingdom', flag: '🇬🇧' },
-  SAI: { country: 'Spain', flag: '🇪🇸' },
-  PIA: { country: 'Australia', flag: '🇦🇺' },
-  RUS: { country: 'United Kingdom', flag: '🇬🇧' },
-  PER: { country: 'Mexico', flag: '🇲🇽' },
-  ALO: { country: 'Spain', flag: '🇪🇸' },
-  STR: { country: 'Canada', flag: '🇨🇦' },
-  GAS: { country: 'France', flag: '🇫🇷' },
-  OCO: { country: 'France', flag: '🇫🇷' },
-  ALB: { country: 'Thailand', flag: '🇹🇭' },
-  TSU: { country: 'Japan', flag: '🇯🇵' },
-  LAW: { country: 'New Zealand', flag: '🇳🇿' },
-  BOT: { country: 'Finland', flag: '🇫🇮' },
-  ZHO: { country: 'China', flag: '🇨🇳' },
-  HUL: { country: 'Germany', flag: '🇩🇪' },
-  MAG: { country: 'Denmark', flag: '🇩🇰' },
-  SAR: { country: 'United States', flag: '🇺🇸' },
-  BEA: { country: 'United Kingdom', flag: '🇬🇧' },
-  COL: { country: 'Argentina', flag: '🇦🇷' },
-  HAD: { country: 'France', flag: '🇫🇷' },
-  BOR: { country: 'Brazil', flag: '🇧🇷' },
-  ANT: { country: 'Italy', flag: '🇮🇹' },
-  LIN: { country: 'United Kingdom', flag: '🇬🇧' },
-};
 
 let overlay = null;
 
@@ -177,7 +148,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   // 1. Winner's Circle
   if (driver.wins > 0) {
     milestones.push({
-      icon: '🏆',
+      icon: '<i class="fa-solid fa-trophy" style="color: #ffd700;"></i>',
       title: 'Winners Circle',
       desc: `Secured ${driver.wins} Grand Prix victory${driver.wins > 1 ? 'ies' : ''} this season.`
     });
@@ -187,7 +158,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   const fastestLapsCount = (standings.raceSessions || []).filter(r => r.fastest_lap_driver === driver.driver_number).length;
   if (fastestLapsCount > 0) {
     milestones.push({
-      icon: '⚡',
+      icon: '<i class="fa-solid fa-bolt" style="color: #ffd000;"></i>',
       title: 'Speed Demon',
       desc: `Set the official fastest lap in ${fastestLapsCount} race${fastestLapsCount > 1 ? 's' : ''} this season.`
     });
@@ -196,7 +167,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   // 3. Teammate Dominator
   if (teammate && driverWins > tmWins) {
     milestones.push({
-      icon: '⚔️',
+      icon: '<i class="fa-solid fa-chess-knight" style="color: var(--f1-red);"></i>',
       title: 'Teammate Dominator',
       desc: `Outperformed teammate in Grand Prix races (${driverWins} vs ${tmWins}).`
     });
@@ -205,13 +176,13 @@ export function showDriverProfile(driver, standings, raceSessions) {
   // 4. Points Machine
   if (pointsRate >= 85) {
     milestones.push({
-      icon: '📈',
+      icon: '<i class="fa-solid fa-chart-line" style="color: #39b54a;"></i>',
       title: 'Points Machine',
       desc: `High-density scorer, finishing in the points in ${pointsRate}% of races.`
     });
   } else if (pointsRate >= 50) {
     milestones.push({
-      icon: '🎯',
+      icon: '<i class="fa-solid fa-bullseye" style="color: #ffd000;"></i>',
       title: 'Regular Scorer',
       desc: `Consistently in the mix, bringing home points in ${pointsRate}% of Grand Prix.`
     });
@@ -220,13 +191,13 @@ export function showDriverProfile(driver, standings, raceSessions) {
   // 5. Podium Regular
   if (driver.podiums >= 3) {
     milestones.push({
-      icon: '🍾',
+      icon: '<i class="fa-solid fa-award" style="color: #ffd700;"></i>',
       title: 'Podium Regular',
       desc: `Stood on the podium ${driver.podiums} times this season.`
     });
   } else if (driver.podiums > 0) {
     milestones.push({
-      icon: '🥈',
+      icon: '<i class="fa-solid fa-medal" style="color: #c0c0c0;"></i>',
       title: 'Podium Finisher',
       desc: `Claimed a top-3 podium finish ${driver.podiums} time${driver.podiums > 1 ? 's' : ''}.`
     });
@@ -237,7 +208,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   const dnfCount = driver.dnfs || 0;
   if (dnfCount === 0 && rr.length === completedRacesCount) {
     milestones.push({
-      icon: '🏁',
+      icon: '<i class="fa-solid fa-flag-checkered" style="color: #39b54a;"></i>',
       title: 'Iron Man',
       desc: `Finished 100% of all races this season (${rr.length}/${completedRacesCount}) with zero retirements.`
     });
@@ -360,7 +331,8 @@ export function showDriverProfile(driver, standings, raceSessions) {
     ? standings.drivers[0].points - driver.points
     : 0;
 
-  const nat = DRIVER_NATIONALITY[driver.name_acronym] || { country: 'International', flag: '🏁' };
+  const nat = DRIVER_NATIONALITY[driver.name_acronym] || { country: 'International' };
+  const flagHtml = getDriverFlagImg(driver.name_acronym, 'width:18px;margin-right:2px;');
 
   modal.innerHTML = `
     <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
@@ -371,7 +343,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
         <div class="dm-driver-name">${driver.full_name || driver.name_acronym}</div>
         <div class="dm-driver-team" style="color:${teamColor};font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">${driver.team_name}</div>
         <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;display:flex;align-items:center;gap:6px;">
-          <span style="font-size:1.05rem;line-height:1;">${nat.flag}</span>
+          ${flagHtml}
           <span>${nat.country}</span>
         </div>
       </div>

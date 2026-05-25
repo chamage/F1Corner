@@ -119,7 +119,7 @@ export async function initDashboard(year) {
       latestRaceEl.innerHTML = `
         <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Latest Result</div>
         <div style="font-family:'Outfit',sans-serif;font-size:1.1rem;font-weight:700;margin-top:4px;">${lastRaceName}</div>
-        <div style="color:var(--text-secondary);font-size:0.9rem;margin-top:2px;">🏆 ${lastWinner}</div>
+        <div style="color:var(--text-secondary);font-size:0.9rem;margin-top:2px;display:flex;align-items:center;justify-content:center;gap:6px;"><i class="fa-solid fa-trophy" style="color: #ffd700;"></i> <span>${lastWinner}</span></div>
       `;
     } else if (nextRace) {
       latestRaceEl.innerHTML = `

@@ -3,7 +3,7 @@
 // Uses compiled season data (zero extra API calls)
 // =============================================
 
-import { getTeamColor, getPointsForPosition, $ } from './utils.js';
+import { getTeamColor, getPointsForPosition, getDriverFlagImg, $ } from './utils.js';
 import { drawSparkline } from './charts.js';
 import { showDriverProfile } from './driver-profile.js';
 import { showTeamProfile } from './team-profile.js';
@@ -49,7 +49,10 @@ function renderDriverStandings(standings, container) {
             <div class="team-color-bar" style="background:${teamColor}"></div>
             <img class="driver-headshot" src="${d.headshot_url || ''}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'">
             <div class="driver-info">
-              <div class="driver-name">${d.full_name || d.name_acronym}</div>
+              <div class="driver-name" style="display:flex;align-items:center;gap:6px;">
+                ${getDriverFlagImg(d.name_acronym, 'width:15px;box-shadow:none;border-radius:1px;flex-shrink:0;')}
+                <span>${d.full_name || d.name_acronym}</span>
+              </div>
               <div class="driver-team">${d.team_name}</div>
             </div>
           </div>
@@ -222,7 +225,7 @@ export async function initStandings(year) {
     if (standings.drivers.length === 0) {
       container.innerHTML = `
         <div class="no-data">
-          <div class="no-data-icon">🏁</div>
+          <div class="no-data-icon"><i class="fa-solid fa-flag-checkered fa-2x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
           <div class="no-data-text">No race results yet for ${year}</div>
           <div class="no-data-subtext">Standings will appear once races are completed</div>
         </div>
