@@ -9,12 +9,13 @@ let overlay = null;
 let activeRating = 0;
 
 // Safe static configurations for public-safe endpoints
-// Formspree utilizes randomly-generated public form tokens (e.g. "mjvdqypa") to safely
-// route email submissions without exposing private account keys or your email to client browsers.
+// PitCorner utilizes a private Cloudflare Worker API at https://api.pitcorner.com/feedback
+// to securely forward feedback emails without exposing private email credentials or keys.
 const FEEDBACK_CONFIG = {
-  // Replace this empty string with your Formspree Form ID (e.g. "mjvdqypa")
-  // Or inject it dynamically at runtime by defining window.F1_FEEDBACK_FORMSPREE_ID
-  formspreeId: window.F1_FEEDBACK_FORMSPREE_ID || 'xwvzrlek'
+  // Your custom Cloudflare Worker endpoint (or local mock in dev)
+  apiUrl: window.PITCORNER_FEEDBACK_API_URL || 'https://api.pitcorner.com/feedback',
+  // Legacy Formspree token fallback (set to '' or a token)
+  formspreeId: window.PITCORNER_FEEDBACK_FORMSPREE_ID || ''
 };
 
 function ensureOverlay() {
@@ -182,9 +183,27 @@ export function showFeedbackModal() {
     };
 
     let sentSuccessfully = true;
+    const isProdApi = FEEDBACK_CONFIG.apiUrl && !FEEDBACK_CONFIG.apiUrl.includes('localhost') && FEEDBACK_CONFIG.apiUrl !== 'https://api.pitcorner.com/feedback';
 
-    // Send asynchronously to Formspree if a valid ID is provided
-    if (FEEDBACK_CONFIG.formspreeId) {
+    if (FEEDBACK_CONFIG.apiUrl && (isProdApi || !FEEDBACK_CONFIG.formspreeId)) {
+      // Send securely to your custom Cloudflare Worker API
+      try {
+        const response = await fetch(FEEDBACK_CONFIG.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+          throw new Error(`Cloudflare Worker returned status: ${response.status}`);
+        }
+      } catch (err) {
+        console.error('[Feedback] Cloudflare Worker submission failed:', err);
+        sentSuccessfully = false;
+      }
+    } else if (FEEDBACK_CONFIG.formspreeId) {
+      // Send asynchronously to Formspree fallback
       try {
         const response = await fetch(`https://formspree.io/f/${FEEDBACK_CONFIG.formspreeId}`, {
           method: 'POST',
@@ -195,18 +214,18 @@ export function showFeedbackModal() {
           body: JSON.stringify(payload)
         });
         if (!response.ok) {
-          throw new Error(`Server returned status: ${response.status}`);
+          throw new Error(`Formspree returned status: ${response.status}`);
         }
       } catch (err) {
-        console.error('[Feedback] Formspree submission failed:', err);
+        console.error('[Feedback] Formspree fallback submission failed:', err);
         sentSuccessfully = false;
       }
     } else {
       // Safe development fallback: log mock submission to console and LocalStorage
-      console.log('[Feedback Mock Submission] (Configure formspreeId in FEEDBACK_CONFIG):', payload);
-      const mockList = JSON.parse(localStorage.getItem('f1_feedback') || '[]');
+      console.log('[Feedback Mock Submission] (Configure apiUrl in FEEDBACK_CONFIG):', payload);
+      const mockList = JSON.parse(localStorage.getItem('pitcorner_feedback') || '[]');
       mockList.push({ timestamp: new Date().toISOString(), ...payload });
-      localStorage.setItem('f1_feedback', JSON.stringify(mockList));
+      localStorage.setItem('pitcorner_feedback', JSON.stringify(mockList));
     }
 
     if (sentSuccessfully) {
