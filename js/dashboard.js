@@ -4,8 +4,9 @@
 // =============================================
 
 import { getMeetings, getOvertakes } from './api.js';
-import { getSeasonData } from './season-data.js';
-import { isPast, isThisWeek, formatDateRange, formatLapTime, $ } from './utils.js';
+import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
+import { isPast, isThisWeek, formatDateRange, formatLapTime, getTeamColor, getPointsForPosition, $ } from './utils.js';
+import { drawLineChart } from './charts.js';
 
 export async function initDashboard(year) {
   const heroBadge = $('#hero-badge-text');
@@ -128,6 +129,21 @@ export async function initDashboard(year) {
       `;
     }
 
+    // ── Championship Battle Points Tracker ──
+    currentSeasonData = seasonData;
+    const selectEl = document.getElementById('chart-drivers-count');
+    const defaultCount = selectEl ? parseInt(selectEl.value, 10) : 5;
+    drawChampionshipBattle(seasonData, defaultCount);
+
+    if (selectEl && !changeListenerAdded) {
+      selectEl.addEventListener('change', (e) => {
+        if (currentSeasonData) {
+          drawChampionshipBattle(currentSeasonData, parseInt(e.target.value, 10));
+        }
+      });
+      changeListenerAdded = true;
+    }
+
     // Don't block on enrichment
     enrichPromise.catch(e => console.warn('Dashboard enrichment error:', e));
 
@@ -139,3 +155,74 @@ export async function initDashboard(year) {
     document.getElementById('stat-fastest').textContent = '—';
   }
 }
+
+let currentSeasonData = null;
+let changeListenerAdded = false;
+
+function drawChampionshipBattle(seasonData, driversCount) {
+  const standings = computeStandingsFromSeason(seasonData);
+  const topDrivers = standings.drivers.slice(0, driversCount);
+
+  const chartCanvas = document.getElementById('dashboard-championship-chart');
+  const legendEl = document.getElementById('dashboard-chart-legend');
+
+  if (chartCanvas && legendEl) {
+    if (topDrivers.length === 0) {
+      chartCanvas.style.display = 'none';
+      legendEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">No points data available yet</div>';
+    } else {
+      chartCanvas.style.display = 'block';
+
+      // Sort races chronologically
+      const sortedRaces = [...seasonData.races]
+        .filter(r => r.results.length > 0)
+        .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+      const datasets = topDrivers.map(d => {
+        const pointsProgression = [];
+        let cumPoints = 0;
+
+        for (const race of sortedRaces) {
+          const isSprint = race.session_name === 'Sprint';
+          const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
+
+          const r = race.results.find(res => res.driver_number === d.driver_number);
+          if (r) {
+            let pts = r.status === 'DSQ' ? 0 : getPointsForPosition(r.position, isSprint);
+            if (seasonData.year < 2025 && fastestLapDriver === d.driver_number && r.position <= 10 && r.status === 'FINISHED') {
+              pts += 1;
+            }
+            cumPoints += pts;
+          }
+          pointsProgression.push(cumPoints);
+        }
+
+        return {
+          label: d.name_acronym,
+          data: pointsProgression,
+          color: getTeamColor(d.team_colour),
+          alpha: 0.9,
+        };
+      });
+
+      // Draw points line chart
+      requestAnimationFrame(() => {
+        drawLineChart(chartCanvas, datasets, {
+          xLabel: 'Races Completed',
+          yLabel: 'Points',
+          lineWidth: 2.5,
+          showDots: true,
+        });
+      });
+
+      // Render legend
+      legendEl.innerHTML = datasets.map(ds => `
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.75rem;font-weight:600;color:var(--text-primary);">
+          <span style="width:12px;height:12px;border-radius:50%;background:${ds.color};display:inline-block;border:2px solid var(--bg-card);"></span>
+          ${ds.label}
+        </span>
+      `).join('');
+    }
+  }
+}
+

@@ -5,11 +5,11 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints } from './api.js';
+import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 16; // v16: use lightweight stints telemetry to calculate exact completed laps (resolves Lando Norris false DNF bug while keeping 300x loading speed)
+const LS_VERSION = 17; // v17: fetch and compile both Sunday GP Races and Saturday Sprints, and add a toggle to view Sprint results
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -96,7 +96,10 @@ export async function getSeasonData(year) {
   }
 
   console.log(`[Season] Loading season ${year}...`);
-  const allRaceSessions = await getRaceSessions(year);
+  const gpSessions = await getRaceSessions(year);
+  const sprintSessions = await getSessions({ year, session_type: 'Sprint' });
+  const activeSprints = sprintSessions.filter(s => !s.is_cancelled);
+  const allRaceSessions = [...gpSessions, ...activeSprints];
   const completedSessions = allRaceSessions.filter(s => isPast(s.date_end));
 
   const races = [];

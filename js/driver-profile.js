@@ -40,11 +40,14 @@ let overlay = null;
 
 function ensureOverlay() {
   if (overlay) return overlay;
-  overlay = document.createElement('div');
-  overlay.className = 'driver-modal-overlay';
-  overlay.id = 'driver-modal-overlay';
-  overlay.innerHTML = '<div class="driver-modal" id="driver-modal"></div>';
-  document.body.appendChild(overlay);
+  overlay = document.getElementById('driver-modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'driver-modal-overlay';
+    overlay.id = 'driver-modal-overlay';
+    overlay.innerHTML = '<div class="driver-modal" id="driver-modal"></div>';
+    document.body.appendChild(overlay);
+  }
 
   // Close on backdrop click
   overlay.addEventListener('click', (e) => {

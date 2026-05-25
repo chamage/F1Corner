@@ -395,7 +395,12 @@ export async function getFinishingOrder(sessionKey) {
       })
       .sort((a, b) => a.position - b.position);
 
-    if (results.length < 5) {
+    // Fetch session driver list to check for any telemetry gaps in the position stream
+    const sessionDrivers = await getDrivers({ session_key: sessionKey });
+    const enteredDriverNums = new Set(sessionDrivers.map(d => d.driver_number));
+    const missingAny = Array.from(enteredDriverNums).some(dn => !latestPositions.has(dn));
+
+    if (results.length < 5 || missingAny) {
       return getFinishingOrderFromLaps(sessionKey);
     }
 
