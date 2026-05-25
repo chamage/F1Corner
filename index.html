@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F1 Corner — Formula 1 Season Stats & Analytics</title>
+  <meta name="description" content="Your all-in-one Formula 1 fan dashboard. Live standings, race analytics, head-to-head comparisons, pit strategies, and more. Powered by OpenF1 data.">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="F1 Corner — Formula 1 Season Stats & Analytics">
+  <meta property="og:description" content="Premium F1 fan dashboard with standings, race deep-dives, head-to-head comparisons, and more.">
+  <meta property="og:type" content="website">
+
+  <!-- Preload fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎️</text></svg>">
+
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+  <!-- ── Navigation ── -->
+  <nav class="nav" id="main-nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">
+        <div class="nav-logo-icon">F1</div>
+        <div class="nav-logo-text">F1 <span>Corner</span></div>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#dashboard">Dashboard</a></li>
+        <li><a href="#standings">Standings</a></li>
+        <li><a href="#calendar">Calendar</a></li>
+        <li><a href="#race-detail">Race Detail</a></li>
+        <li><a href="#h2h">Head-to-Head</a></li>
+      </ul>
+
+      <div class="nav-right">
+        <div class="year-selector">
+          <label for="year-select">Season</label>
+          <select id="year-select">
+            <option value="2025">2025</option>
+          </select>
+        </div>
+        <button class="nav-toggle" id="nav-toggle" aria-label="Menu">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Mobile Menu -->
+  <div class="mobile-menu" id="mobile-menu">
+    <a href="#dashboard">Dashboard</a>
+    <a href="#standings">Standings</a>
+    <a href="#calendar">Calendar</a>
+    <a href="#race-detail">Race Detail</a>
+    <a href="#h2h">Head-to-Head</a>
+  </div>
+
+  <!-- ── App Container ── -->
+  <div class="app-container">
+
+    <!-- ══ SECTION 1: Hero Dashboard ══ -->
+    <section class="section hero" id="dashboard">
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span class="dot"></span>
+          <span id="hero-badge-text">2025 SEASON</span>
+        </div>
+        <h1 class="hero-title">
+          Formula 1<br><span class="accent">Fan Corner</span>
+        </h1>
+        <p class="hero-description">
+          Your all-in-one destination for F1 season stats, race analytics, head-to-head comparisons, and everything a true F1 fan craves.
+        </p>
+
+        <div id="latest-race-info" style="text-align:center;margin-bottom:24px;min-height:60px;"></div>
+
+        <div class="hero-stats" id="hero-stats">
+          <div class="stat-card">
+            <div class="stat-value accent" id="stat-races">—</div>
+            <div class="stat-label">Races</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-sprints">—</div>
+            <div class="stat-label">Sprints</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-overtakes">—</div>
+            <div class="stat-label">Overtakes (last 3)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-fastest">—</div>
+            <div class="stat-label">Fastest Lap</div>
+          </div>
+        </div>
+
+        <div class="season-progress">
+          <div class="progress-label">
+            <span id="progress-completed">Loading...</span>
+            <span>Season Progress</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ SECTION 2: Championship Standings ══ -->
+    <section class="section reveal" id="standings">
+      <h2 class="section-title">Championship Standings</h2>
+      <p class="section-subtitle">Computed from race results • Points, wins, podiums, and trends</p>
+
+      <div class="standings-toggle">
+        <button class="active" id="standings-drivers-btn">Drivers</button>
+        <button id="standings-constructors-btn">Constructors</button>
+      </div>
+
+      <div class="glass-card">
+        <div id="standings-content">
+          <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ SECTION 3: Race Calendar ══ -->
+    <section class="section reveal" id="calendar">
+      <h2 class="section-title">Race Calendar</h2>
+      <p class="section-subtitle">Click any completed race for a deep-dive analysis</p>
+
+      <div class="calendar-scroll" id="calendar-scroll">
+        <div class="skeleton skeleton-card" style="flex:0 0 240px;height:260px;"></div>
+        <div class="skeleton skeleton-card" style="flex:0 0 240px;height:260px;"></div>
+        <div class="skeleton skeleton-card" style="flex:0 0 240px;height:260px;"></div>
+        <div class="skeleton skeleton-card" style="flex:0 0 240px;height:260px;"></div>
+      </div>
+    </section>
+
+    <section class="section reveal" id="race-detail" style="display:none;">
+      <div class="race-detail-header-wrapper" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:var(--space-md);">
+        <div class="race-detail-header" id="race-detail-header" style="margin-bottom:0; flex:1;">
+          <div class="race-detail-title">Select a race above</div>
+        </div>
+        <div class="race-weather-bar" id="race-weather-bar"></div>
+      </div>
+
+      <div class="race-detail-tabs" id="race-detail-tabs">
+        <button class="active" data-tab="results">Results</button>
+        <button data-tab="laptimes">Lap Times</button>
+        <button data-tab="positions">Positions</button>
+        <button data-tab="strategy">Strategy</button>
+        <button data-tab="overtakes">Overtakes</button>
+        <button data-tab="incidents">Incidents</button>
+      </div>
+
+      <div class="glass-card">
+        <div id="race-detail-content">
+          <div class="no-data">
+            <div class="no-data-icon">🏎️</div>
+            <div class="no-data-text">Click a completed race in the calendar above</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ SECTION 5: Head-to-Head ══ -->
+    <section class="section reveal" id="h2h">
+      <h2 class="section-title">Head-to-Head</h2>
+      <p class="section-subtitle">Compare any two drivers across the season • Teammate battles included</p>
+
+      <div id="h2h-content">
+        <div class="h2h-selectors">
+          <div class="h2h-driver-select">
+            <img class="h2h-headshot" id="h2h-headshot1" src="" alt="Driver 1" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/></svg>'">
+            <select class="h2h-select" id="h2h-driver1">
+              <option>Loading...</option>
+            </select>
+          </div>
+
+          <div class="h2h-vs">VS</div>
+
+          <div class="h2h-driver-select">
+            <img class="h2h-headshot" id="h2h-headshot2" src="" alt="Driver 2" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/></svg>'">
+            <select class="h2h-select" id="h2h-driver2">
+              <option>Loading...</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="text-align:center;margin-bottom:8px;font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Quick Pick: Teammate Battles</div>
+        <div class="teammates-grid" id="teammates-grid"></div>
+
+        <div class="h2h-comparison" id="h2h-comparison">
+          <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ── Footer ── -->
+  <footer class="footer">
+    <p class="footer-text">
+      <strong>F1 Corner</strong> — Built with ❤️ for F1 fans<br>
+      Data powered by <a href="https://openf1.org" target="_blank" rel="noopener">OpenF1 API</a><br>
+      <small>Not affiliated with Formula 1, FIA, or any F1 teams. F1 and related marks are trademarks of Formula One Licensing B.V.</small>
+    </p>
+    <div id="cache-status" style="margin-top:12px;font-size:0.7rem;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:8px;">
+      <span id="cache-info"></span>
+      <button id="clear-cache-btn" style="background:var(--bg-glass);border:1px solid var(--border-subtle);color:var(--text-muted);padding:3px 10px;border-radius:100px;font-size:0.65rem;cursor:pointer;font-family:inherit;transition:all 150ms ease;">Clear Cache</button>
+    </div>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
