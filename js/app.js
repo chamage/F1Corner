@@ -45,6 +45,7 @@ async function init() {
 
   // Setup navigation
   setupNav();
+  setupBackToTop();
 
   // Setup feedback & support event listeners
   initFeedbackSupport();
@@ -189,6 +190,28 @@ function setupNav() {
       });
     });
   }
+}
+
+function setupBackToTop() {
+  const backToTopBtn = document.getElementById('back-to-top-btn');
+  if (!backToTopBtn) return;
+
+  // Toggle visibility on scroll
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 400) {
+      backToTopBtn.classList.add('show');
+    } else {
+      backToTopBtn.classList.remove('show');
+    }
+  });
+
+  // Smooth scroll back to top when clicked
+  backToTopBtn.addEventListener('click', () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  });
 }
 
 // Initialize when DOM is ready

@@ -2656,3 +2656,63 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 0.68rem;
   }
 }
+
+/* ── Floating Back to Top Button (Bottom Right) ── */
+.back-to-top-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px; /* Placed in bottom-right corner */
+  z-index: 9999;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(15, 15, 26, 0.85);
+  border: 1px solid var(--border-accent);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(20px);
+  pointer-events: none;
+  transition: all 400ms var(--ease-out);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.back-to-top-btn.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.back-to-top-btn:hover {
+  background: rgba(225, 6, 0, 0.15);
+  border-color: var(--f1-red);
+  color: var(--f1-red);
+  box-shadow: 0 0 20px rgba(225, 6, 0, 0.4);
+  transform: translateY(-4px);
+}
+
+.back-to-top-btn:active {
+  transform: translateY(-2px);
+}
+
+@media (max-width: 600px) {
+  .back-to-top-btn {
+    bottom: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    font-size: 0.9rem;
+  }
+}
+
+/* Hide back-to-top button completely when any modal is open */
+body:has(.driver-modal-overlay.open) .back-to-top-btn {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(20px) !important;
+}
