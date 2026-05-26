@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v1';
+const CACHE_NAME = 'pitcorner-shell-v2'; // Incremented to v2 to force old caches to clear
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -16,7 +16,8 @@ const STATIC_ASSETS = [
   './js/driver-profile.js',
   './js/team-profile.js',
   './js/feedback-support.js',
-  './js/charts.js'
+  './js/charts.js',
+  './logo.svg'
 ];
 
 // Install: Cache all static shell files
@@ -43,23 +44,31 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch: Serve from cache if static asset, otherwise fetch from network
+// Fetch: Network-First Strategy (Always fetch fresh online, fallback to cache offline)
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Only handle GET requests and local assets (avoid caching external OpenF1 API requests in the service worker,
-  // since we already have a robust JS-based indexed localStorage system for API telemetry!)
+  // Only handle GET requests and local assets (avoid caching external API telemetry)
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) {
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then(cachedResponse => {
-      if (cachedResponse) {
-        // Return cached shell asset immediately
-        return cachedResponse;
-      }
-      return fetch(event.request);
-    })
+    // 1. Try to fetch from the network first
+    fetch(event.request)
+      .then(networkResponse => {
+        // If successful (status 200), clone and update our local cache
+        if (networkResponse.status === 200) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then(cache => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        // 2. If the network fails (offline), serve the cached version instantly!
+        return caches.match(event.request);
+      })
   );
 });
