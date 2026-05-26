@@ -353,6 +353,10 @@ export function showChangelogModal() {
                 <span>Active Service Worker (<code>sw.js</code>) caching static assets (HTML, CSS, JS) for instant off-line startup.</span>
               </li>
               <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Added physical PNG icon formats to resolve shortcut creation issues on Android browsers.</span>
+              </li>
+              <li class="changelog-item">
                 <span class="changelog-tag improved">Branding</span>
                 <span>Unified global renaming to <strong>PitCorner</strong> to secure a legally-safe custom brand name.</span>
               </li>
