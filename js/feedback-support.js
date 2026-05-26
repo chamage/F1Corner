@@ -319,11 +319,198 @@ function showSupportToast(platform) {
 }
 
 /**
+ * Launch the Changelog interactive scrollable timeline modal
+ */
+export function showChangelogModal() {
+  ensureOverlay();
+  const modal = document.getElementById('feedback-modal');
+  modal.innerHTML = `
+    <button class="driver-modal-close" id="fbm-close" aria-label="Close">✕</button>
+    <div style="padding: var(--space-xl) var(--space-lg); font-family:'Outfit', sans-serif; position: relative; z-index: 5; max-height: 80vh; display: flex; flex-direction: column;">
+      <h2 style="font-weight: 800; font-size: 1.5rem; color: var(--text-primary); margin-bottom: 4px; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-clock-rotate-left" style="color: var(--f1-red);"></i> PitCorner Changelog
+      </h2>
+      <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 16px;">
+        Follow our development journey as we build the ultimate, high-speed Formula 1 stats and analytics dashboard.
+      </p>
+
+      <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
+        <div class="changelog-timeline">
+          
+          <!-- v1.1.0 (Active - Today) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.0 <span>Active</span></div>
+              <div class="changelog-date">May 26, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added" style="background: rgba(155, 89, 182, 0.12); border-color: rgba(155, 89, 182, 0.25); color: #9b59b6;">PWA</span>
+                <span>Fully installable Progressive Web App (PWA) with manifest configuration and vector maskable icons.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added" style="background: rgba(155, 89, 182, 0.12); border-color: rgba(155, 89, 182, 0.25); color: #9b59b6;">PWA</span>
+                <span>Active Service Worker (<code>sw.js</code>) caching static assets (HTML, CSS, JS) for instant off-line startup.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Branding</span>
+                <span>Unified global renaming to <strong>PitCorner</strong> to secure a legally-safe custom brand name.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">UI/UX</span>
+                <span>Added top fixed API loading notification banner with sweeps, dismiss trigger, and animated progress indicator.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">UI/UX</span>
+                <span>Added floating glassmorphic Back-to-Top scroll action button in the bottom-right corner.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Resolved race detail crashes due to missing <code>buildDriverMap</code> and <code>getPointsForPosition</code> imports.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.0.0 (Official Launch) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.0.0 🏁 <span>Official Launch</span></div>
+              <div class="changelog-date">May 25, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">UI/UX</span>
+                <span>First public release! Upgraded F1 flags to clean SVG vector graphics using Flagcdn.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Icons</span>
+                <span>Polished visual details across the app using solid, regular, and brand icons from Font Awesome 6.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Star-rating Feedback Form modal with categories and post-submit checkmark animations.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Support Me Coffee Modal with direct links to custom Ko-fi funding accounts.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v0.5.0 (Beta) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v0.5.0 <span>Beta</span></div>
+              <div class="changelog-date">May 12, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Driver Head-to-Head (H2H) comparison tool featuring interactive teammates battles and comparison charts.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Driver Profile highlights and Constructor details overlays showing career summaries and lineups.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v0.4.0 (Beta) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v0.4.0 <span>Beta</span></div>
+              <div class="changelog-date">May 2, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Charts</span>
+                <span>Custom canvas-based Position History grid and lap-by-lap interval charts.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Performance</span>
+                <span>Refined lazy-rendering logic to defer heavy chart loads until user expands the Race Deep-Dive tab.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v0.3.0 (Beta) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v0.3.0 <span>Beta</span></div>
+              <div class="changelog-date">April 19, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Caching</span>
+                <span>Implemented local cache persistence engine utilizing browser LocalStorage and dynamic time-to-live logic.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">API</span>
+                <span>Structured batch request fetches to query API endpoints in parallel, slashing startup times by over 60%.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v0.2.0 (Beta) -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v0.2.0 <span>Beta</span></div>
+              <div class="changelog-date">April 3, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Integrated dynamic year selector support with pre-loaded historical F1 calendar database from 2023 to 2025.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag security">Security</span>
+                <span>Added developer sandboxed offline mock data pipelines to prevent running out of live API rate limits during development.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v0.1.0 (Alpha) -->
+          <div class="changelog-card" style="margin-bottom: 8px;">
+            <div class="changelog-header">
+              <div class="changelog-version">v0.1.0 <span>Alpha</span></div>
+              <div class="changelog-date">March 20, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Initial Alpha Build! Standardized dark carbon-fiber design system frames, standings layouts, and initial OpenF1 hook.</span>
+              </li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('fbm-close').addEventListener('click', closeModal);
+  document.body.style.overflow = 'hidden';
+  overlay.classList.add('open');
+}
+
+/**
  * Wire the feedback and support links and buttons globally
  */
 export function initFeedbackSupport() {
+  const navClBtn = document.getElementById('nav-changelog-btn');
+  const footerClBtn = document.getElementById('footer-changelog-btn');
   const footerFbBtn = document.getElementById('footer-feedback-btn');
   const footerSpBtn = document.getElementById('footer-support-btn');
+
+  const triggerChangelog = () => showChangelogModal();
+
+  if (navClBtn) {
+    navClBtn.addEventListener('click', triggerChangelog);
+  }
+
+  if (footerClBtn) {
+    footerClBtn.addEventListener('click', triggerChangelog);
+  }
 
   if (footerFbBtn) {
     footerFbBtn.addEventListener('click', () => {

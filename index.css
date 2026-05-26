@@ -268,6 +268,49 @@ h1, h2, h3, h4, h5, h6 {
   gap: var(--space-md);
 }
 
+/* ── Navigation Action Button (Changelog) ── */
+.nav-action-btn {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 150ms ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.nav-action-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+}
+
+.nav-action-btn i {
+  font-size: 0.8rem;
+  color: var(--f1-red);
+}
+
+@media (max-width: 768px) {
+  .nav-action-btn span {
+    display: none; /* Hide text label on mobile to keep space clean */
+  }
+  .nav-action-btn {
+    padding: 6px;
+    width: 28px;
+    height: 28px;
+    justify-content: center;
+    border-radius: 50%;
+  }
+}
+
 .year-selector {
   display: flex;
   align-items: center;
@@ -2715,4 +2758,149 @@ body:has(.driver-modal-overlay.open) .back-to-top-btn {
   opacity: 0 !important;
   pointer-events: none !important;
   transform: translateY(20px) !important;
+}
+
+/* ── Changelog Modal Styling ── */
+.changelog-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 16px;
+  position: relative;
+  padding-left: 14px;
+}
+
+/* Timeline left vertical rail */
+.changelog-timeline::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 3px;
+  width: 2px;
+  background: var(--border-subtle);
+  border-radius: 4px;
+}
+
+.changelog-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  transition: all 250ms ease;
+}
+
+.changelog-card::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: -15px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-accent);
+  border: 2px solid var(--bg-primary);
+  z-index: 10;
+  transition: all 250ms ease;
+}
+
+.changelog-card:hover {
+  border-color: rgba(225, 6, 0, 0.3);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.changelog-card:hover::before {
+  background: var(--f1-red);
+  box-shadow: 0 0 8px var(--f1-red);
+}
+
+.changelog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 8px;
+}
+
+.changelog-version {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.changelog-version span {
+  font-size: 0.72rem;
+  background: rgba(225, 6, 0, 0.15);
+  border: 1px solid rgba(225, 6, 0, 0.25);
+  color: var(--f1-red);
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-weight: 700;
+}
+
+.changelog-date {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.changelog-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+
+.changelog-item {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.changelog-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.05em;
+  margin-top: 1px;
+}
+
+/* Tag variations */
+.changelog-tag.added {
+  background: rgba(46, 204, 113, 0.12);
+  border: 1px solid rgba(46, 204, 113, 0.25);
+  color: #2ecc71;
+}
+
+.changelog-tag.improved {
+  background: rgba(52, 152, 219, 0.12);
+  border: 1px solid rgba(52, 152, 219, 0.25);
+  color: #3498db;
+}
+
+.changelog-tag.fixed {
+  background: rgba(241, 196, 15, 0.12);
+  border: 1px solid rgba(241, 196, 15, 0.25);
+  color: #f1c40f;
+}
+
+.changelog-tag.security {
+  background: rgba(155, 89, 182, 0.12);
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  color: #9b59b6;
 }
