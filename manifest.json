@@ -1,0 +1,19 @@
+{
+  "name": "PitCorner — F1 Season Stats & Analytics",
+  "short_name": "PitCorner",
+  "description": "Your premium Formula 1 fan dashboard. Real-time telemetry, standings, race analytics, calendar, and driver head-to-heads.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#0f0f1a",
+  "orientation": "portrait-primary",
+  "categories": ["sports", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230f0f1a'/><text y='.75em' x='7' font-size='75'>🏎️</text></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
