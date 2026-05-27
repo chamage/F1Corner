@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v19'; // v19: Enhance feedback form validation (mandatory rating, category, message) and add optional follow-up email field
+const CACHE_NAME = 'pitcorner-shell-v20'; // v20: Implement Service Worker controllerchange auto-reload listener to ensure instant cache updates on reload without manual hard refreshes
 const STATIC_ASSETS = [
   './',
   './index.html',

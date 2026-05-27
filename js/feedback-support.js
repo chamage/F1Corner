@@ -356,10 +356,24 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.2.1 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.2.1 <span>Active</span></div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Instant PWA Updates: Implemented a service worker update detection and <code>controllerchange</code> auto-reload hook. As soon as a new dashboard version is deployed, the app will automatically synchronize and update in the background, reloading seamlessly to serve the fresh cache on the next visits with zero hard refreshes required!</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.2.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.2.0 <span>Active</span></div>
+              <div class="changelog-version">v1.2.0</div>
               <div class="changelog-date">May 27, 2026</div>
             </div>
             <ul class="changelog-list">
