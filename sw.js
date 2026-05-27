@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v5'; // v5: force install of caching/rate-limit fixes in season-data.js and api.js
+const CACHE_NAME = 'pitcorner-shell-v10'; // v10: update Planned Features with user backlog checklist
 const STATIC_ASSETS = [
   './',
   './index.html',

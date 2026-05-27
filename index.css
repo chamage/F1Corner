@@ -299,6 +299,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 @media (max-width: 768px) {
+  .nav-inner {
+    padding: 0 var(--space-md);
+  }
+  .nav-right {
+    gap: var(--space-sm);
+  }
   .nav-action-btn span {
     display: none; /* Hide text label on mobile to keep space clean */
   }
@@ -308,6 +314,31 @@ h1, h2, h3, h4, h5, h6 {
     height: 28px;
     justify-content: center;
     border-radius: 50%;
+  }
+}
+
+@media (max-width: 480px) {
+  .nav-inner {
+    padding: 0 var(--space-sm);
+  }
+  .nav-right {
+    gap: 6px;
+  }
+  .nav-logo-text {
+    font-size: 0.95rem;
+  }
+  .nav-logo-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+  .year-selector label {
+    display: none; /* Hide "Season" text on small mobile screens */
+  }
+  .year-selector select {
+    padding: 4px 22px 4px 8px;
+    font-size: 0.78rem;
+    background-position: right 6px center;
   }
 }
 
@@ -2959,3 +2990,34 @@ body:has(.driver-modal-overlay.open) .back-to-top-btn {
   border: 1px solid rgba(155, 89, 182, 0.25);
   color: #9b59b6;
 }
+
+/* ── Roadmap Modal Styling ── */
+.roadmap-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.05em;
+  margin-top: 1px;
+}
+
+.roadmap-tag.progress {
+  background: rgba(225, 6, 0, 0.12);
+  border: 1px solid rgba(225, 6, 0, 0.25);
+  color: var(--f1-red);
+}
+
+.roadmap-tag.planned {
+  background: rgba(46, 204, 113, 0.12);
+  border: 1px solid rgba(46, 204, 113, 0.25);
+  color: #2ecc71;
+}
+
+.roadmap-tag.backlog {
+  background: rgba(155, 89, 182, 0.12);
+  border: 1px solid rgba(155, 89, 182, 0.25);
+  color: #9b59b6;
+}
+

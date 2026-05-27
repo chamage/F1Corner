@@ -337,10 +337,32 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.1.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.2 <span>Active</span></div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Resolved caching engine validation issues to guarantee 100% stable offline data persistence and instant season reloads upon manual page refresh (F5).</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Implemented interactive, glassmorphic Planned Features (Roadmap) Modal to display active and future development phases.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Added Roadmap buttons to navigation header and footer layouts, with full responsive alignments.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.1.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.1.1 <span>Active</span></div>
+              <div class="changelog-version">v1.1.1</div>
               <div class="changelog-date">May 27, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -556,15 +578,121 @@ export function showChangelogModal() {
 }
 
 /**
+ * Launch the Planned Features (Roadmap) interactive scrollable timeline modal
+ */
+export function showRoadmapModal() {
+  ensureOverlay();
+  const modal = document.getElementById('feedback-modal');
+  modal.innerHTML = `
+    <button class="driver-modal-close" id="fbm-close" aria-label="Close">✕</button>
+    <div style="padding: var(--space-xl) var(--space-lg); font-family:'Outfit', sans-serif; position: relative; z-index: 5; max-height: 80vh; display: flex; flex-direction: column;">
+      <h2 style="font-weight: 800; font-size: 1.5rem; color: var(--text-primary); margin-bottom: 4px; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-lightbulb" style="color: var(--f1-red);"></i> Planned Features &amp; Ideas
+      </h2>
+      <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 16px;">
+        A personal checklist of advanced analytics modules, telemetry tools, and visual ideas under consideration for future PitCorner releases.
+      </p>
+
+      <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
+        <div class="changelog-timeline" style="padding-left: 0; margin-top: 8px;">
+          
+          <div class="changelog-timeline::before" style="display: none;"></div>
+          
+          <div class="changelog-card" style="border-left: 3px solid var(--f1-red);">
+            <div class="changelog-header" style="margin-bottom: 14px;">
+              <div class="changelog-version"><i class="fa-solid fa-list-check" style="color: var(--f1-red); margin-right: 6px;"></i> Things I'm Considering</div>
+              <div class="changelog-date">Feature Backlog</div>
+            </div>
+            <ul class="changelog-list" style="gap: 16px;">
+              <li class="changelog-item">
+                <span class="roadmap-tag progress">Active Work</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">General Bug Squashing</strong>
+                  <span>Continuous performance tuning, PWA asset loading speed-ups, and cleaning up console logs.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag progress">Active Work</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Translation &amp; Localization Support</strong>
+                  <span>Adding multi-language translation support to make PitCorner accessible to F1 fans around the world.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag planned">Planned</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">High-Resolution Driver Portraits</strong>
+                  <span>Replacing default driver avatars with high-quality official portraits for all active drivers.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag planned">Planned</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">More Charts &amp; Visual Analytics</strong>
+                  <span>Introducing additional grid graphs, lap time progression indicators, and qualifying teammate battle overlays.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag planned">Planned</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Expanded Track Details &amp; Trivia</strong>
+                  <span>Detailed telemetry dashboards for circuits showing historical stats, overtakes index, and lap records.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag backlog">Backlog Idea</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Historical F1 Data (Back to 1950s)</strong>
+                  <span>Integrating historical seasonal data calendars and standings records dating back to F1's inaugural 1950 season.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag backlog">Backlog Idea</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Comprehensive Driver Profiles</strong>
+                  <span>Deeper driver history screens outlining full career stats, team history, accomplishments, and milestones.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag backlog">Backlog Idea</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">All-Time Driver Head-to-Head (H2H)</strong>
+                  <span>Expanding H2H comparison features to support evaluating any two drivers across any era in F1 history.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag backlog">Backlog Idea</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">High-Fidelity Interactive Track Maps</strong>
+                  <span>Upgrading basic track layouts with rich vector graphics, detailed corner profiles, DRS, SM zones, and speed traps.</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('fbm-close').addEventListener('click', closeModal);
+  document.body.style.overflow = 'hidden';
+  overlay.classList.add('open');
+}
+
+/**
  * Wire the feedback and support links and buttons globally
  */
 export function initFeedbackSupport() {
   const navClBtn = document.getElementById('nav-changelog-btn');
   const footerClBtn = document.getElementById('footer-changelog-btn');
+  const navRmBtn = document.getElementById('nav-roadmap-btn');
+  const footerRmBtn = document.getElementById('footer-roadmap-btn');
   const footerFbBtn = document.getElementById('footer-feedback-btn');
   const footerSpBtn = document.getElementById('footer-support-btn');
 
   const triggerChangelog = () => showChangelogModal();
+  const triggerRoadmap = () => showRoadmapModal();
 
   if (navClBtn) {
     navClBtn.addEventListener('click', triggerChangelog);
@@ -572,6 +700,14 @@ export function initFeedbackSupport() {
 
   if (footerClBtn) {
     footerClBtn.addEventListener('click', triggerChangelog);
+  }
+
+  if (navRmBtn) {
+    navRmBtn.addEventListener('click', triggerRoadmap);
+  }
+
+  if (footerRmBtn) {
+    footerRmBtn.addEventListener('click', triggerRoadmap);
   }
 
   if (footerFbBtn) {
