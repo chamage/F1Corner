@@ -365,6 +365,14 @@ export function showChangelogModal() {
             <ul class="changelog-list">
               <li class="changelog-item">
                 <span class="changelog-tag added">Added</span>
+                <span>Advanced F5 Reload Cache-Bust: Programmed the Service Worker fetch listener to respect browser F5/Ctrl+F5 requests (via <code>event.request.cache</code>). Tapping reload now completely bypasses the local PWA cache to fetch and re-validate resources directly from the network!</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Network-First Navigation: Upgraded primary document requests (like <code>index.html</code>) to use a Network-First strategy, ensuring the latest layout changes are instantly seen when online while maintaining robust offline fallbacks.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
                 <span>Instant PWA Updates: Implemented a service worker update detection and <code>controllerchange</code> auto-reload hook. As soon as a new dashboard version is deployed, the app will automatically synchronize and update in the background, reloading seamlessly to serve the fresh cache on the next visits with zero hard refreshes required!</span>
               </li>
             </ul>

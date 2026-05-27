@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v20'; // v20: Implement Service Worker controllerchange auto-reload listener to ensure instant cache updates on reload without manual hard refreshes
+const CACHE_NAME = 'pitcorner-shell-v21'; // v21: Implement Reload-Bypass cache-busting and Network-First navigation strategy for flawless updates on F5 reload
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -46,7 +46,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch: Stale-While-Revalidate Strategy (Serve from cache instantly, update in the background)
+// Fetch: Advanced caching strategies based on request type
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
@@ -55,10 +55,46 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // 1. If user triggered a manual reload (F5 / Ctrl+F5), bypass cache and fetch fresh from network
+  const isReload = event.request.cache === 'reload' || event.request.cache === 'no-cache';
+  if (isReload) {
+    event.respondWith(
+      fetch(event.request).then(networkResponse => {
+        return caches.open(CACHE_NAME).then(cache => {
+          if (networkResponse.status === 200) {
+            cache.put(event.request, networkResponse.clone());
+          }
+          return networkResponse;
+        });
+      }).catch(() => {
+        // Fallback to cache if network is offline
+        return caches.match(event.request);
+      })
+    );
+    return;
+  }
+
+  // 2. For navigation requests (like index.html), use Network-First strategy to guarantee instant updates
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).then(networkResponse => {
+        return caches.open(CACHE_NAME).then(cache => {
+          if (networkResponse.status === 200) {
+            cache.put(event.request, networkResponse.clone());
+          }
+          return networkResponse;
+        });
+      }).catch(() => {
+        return caches.match(event.request) || caches.match('./index.html');
+      })
+    );
+    return;
+  }
+
+  // 3. For sub-resources, use Stale-While-Revalidate Strategy (serve from cache, update in background)
   event.respondWith(
     caches.open(CACHE_NAME).then(cache => {
       return cache.match(event.request).then(cachedResponse => {
-        // Fetch fresh copy from network in parallel
         const fetchPromise = fetch(event.request)
           .then(networkResponse => {
             if (networkResponse.status === 200) {
@@ -67,10 +103,9 @@ self.addEventListener('fetch', event => {
             return networkResponse;
           })
           .catch(() => {
-            // Silently absorb network failures when background updating
+            // absorb background fetch failures gracefully
           });
 
-        // Serve cached version immediately if present, otherwise fallback to network fetch
         return cachedResponse || fetchPromise;
       });
     })
