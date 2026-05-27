@@ -109,7 +109,7 @@ function clearOldCache() {
 function getTTL(url) {
   // Past race laps/positions/stints/pit/overtakes (session_key is a number)
   // These are immutable once the session is over
-  if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather)\?/.test(url) &&
+  if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather|session_result)\?/.test(url) &&
       /session_key=\d+/.test(url)) {
     return TTL_IMMUTABLE;
   }
@@ -300,6 +300,9 @@ export async function getRaceControl(params = {}) {
 export async function getWeather(params = {}) {
   return fetchAPI('/weather', params);
 }
+export async function getSessionResult(params = {}) {
+  return fetchAPI('/session_result', params);
+}
 
 export async function getRaceSessions(year) {
   const sessions = await getSessions({ year, session_type: 'Race' });
@@ -362,51 +365,37 @@ export async function getFinishingOrderFromLaps(sessionKey) {
 
 export async function getFinishingOrder(sessionKey) {
   try {
-    const positions = await getPositions({ session_key: sessionKey });
-    if (!positions || positions.length === 0) {
+    const results = await getSessionResult({ session_key: sessionKey });
+    if (!results || results.length === 0) {
       return getFinishingOrderFromLaps(sessionKey);
     }
 
-    // Group by driver_number and find the latest position record (latest date)
-    const latestPositions = new Map();
-    for (const pos of positions) {
-      const dn = pos.driver_number;
-      const current = latestPositions.get(dn);
-      if (!current || new Date(pos.date) > new Date(current.date)) {
-        latestPositions.set(dn, pos);
-      }
-    }
+    // Sort results: Finishers first (by position), DNFs/DNSs/DSQs at the end
+    const sorted = [...results].sort((a, b) => {
+      if (a.position === null && b.position !== null) return 1;
+      if (a.position !== null && b.position === null) return -1;
+      if (a.position === null && b.position === null) return 0;
+      return a.position - b.position;
+    });
 
-    const sortedLatest = Array.from(latestPositions.values())
-      .sort((a, b) => a.position - b.position);
+    // Map to our standard schema: { driver_number, position, status }
+    return sorted.map((r, index) => {
+      let status = 'FINISHED';
+      if (r.dsq) status = 'DSQ';
+      else if (r.dns) status = 'DNS';
+      else if (r.dnf) status = 'DNF';
 
-    if (sortedLatest.length === 0) return [];
-    const winnerDate = new Date(sortedLatest[0].date);
+      // If position is null (like DNF/DSQ/DNS), assign a sequential fallback rank at the end
+      const finalPosition = r.position !== null ? r.position : (index + 1);
 
-    const results = Array.from(latestPositions.values())
-      .map(p => {
-        const pDate = new Date(p.date);
-        const isDnf = (winnerDate - pDate) > 5 * 60 * 1000;
-        return {
-          driver_number: p.driver_number,
-          position: p.position,
-          dnf: isDnf
-        };
-      })
-      .sort((a, b) => a.position - b.position);
-
-    // Fetch session driver list to check for any telemetry gaps in the position stream
-    const sessionDrivers = await getDrivers({ session_key: sessionKey });
-    const enteredDriverNums = new Set(sessionDrivers.map(d => d.driver_number));
-    const missingAny = Array.from(enteredDriverNums).some(dn => !latestPositions.has(dn));
-
-    if (results.length < 5 || missingAny) {
-      return getFinishingOrderFromLaps(sessionKey);
-    }
-
-    return results;
+      return {
+        driver_number: r.driver_number,
+        position: finalPosition,
+        status: status
+      };
+    });
   } catch (e) {
-    console.warn(`[API] Failed to get finishing order from positions for ${sessionKey}:`, e);
+    console.warn(`[API] Failed to get official finishing order for ${sessionKey}:`, e);
     return getFinishingOrderFromLaps(sessionKey);
   }
 }

@@ -337,10 +337,32 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
-          <!-- v1.1.0 (Active - Today) -->
+          <!-- v1.1.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.1.0 <span>Active</span></div>
+              <div class="changelog-version">v1.1.1 <span>Active</span></div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Telemetry</span>
+                <span>Switched from raw crossing calculations to querying OpenF1's official <code>/session_result</code> API endpoint.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Programmatically resolved all post-race administrative time penalties and DSQs.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Performance</span>
+                <span>Reduced initial database loading network overhead by querying unified results rather than parsing full lap history logs.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.1.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.0</div>
               <div class="changelog-date">May 26, 2026</div>
             </div>
             <ul class="changelog-list">

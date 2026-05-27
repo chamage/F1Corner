@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v2'; // Incremented to v2 to force old caches to clear
+const CACHE_NAME = 'pitcorner-shell-v3'; // Incremented to v3 to force old caches to clear and include PWA icons
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -17,7 +17,9 @@ const STATIC_ASSETS = [
   './js/team-profile.js',
   './js/feedback-support.js',
   './js/charts.js',
-  './logo.svg'
+  './logo.svg',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 // Install: Cache all static shell files

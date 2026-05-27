@@ -9,7 +9,7 @@ import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSe
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 17; // v17: fetch and compile both Sunday GP Races and Saturday Sprints, and add a toggle to view Sprint results
+const LS_VERSION = 19; // v19: natively query the official OpenF1 session_result API for 100% accurate finalized post-race classifications
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
