@@ -173,27 +173,49 @@ function drawChampionshipBattle(seasonData, driversCount) {
     } else {
       chartCanvas.style.display = 'block';
 
-      // Sort races chronologically
-      const sortedRaces = [...seasonData.races]
-        .filter(r => r.results.length > 0)
+      // Group completed sessions by meeting_key to treat Sprint + GP as one event on the timeline
+      const meetingsMap = new Map();
+      for (const r of seasonData.races) {
+        if (!r.results || r.results.length === 0) continue;
+        if (!meetingsMap.has(r.meeting_key)) {
+          meetingsMap.set(r.meeting_key, {
+            meeting_key: r.meeting_key,
+            circuit_short_name: r.circuit_short_name,
+            date_end: r.date_end,
+            sessions: []
+          });
+        }
+        const m = meetingsMap.get(r.meeting_key);
+        m.sessions.push(r);
+        if (new Date(r.date_end) > new Date(m.date_end)) {
+          m.date_end = r.date_end;
+        }
+      }
+
+      // Sort meetings chronologically by their end date
+      const sortedMeetings = Array.from(meetingsMap.values())
         .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
       const datasets = topDrivers.map(d => {
         const pointsProgression = [];
         let cumPoints = 0;
 
-        for (const race of sortedRaces) {
-          const isSprint = race.session_name === 'Sprint';
-          const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
+        for (const meeting of sortedMeetings) {
+          let meetingPoints = 0;
+          for (const race of meeting.sessions) {
+            const isSprint = race.session_name === 'Sprint';
+            const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
 
-          const r = race.results.find(res => res.driver_number === d.driver_number);
-          if (r) {
-            let pts = r.status === 'DSQ' ? 0 : getPointsForPosition(r.position, isSprint);
-            if (seasonData.year < 2025 && fastestLapDriver === d.driver_number && r.position <= 10 && r.status === 'FINISHED') {
-              pts += 1;
+            const r = race.results.find(res => res.driver_number === d.driver_number);
+            if (r) {
+              let pts = r.status === 'DSQ' ? 0 : getPointsForPosition(r.position, isSprint);
+              if (seasonData.year < 2025 && fastestLapDriver === d.driver_number && r.position <= 10 && r.status === 'FINISHED') {
+                pts += 1;
+              }
+              meetingPoints += pts;
             }
-            cumPoints += pts;
           }
+          cumPoints += meetingPoints;
           pointsProgression.push(cumPoints);
         }
 
@@ -205,13 +227,14 @@ function drawChampionshipBattle(seasonData, driversCount) {
         };
       });
 
-      // Draw points line chart
+      // Draw points line chart starting exactly at yMin: 0 with integer y-ticks
       requestAnimationFrame(() => {
         drawLineChart(chartCanvas, datasets, {
           xLabel: 'Races Completed',
           yLabel: 'Points',
           lineWidth: 2.5,
           showDots: true,
+          yMin: 0,
         });
       });
 

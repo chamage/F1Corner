@@ -353,6 +353,18 @@ export function showChangelogModal() {
                 <span>Programmatically resolved all post-race administrative time penalties and DSQs.</span>
               </li>
               <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Resolved fractional values (.7, .3) on points chart Y-axis, displaying clean whole integers.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">UI/UX</span>
+                <span>Grouped weekend sessions by meeting, combining Saturday Sprints and Sunday GPs into one timeline round.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved" style="background: rgba(155, 89, 182, 0.12); border-color: rgba(155, 89, 182, 0.25); color: #9b59b6;">PWA</span>
+                <span>Upgraded Service Worker cache (v3) to bundle and cache local PWA launch icons offline.</span>
+              </li>
+              <li class="changelog-item">
                 <span class="changelog-tag improved">Performance</span>
                 <span>Reduced initial database loading network overhead by querying unified results rather than parsing full lap history logs.</span>
               </li>

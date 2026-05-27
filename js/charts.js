@@ -32,6 +32,7 @@ export function drawLineChart(canvas, datasets, options = {}) {
     lineWidth = 1.5,
     yMin: forceYMin,
     yMax: forceYMax,
+    yDecimals,
   } = options;
 
   const plotW = W - padLeft - padRight;
@@ -50,8 +51,13 @@ export function drawLineChart(canvas, datasets, options = {}) {
   let yMin = forceYMin ?? Math.min(...allVals);
   let yMax = forceYMax ?? Math.max(...allVals);
   const yPad = (yMax - yMin) * 0.08 || 1;
-  yMin -= yPad;
-  yMax += yPad;
+  
+  if (forceYMin === undefined) {
+    yMin -= yPad;
+  }
+  if (forceYMax === undefined) {
+    yMax += yPad;
+  }
 
   const maxLen = Math.max(...datasets.map(d => d.data.length));
 
@@ -85,7 +91,10 @@ export function drawLineChart(canvas, datasets, options = {}) {
       ctx.fillStyle = '#5a5a72';
       ctx.font = '10px JetBrains Mono, monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(val.toFixed(1), padLeft - 8, y + 3);
+      
+      const isIntegerOnly = !allVals.some(v => v % 1 !== 0);
+      const decimals = yDecimals !== undefined ? yDecimals : (isIntegerOnly ? 0 : 1);
+      ctx.fillText(val.toFixed(decimals), padLeft - 8, y + 3);
     }
   }
 
