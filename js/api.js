@@ -79,7 +79,8 @@ function clearOldCache() {
   const keys = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.startsWith(LS_PREFIX)) {
+    // Only evict API-layer cache entries, NOT compiled race data
+    if (key && key.startsWith(LS_PREFIX) && !key.startsWith('f1c_compiled_race_')) {
       keys.push(key);
     }
   }

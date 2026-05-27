@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v4'; // Incremented to v4 to enable Stale-While-Revalidate caching strategy
+const CACHE_NAME = 'pitcorner-shell-v5'; // v5: force install of caching/rate-limit fixes in season-data.js and api.js
 const STATIC_ASSETS = [
   './',
   './index.html',

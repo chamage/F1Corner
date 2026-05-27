@@ -96,30 +96,60 @@ export async function getSeasonData(year) {
   if (seasonCache.has(year)) {
     const cached = seasonCache.get(year);
     // Quick validation: does the number of compiled races match current completed sessions?
-    const allSessions = await getRaceSessions(year);
-    const completedCount = allSessions.filter(s => isPast(s.date_end)).length;
-    if (completedCount === cached.races.length) {
+    // Use the stored totalRaceSessions (which includes both Race + Sprint) for a consistent comparison
+    const cachedTotal = (cached.totalRaceSessions || []).filter(s => isPast(s.date_end)).length;
+    if (cachedTotal === cached.races.length) {
+      console.log(`[Season] ✅ ${year} served from in-memory season cache (${cached.races.length} races)`);
       return cached;
     }
   }
 
+  const t0 = performance.now();
   console.log(`[Season] Loading season ${year}...`);
   const gpSessions = await getRaceSessions(year);
   const sprintSessions = await getSessions({ year, session_type: 'Sprint' });
   const activeSprints = sprintSessions.filter(s => !s.is_cancelled);
   const allRaceSessions = [...gpSessions, ...activeSprints];
   const completedSessions = allRaceSessions.filter(s => isPast(s.date_end));
+  console.log(`[Season] ${completedSessions.length} completed sessions to process (${(performance.now() - t0).toFixed(0)}ms for session list)`);
 
   const races = [];
   const drivers = new Map();
+  let cacheHits = 0;
+  let apiFetches = 0;
+  let incompleteSkips = 0;
 
   // Load or fetch each session individually
   for (const session of completedSessions) {
     const sessionKey = session.session_key;
-    let compiledRace = raceCache.get(sessionKey) || loadRaceFromStorage(sessionKey);
+
+    // Tier 1: in-memory race cache
+    let compiledRace = raceCache.get(sessionKey);
+    if (compiledRace) {
+      cacheHits++;
+    } else {
+      // Tier 2: localStorage race cache
+      const lsKey = `${LS_RACE_PREFIX}v${LS_VERSION}_${sessionKey}`;
+      const rawExists = localStorage.getItem(lsKey) !== null;
+      compiledRace = loadRaceFromStorage(sessionKey);
+      
+      if (compiledRace && !compiledRace.is_incomplete) {
+        // Promote to in-memory cache for faster subsequent access
+        raceCache.set(sessionKey, compiledRace);
+        cacheHits++;
+      } else if (compiledRace && compiledRace.is_incomplete) {
+        incompleteSkips++;
+        // Skip — placeholder is still valid (not expired)
+        continue;
+      } else {
+        // Cache miss — log why
+        console.log(`[Season] ⚠️ Cache miss for ${sessionKey} (${session.circuit_short_name}) — localStorage key "${lsKey}" exists: ${rawExists}`);
+      }
+    }
 
     if (!compiledRace) {
-      console.log(`[Season] Fetching and compiling individual race ${sessionKey} (${session.circuit_short_name})`);
+      console.log(`[Season] 🌐 Fetching race ${sessionKey} (${session.circuit_short_name})`);
+      apiFetches++;
       compiledRace = await fetchRaceData(session);
       if (compiledRace) {
         raceCache.set(sessionKey, compiledRace);
@@ -134,7 +164,8 @@ export async function getSeasonData(year) {
         };
         // Save to localStorage but NOT in-memory raceCache to enforce the 30-minute expiration check on future reloads
         saveRaceToStorage(sessionKey, placeholder);
-        compiledRace = placeholder;
+        incompleteSkips++;
+        continue;
       }
     }
 
@@ -163,6 +194,7 @@ export async function getSeasonData(year) {
   };
 
   seasonCache.set(year, seasonData);
+  console.log(`[Season] ✅ ${year} loaded in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${apiFetches} API fetches, ${incompleteSkips} incomplete skips`);
   return seasonData;
 }
 
