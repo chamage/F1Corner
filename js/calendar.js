@@ -96,13 +96,14 @@ export async function initCalendar(year) {
       container.appendChild(card);
     });
 
-    // Scroll to current/latest completed race
+    // Scroll to current/latest completed race inside the horizontal scroll container
     const currentCard = container.querySelector('.race-card.current');
     const lastCompletedCards = container.querySelectorAll('.race-card:not(.upcoming)');
     const scrollTarget = currentCard || (lastCompletedCards.length > 0 ? lastCompletedCards[lastCompletedCards.length - 1] : null);
     if (scrollTarget) {
       setTimeout(() => {
-        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        const scrollOffset = scrollTarget.offsetLeft - container.offsetWidth / 2 + scrollTarget.offsetWidth / 2;
+        container.scrollTo({ left: scrollOffset, behavior: 'smooth' });
       }, 300);
     }
 

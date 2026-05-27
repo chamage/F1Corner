@@ -392,10 +392,16 @@ function drawChampionshipBattle(seasonData, driversCount) {
         if (groups.length > 0) {
           timelineEl.style.display = 'block';
           timelineEl.innerHTML = `
-            <div style="font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-timeline" style="color:var(--f1-red);"></i> Championship Leader History
-            </div>
-            <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:10px;scrollbar-width:thin;" class="custom-scrollbar">
+            <button id="fb-timeline-toggle" style="background:none;border:none;width:100%;text-align:left;padding:0;font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;display:flex;align-items:center;justify-content:space-between;cursor:pointer;outline:none;transition:color var(--transition-fast);">
+              <span style="display:flex;align-items:center;gap:6px;">
+                <i class="fa-solid fa-timeline" style="color:var(--f1-red);"></i> Championship Leader History
+              </span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--text-muted);text-transform:none;">
+                <span id="fb-timeline-toggle-text">Show History</span>
+                <i id="fb-timeline-toggle-icon" class="fa-solid fa-chevron-down" style="transition:transform var(--transition-base);"></i>
+              </span>
+            </button>
+            <div id="fb-timeline-content" style="display:none;gap:10px;overflow-x:auto;padding-bottom:10px;scrollbar-width:thin;" class="custom-scrollbar">
               ${groups.map(g => {
                 const roundsText = g.startRound === g.endRound ? `Round ${g.startRound}` : `Rounds ${g.startRound}–${g.endRound}`;
                 const tColor = getTeamColor(g.driver.teamColour);
@@ -411,6 +417,37 @@ function drawChampionshipBattle(seasonData, driversCount) {
               }).join('')}
             </div>
           `;
+
+          // Wire collapse/expand toggle
+          const toggleBtn = document.getElementById('fb-timeline-toggle');
+          const toggleText = document.getElementById('fb-timeline-toggle-text');
+          const toggleIcon = document.getElementById('fb-timeline-toggle-icon');
+          const contentDiv = document.getElementById('fb-timeline-content');
+
+          if (toggleBtn && contentDiv) {
+            toggleBtn.addEventListener('click', () => {
+              const isHidden = contentDiv.style.display === 'none';
+              if (isHidden) {
+                contentDiv.style.display = 'flex';
+                toggleText.textContent = 'Hide History';
+                toggleIcon.style.transform = 'rotate(-180deg)';
+                toggleIcon.style.color = 'var(--f1-red)';
+              } else {
+                contentDiv.style.display = 'none';
+                toggleText.textContent = 'Show History';
+                toggleIcon.style.transform = 'rotate(0deg)';
+                toggleIcon.style.color = 'var(--text-muted)';
+              }
+            });
+
+            // Hover effects on the toggle button
+            toggleBtn.addEventListener('mouseenter', () => {
+              toggleBtn.style.color = 'var(--text-primary)';
+            });
+            toggleBtn.addEventListener('mouseleave', () => {
+              toggleBtn.style.color = 'var(--text-secondary)';
+            });
+          }
         } else {
           timelineEl.style.display = 'none';
         }

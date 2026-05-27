@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v21'; // v21: Implement Reload-Bypass cache-busting and Network-First navigation strategy for flawless updates on F5 reload
+const CACHE_NAME = 'pitcorner-shell-v23'; // v23: Eliminate page-level auto-scrolling on load (via containerscrollTo on calendar) and card select (removing section scrollIntoView)
 const STATIC_ASSETS = [
   './',
   './index.html',

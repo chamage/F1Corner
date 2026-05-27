@@ -108,8 +108,7 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     renderTab();
     setupTabs();
 
-    // Scroll to section smoothly
-    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
 
     // 2. Background Enrichment: fetch detailed lap, pit, and overtake counts asynchronously
     Promise.all([

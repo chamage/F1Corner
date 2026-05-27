@@ -356,10 +356,28 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.2.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.2.2 <span>Active</span></div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Eliminated Page-Level Auto-Scrolling: Completely removed annoying window-level scrolling on load and card select.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Collapsible Championship Leader History: Refined the dashboard's Points Tracker card by collapsing the Championship Leader History timeline by default, keeping page layouts extremely clean while adding a sleek, chevron-animated toggle button to show or hide the leadership runs.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.2.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.2.1 <span>Active</span></div>
+              <div class="changelog-version">v1.2.1</div>
               <div class="changelog-date">May 27, 2026</div>
             </div>
             <ul class="changelog-list">
