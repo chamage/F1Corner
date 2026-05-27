@@ -170,6 +170,8 @@ function drawChampionshipBattle(seasonData, driversCount) {
     if (topDrivers.length === 0) {
       chartCanvas.style.display = 'none';
       legendEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">No points data available yet</div>';
+      const timelineEl = document.getElementById('championship-leaders-timeline');
+      if (timelineEl) timelineEl.style.display = 'none';
     } else {
       chartCanvas.style.display = 'block';
 
@@ -334,6 +336,85 @@ function drawChampionshipBattle(seasonData, driversCount) {
           ${ds.label}
         </span>
       `).join('');
+
+      // Render Championship Leaders Timeline
+      const timelineEl = document.getElementById('championship-leaders-timeline');
+      if (timelineEl) {
+        const leadersByRound = [];
+        for (let mIdx = 0; mIdx < sortedMeetings.length; mIdx++) {
+          const roundDriverPoints = standings.drivers.map(d => ({
+            driver_number: d.driver_number,
+            name_acronym: d.name_acronym,
+            full_name: d.full_name,
+            team_name: d.team_name,
+            team_colour: d.team_colour,
+            points: d.pointsHistory[mIdx] || 0
+          })).sort((a, b) => b.points - a.points);
+
+          if (roundDriverPoints.length > 0 && roundDriverPoints[0].points > 0) {
+            const leader = roundDriverPoints[0];
+            leadersByRound.push({
+              round: mIdx + 1,
+              driver_number: leader.driver_number,
+              name: leader.name_acronym,
+              fullName: leader.full_name,
+              teamName: leader.team_name,
+              teamColour: leader.team_colour
+            });
+          }
+        }
+
+        // Group contiguous rounds
+        const groups = [];
+        if (leadersByRound.length > 0) {
+          let currentGroup = {
+            startRound: leadersByRound[0].round,
+            endRound: leadersByRound[0].round,
+            driver: leadersByRound[0]
+          };
+
+          for (let i = 1; i < leadersByRound.length; i++) {
+            const current = leadersByRound[i];
+            if (current.driver_number === currentGroup.driver.driver_number) {
+              currentGroup.endRound = current.round;
+            } else {
+              groups.push(currentGroup);
+              currentGroup = {
+                startRound: current.round,
+                endRound: current.round,
+                driver: current
+              };
+            }
+          }
+          groups.push(currentGroup);
+        }
+
+        if (groups.length > 0) {
+          timelineEl.style.display = 'block';
+          timelineEl.innerHTML = `
+            <div style="font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-timeline" style="color:var(--f1-red);"></i> Championship Leader History
+            </div>
+            <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:10px;scrollbar-width:thin;" class="custom-scrollbar">
+              ${groups.map(g => {
+                const roundsText = g.startRound === g.endRound ? `Round ${g.startRound}` : `Rounds ${g.startRound}–${g.endRound}`;
+                const tColor = getTeamColor(g.driver.teamColour);
+                return `
+                  <div style="background:var(--bg-tertiary);border:1px solid var(--border-subtle);border-left:4px solid ${tColor};border-radius:var(--radius-sm);padding:8px 12px;flex:0 0 auto;min-width:150px;display:flex;flex-direction:column;gap:2px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">${roundsText}</div>
+                    <div style="font-family:'Outfit',sans-serif;font-weight:800;font-size:0.9rem;color:var(--text-primary);">
+                      ${g.driver.fullName || g.driver.name}
+                    </div>
+                    <div style="font-size:0.68rem;color:var(--text-secondary);">${g.driver.teamName}</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `;
+        } else {
+          timelineEl.style.display = 'none';
+        }
+      }
     }
   }
 }

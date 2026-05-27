@@ -300,3 +300,34 @@ export function getDriverFlagImg(acronym, extraStyles = '') {
   return `<img src="https://flagcdn.com/w40/${info.code}.png" alt="${info.country}" title="${info.country}" style="${defaultStyles} ${extraStyles}">`;
 }
 
+/**
+ * Format a list of round numbers into a clean string of continuous ranges: Rounds 1–3, 5–6, 8
+ */
+export function formatRoundRanges(rounds) {
+  if (!rounds || rounds.length === 0) return '';
+  const sorted = [...rounds].sort((a, b) => a - b);
+  const ranges = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      if (start === end) {
+        ranges.push(`${start}`);
+      } else {
+        ranges.push(`${start}–${end}`);
+      }
+      start = sorted[i];
+      end = sorted[i];
+    }
+  }
+  if (start === end) {
+    ranges.push(`${start}`);
+  } else {
+    ranges.push(`${start}–${end}`);
+  }
+  return ranges.length === 1 ? `Round ${ranges[0]}` : `Rounds ${ranges.join(', ')}`;
+}
+
+

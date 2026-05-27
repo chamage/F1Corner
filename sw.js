@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v10'; // v10: update Planned Features with user backlog checklist
+const CACHE_NAME = 'pitcorner-shell-v19'; // v19: Enhance feedback form validation (mandatory rating, category, message) and add optional follow-up email field
 const STATIC_ASSETS = [
   './',
   './index.html',

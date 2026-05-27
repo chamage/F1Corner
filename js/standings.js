@@ -40,9 +40,11 @@ function renderDriverStandings(standings, container) {
     const barWidth = maxPoints > 0 ? (d.points / maxPoints) * 100 : 0;
     const teamColor = getTeamColor(d.team_colour);
     const sparkId = `sparkline-driver-${d.driver_number}`;
+    const isChampion = i === 0 && (standings.isFinished || standings.driverClinched);
+    const champClass = isChampion ? 'champion-row' : '';
 
     html += `
-      <tr data-driver="${d.driver_number}">
+      <tr data-driver="${d.driver_number}" class="${champClass}">
         <td><span class="position-badge ${posClass}">${pos}</span></td>
         <td>
           <div class="driver-cell">
@@ -52,6 +54,7 @@ function renderDriverStandings(standings, container) {
               <div class="driver-name" style="display:flex;align-items:center;gap:6px;">
                 ${getDriverFlagImg(d.name_acronym, 'width:15px;box-shadow:none;border-radius:1px;flex-shrink:0;')}
                 <span>${d.full_name || d.name_acronym}</span>
+                ${isChampion ? `<span class="champion-badge ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-crown"></i> ${standings.isFinished ? 'Champion' : 'Clinched'}</span>` : ''}
               </div>
               <div class="driver-team">${d.team_name}</div>
             </div>
@@ -158,6 +161,8 @@ function renderConstructorStandings(standings, container) {
     const posClass = pos <= 3 ? `p${pos}` : '';
     const teamColor = getTeamColor(t.team_colour);
     const barWidth = maxPoints > 0 ? (t.points / maxPoints) * 100 : 0;
+    const isChampion = i === 0 && (standings.isFinished || standings.constructorClinched);
+    const champClass = isChampion ? 'champion-row' : '';
 
     const totalTeamPts = t.points || 1;
     const driverBars = t.drivers.map((d, idx) =>
@@ -165,13 +170,16 @@ function renderConstructorStandings(standings, container) {
     ).join('');
 
     html += `
-      <tr data-team="${t.team_name}">
+      <tr data-team="${t.team_name}" class="${champClass}">
         <td><span class="position-badge ${posClass}">${pos}</span></td>
         <td>
           <div class="driver-cell">
             <div class="team-color-bar" style="background:${teamColor}"></div>
             <div class="driver-info">
-              <div class="driver-name">${t.team_name}</div>
+              <div class="driver-name" style="display:flex;align-items:center;gap:8px;">
+                <span>${t.team_name}</span>
+                ${isChampion ? `<span class="champion-badge constructor ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Constructor Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-trophy"></i> ${standings.isFinished ? 'Champion' : 'Clinched'}</span>` : ''}
+              </div>
             </div>
           </div>
         </td>

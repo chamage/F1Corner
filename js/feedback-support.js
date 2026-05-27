@@ -104,7 +104,7 @@ export function showFeedbackModal() {
 
       <form id="feedback-form" class="feedback-form">
         <div class="feedback-group">
-          <label class="feedback-label">Rating</label>
+          <label class="feedback-label">Rating <span style="color:var(--f1-red);">*</span></label>
           <div class="rating-stars" id="feedback-stars">
             <i class="fa-regular fa-star rating-star" data-rating="1"></i>
             <i class="fa-regular fa-star rating-star" data-rating="2"></i>
@@ -112,21 +112,28 @@ export function showFeedbackModal() {
             <i class="fa-regular fa-star rating-star" data-rating="4"></i>
             <i class="fa-regular fa-star rating-star" data-rating="5"></i>
           </div>
+          <div id="fb-rating-error" style="color:var(--f1-red);font-size:0.75rem;margin-top:2px;display:none;font-weight:600;"><i class="fa-solid fa-circle-exclamation"></i> Please select a star rating.</div>
         </div>
 
         <div class="feedback-group">
-          <label class="feedback-label" for="fb-category">Category</label>
+          <label class="feedback-label" for="fb-category">Category <span style="color:var(--f1-red);">*</span></label>
           <select id="fb-category" class="feedback-select" required>
+            <option value="">Select a category...</option>
             <option value="Bug">Bug Report</option>
-            <option value="Feature" selected>Feature Request</option>
+            <option value="Feature">Feature Request</option>
             <option value="UIUX">UI/UX Refinement</option>
             <option value="Praise">General Praise</option>
           </select>
         </div>
 
         <div class="feedback-group">
-          <label class="feedback-label" for="fb-message">Message</label>
+          <label class="feedback-label" for="fb-message">Message <span style="color:var(--f1-red);">*</span></label>
           <textarea id="fb-message" class="feedback-textarea" placeholder="Tell us more details..." required></textarea>
+        </div>
+
+        <div class="feedback-group">
+          <label class="feedback-label" for="fb-email">Email Address <span style="color:var(--text-muted);text-transform:none;font-size:0.7rem;font-weight:normal;">(Optional — for follow-ups)</span></label>
+          <input type="email" id="fb-email" class="feedback-input" placeholder="name@example.com">
         </div>
 
         <button type="submit" class="feedback-submit-btn">
@@ -158,6 +165,8 @@ export function showFeedbackModal() {
     star.addEventListener('click', () => {
       activeRating = parseInt(star.dataset.rating);
       highlightStars(stars, activeRating);
+      const ratingErr = document.getElementById('fb-rating-error');
+      if (ratingErr) ratingErr.style.display = 'none';
     });
   });
 
@@ -165,10 +174,19 @@ export function showFeedbackModal() {
   const form = document.getElementById('feedback-form');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    // Validate star rating selection
+    if (activeRating === 0) {
+      const ratingErr = document.getElementById('fb-rating-error');
+      if (ratingErr) ratingErr.style.display = 'block';
+      return;
+    }
+
     const category = document.getElementById('fb-category').value;
     const message = document.getElementById('fb-message').value.trim();
+    const email = document.getElementById('fb-email').value.trim();
 
-    if (!message) return;
+    if (!category || !message) return;
 
     // Show submitting state on the button to prevent duplicate clicks
     const submitBtn = form.querySelector('.feedback-submit-btn');
@@ -177,9 +195,10 @@ export function showFeedbackModal() {
     submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="margin-right: 6px;"></i>Sending...';
 
     const payload = {
-      rating: activeRating || 'No rating',
+      rating: activeRating,
       category: category,
-      message: message
+      message: message,
+      email: email || undefined
     };
 
     let sentSuccessfully = true;
@@ -337,10 +356,126 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.2.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.2.0 <span>Active</span></div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Optional Email Follow-Up Field: Users can now optionally enter their email address in the feedback form if they want a direct contact or response from the developer (no promise of response).</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Enhanced Feedback Validation: Upgraded the feedback form to require a category selection, star rating, and message, with sleek error highlights.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Championship Leadership History: Dynamic tracking algorithms compute who led the standings after each individual Grand Prix round.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Interactive Progression Timeline: Added a horizontal scrolling leadership progression capsule bar on the dashboard's Points Tracker card, summarizing exactly which drivers led the title fight and across which rounds.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Modal Leadership Badges: Integrated dynamic "Championship Leader" milestone achievements detailing the exact rounds led when inspecting driver or constructor profiles, complete with range-based list compression (e.g. Rounds 1–3, 5–6) for clean readability!</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.1.5 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.5</div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>World Champion Clinch GP Analytics: Renders a gorgeous gold-glowing champion crown/trophy banner inside the Driver and Constructor profile modals if they have mathematically clinched the title, showing the exact Grand Prix circuit and round number of their championship security.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Champion Clinch Indicator: Added mathematical algorithms to calculate maximum remaining points for active seasons. If the P1 driver or constructor has a points gap strictly greater than remaining points, they are dynamically highlighted with a gold background and a special "Clinched" badge before the season officially finishes!</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.1.4 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.4</div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Champion Highlights: Dynamically detects completed seasons and awards the Driver World Champion and World Constructor Champion with glowing gold row backgrounds, left borders, and custom crown/trophy "Champion" badges!</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Driver Lineup End-of-Season Accuracy: Aggregates driver statistics chronologically to guarantee driver standings and acronyms display their correct end-of-season teams rather than start-of-season replacements.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Mid-Season Driver Swap Constructor Points: Computes and attributes constructor standings points and wins dynamically at the active race level, ensuring that points are allocated only to the constructors that the driver actively represented during their respective stints.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Constructor Driver Contributions: Upgraded lineup contributions list to display the exact point splits scored by each driver specifically for that constructor.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.1.3 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.1.3</div>
+              <div class="changelog-date">May 27, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Team Points Progression Chart: Renders a canvas line chart depicting constructor points week-by-week.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Reliability Analytics: Displays a calculated team reliability percentage and DNF statistics.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Interactive Teammate Duels: Compares teammates side-by-side on points contributions, best finishes, and GP/Sprint finishing head-to-heads.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Constructor Achievements: New gamified constructor milestone cards rewarding championship leaders, points dominance, and bulletproof reliability.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Sprint Statistics: Segmented toggle tabs in driver profile modal dynamically rendering comprehensive Sprint points, wins, podiums, and metrics.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Sprint Results Chart: Custom chronological bar chart detailing sprint finishing orders (P1–P20, DNF, DNS, DSQ).</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Sprint Achievements: New milestone badges including Sprint Master, Sprint Podium Finisher, Sprint Scorer, and Sprint Dominator.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Sprint Teammate H2H: Direct teammate head-to-head performance ratio for all sprint race sessions.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.1.2 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.1.2 <span>Active</span></div>
+              <div class="changelog-version">v1.1.2</div>
               <div class="changelog-date">May 27, 2026</div>
             </div>
             <ul class="changelog-list">

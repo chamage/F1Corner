@@ -171,19 +171,20 @@ export async function getSeasonData(year) {
 
     if (compiledRace && !compiledRace.is_incomplete) {
       races.push(compiledRace);
-      // Aggregate driver details from this session
-      if (compiledRace.drivers) {
-        for (const d of compiledRace.drivers) {
-          if (!drivers.has(d.driver_number)) {
-            drivers.set(d.driver_number, d);
-          }
-        }
-      }
     }
   }
 
   // Always keep races sorted chronologically by date_end
   races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+  // Aggregate driver details from sorted races to ensure latest team/colour is captured
+  for (const race of races) {
+    if (race.drivers) {
+      for (const d of race.drivers) {
+        drivers.set(d.driver_number, d);
+      }
+    }
+  }
 
   const seasonData = {
     year,
@@ -302,6 +303,7 @@ export function getResultsForSession(seasonData, sessionKey) {
  */
 export function computeStandingsFromSeason(seasonData) {
   const driverStats = new Map();
+  const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
 
   // Find the first race date for each driver to handle mid-season replacements correctly
@@ -366,7 +368,12 @@ export function computeStandingsFromSeason(seasonData) {
             dsqs: 0,
             raceResults: [],
             allResults: [],
-            pointsHistory: []
+            pointsHistory: [],
+            sprintPoints: 0,
+            sprintWins: 0,
+            sprintPodiums: 0,
+            sprintDnfs: 0,
+            sprintResults: []
           });
         }
         const stats = driverStats.get(driver_number);
@@ -381,7 +388,16 @@ export function computeStandingsFromSeason(seasonData) {
 
         stats.points += pts;
 
-        if (!isSprint) {
+        if (isSprint) {
+          if (position === 1 && status === 'FINISHED') stats.sprintWins++;
+          if (position <= 3 && status === 'FINISHED') stats.sprintPodiums++;
+          if (status === 'DNF') stats.sprintDnfs++;
+          stats.sprintPoints += pts;
+
+          if (status === 'FINISHED' || status === 'DNF') {
+            stats.sprintResults.push(position);
+          }
+        } else {
           if (position === 1 && status === 'FINISHED') stats.wins++;
           if (position <= 3 && status === 'FINISHED') stats.podiums++;
           if (status === 'DNF') stats.dnfs++;
@@ -398,6 +414,29 @@ export function computeStandingsFromSeason(seasonData) {
           session_key: race.session_key,
           status: status
         });
+
+        // Find driver's team for THIS specific race
+        const raceDriverInfo = race.drivers ? race.drivers.find(rd => rd.driver_number === driver_number) : null;
+        const raceTeamName = raceDriverInfo ? raceDriverInfo.team_name : 'Unknown';
+        const raceTeamColour = raceDriverInfo ? raceDriverInfo.team_colour : '666666';
+
+        if (raceTeamName !== 'Unknown') {
+          if (!constructorStats.has(raceTeamName)) {
+            constructorStats.set(raceTeamName, {
+              team_name: raceTeamName,
+              team_colour: raceTeamColour,
+              points: 0,
+              wins: 0,
+              driverPoints: new Map()
+            });
+          }
+          const cStats = constructorStats.get(raceTeamName);
+          cStats.points += pts;
+          cStats.driverPoints.set(driver_number, (cStats.driverPoints.get(driver_number) || 0) + pts);
+          if (!isSprint && position === 1 && status === 'FINISHED') {
+            cStats.wins++;
+          }
+        }
       }
 
       // Process DNS / ABSENT active drivers who did not compete in this session
@@ -416,7 +455,12 @@ export function computeStandingsFromSeason(seasonData) {
               dsqs: 0,
               raceResults: [],
               allResults: [],
-              pointsHistory: []
+              pointsHistory: [],
+              sprintPoints: 0,
+              sprintWins: 0,
+              sprintPodiums: 0,
+              sprintDnfs: 0,
+              sprintResults: []
             });
           }
           const stats = driverStats.get(driverNum);
@@ -456,7 +500,12 @@ export function computeStandingsFromSeason(seasonData) {
           dsqs: 0,
           raceResults: [],
           allResults: [],
-          pointsHistory: []
+          pointsHistory: [],
+          sprintPoints: 0,
+          sprintWins: 0,
+          sprintPodiums: 0,
+          sprintDnfs: 0,
+          sprintResults: []
         });
       }
       const stats = driverStats.get(driverNum);
@@ -509,8 +558,29 @@ export function computeStandingsFromSeason(seasonData) {
 
   // Build constructor standings
   const teamMap = new Map();
+  for (const [teamName, cStats] of constructorStats.entries()) {
+    const driversList = [];
+    for (const [driverNum, ptsScored] of cStats.driverPoints.entries()) {
+      const dInfo = seasonData.drivers.get(driverNum);
+      if (dInfo) {
+        driversList.push({ name: dInfo.name_acronym, points: ptsScored });
+      }
+    }
+    driversList.sort((a, b) => b.points - a.points);
+
+    teamMap.set(teamName, {
+      team_name: teamName,
+      team_colour: cStats.team_colour,
+      points: cStats.points,
+      wins: cStats.wins,
+      drivers: driversList,
+    });
+  }
+
+  // Populate fallback driver lists and teams if any drivers represent teams not captured in constructorStats
   for (const ds of driverStandings) {
     const team = ds.team_name || 'Unknown';
+    if (team === 'Unknown') continue;
     if (!teamMap.has(team)) {
       teamMap.set(team, {
         team_name: team,
@@ -521,9 +591,9 @@ export function computeStandingsFromSeason(seasonData) {
       });
     }
     const t = teamMap.get(team);
-    t.points += ds.points;
-    t.wins += ds.wins;
-    t.drivers.push({ name: ds.name_acronym, points: ds.points });
+    if (!t.drivers.some(d => d.name === ds.name_acronym)) {
+      t.drivers.push({ name: ds.name_acronym, points: ds.points });
+    }
   }
 
   const constructorStandings = Array.from(teamMap.values())
@@ -532,12 +602,159 @@ export function computeStandingsFromSeason(seasonData) {
       return b.wins - a.wins;
     });
 
+  const allRaceSessions = seasonData.totalRaceSessions || [];
+  const gpSessions = allRaceSessions.filter(s => s.session_name === 'Race');
+  const sprintSessions = allRaceSessions.filter(s => s.session_name === 'Sprint');
+  const isFinished = gpSessions.length > 0 && gpSessions.every(s => new Date(s.date_end) < new Date());
+
+  // Calculate remaining sessions for mathematical clinching
+  const remainingSessions = allRaceSessions.filter(s => new Date(s.date_end) >= new Date());
+  const remainingGPs = remainingSessions.filter(s => s.session_name === 'Race').length;
+  const remainingSprints = remainingSessions.filter(s => s.session_name === 'Sprint').length;
+
+  const maxPointsPerGP = seasonData.year < 2025 ? 26 : 25;
+  const maxRemainingPoints = (remainingGPs * maxPointsPerGP) + (remainingSprints * 8);
+
+  const maxConstructorPointsPerGP = seasonData.year < 2025 ? 44 : 43;
+  const maxConstructorRemainingPoints = (remainingGPs * maxConstructorPointsPerGP) + (remainingSprints * 15);
+
+  const driverClinched = driverStandings.length >= 2 && 
+    (driverStandings[0].points - driverStandings[1].points) > maxRemainingPoints;
+
+  const constructorClinched = constructorStandings.length >= 2 && 
+    (constructorStandings[0].points - constructorStandings[1].points) > maxConstructorRemainingPoints;
+
+  // ── Compute Chronological Clinch GP Round for Drivers & Constructors ──
+  let driverClinchMeeting = null;
+  let constructorClinchMeeting = null;
+
+  // We can calculate pointsHistory for constructors by summing driver points histories:
+  const teamPointsHistories = new Map(); // teamName -> pointsHistory[]
+  for (const ds of driverStandings) {
+    const teamName = ds.team_name || 'Unknown';
+    if (teamName === 'Unknown') continue;
+    if (!teamPointsHistories.has(teamName)) {
+      teamPointsHistories.set(teamName, new Array(sortedMeetings.length).fill(0));
+    }
+    const tHistory = teamPointsHistories.get(teamName);
+    const dHistory = ds.pointsHistory || [];
+    for (let rIdx = 0; rIdx < sortedMeetings.length; rIdx++) {
+      if (rIdx < dHistory.length) {
+        tHistory[rIdx] += dHistory[rIdx];
+      } else if (dHistory.length > 0) {
+        tHistory[rIdx] += dHistory[dHistory.length - 1];
+      }
+    }
+  }
+
+  // ── Track Championship Leadership History ──
+  const driverLeadRounds = {};      // driver_number -> array of round numbers
+  const constructorLeadRounds = {}; // team_name -> array of round numbers
+
+  for (let mIdx = 0; mIdx < sortedMeetings.length; mIdx++) {
+    const meeting = sortedMeetings[mIdx];
+    const meetingDate = new Date(meeting.date_end);
+
+    // Remaining GPs/Sprints strictly after this meeting date
+    const remGPs = gpSessions.filter(s => new Date(s.date_end) > meetingDate).length;
+    const remSprints = sprintSessions.filter(s => new Date(s.date_end) > meetingDate).length;
+
+    const maxRemPts = (remGPs * maxPointsPerGP) + (remSprints * 8);
+    const maxConstRemPts = (remGPs * maxConstructorPointsPerGP) + (remSprints * 15);
+
+    // Check Driver Clinch at round mIdx
+    if (!driverClinchMeeting) {
+      const roundDriverPoints = driverStandings.map(d => ({
+        driver_number: d.driver_number,
+        points: d.pointsHistory[mIdx] || 0
+      })).sort((a, b) => b.points - a.points);
+
+      if (roundDriverPoints.length >= 2) {
+        const gap = roundDriverPoints[0].points - roundDriverPoints[1].points;
+        if (gap > maxRemPts) {
+          driverClinchMeeting = {
+            round: mIdx + 1,
+            circuit_short_name: meeting.circuit_short_name,
+            driver_number: roundDriverPoints[0].driver_number
+          };
+        }
+      }
+    }
+
+    // Check Constructor Clinch at round mIdx
+    if (!constructorClinchMeeting) {
+      const roundConstructorPoints = Array.from(teamPointsHistories.entries()).map(([teamName, history]) => ({
+        team_name: teamName,
+        points: history[mIdx] || 0
+      })).sort((a, b) => b.points - a.points);
+
+      if (roundConstructorPoints.length >= 2) {
+        const gap = roundConstructorPoints[0].points - roundConstructorPoints[1].points;
+        if (gap > maxConstRemPts) {
+          constructorClinchMeeting = {
+            round: mIdx + 1,
+            circuit_short_name: meeting.circuit_short_name,
+            team_name: roundConstructorPoints[0].team_name
+          };
+        }
+      }
+    }
+
+    // ── Track Championship Leaders at this round ──
+    const roundDriverPoints = driverStandings.map(d => ({
+      driver_number: d.driver_number,
+      points: d.pointsHistory[mIdx] || 0
+    })).sort((a, b) => b.points - a.points);
+    if (roundDriverPoints.length > 0 && roundDriverPoints[0].points > 0) {
+      const leaderNum = roundDriverPoints[0].driver_number;
+      if (!driverLeadRounds[leaderNum]) driverLeadRounds[leaderNum] = [];
+      driverLeadRounds[leaderNum].push(mIdx + 1);
+    }
+
+    const roundConstructorPoints = Array.from(teamPointsHistories.entries()).map(([teamName, history]) => ({
+      team_name: teamName,
+      points: history[mIdx] || 0
+    })).sort((a, b) => b.points - a.points);
+    if (roundConstructorPoints.length > 0 && roundConstructorPoints[0].points > 0) {
+      const leaderTeam = roundConstructorPoints[0].team_name;
+      if (!constructorLeadRounds[leaderTeam]) constructorLeadRounds[leaderTeam] = [];
+      constructorLeadRounds[leaderTeam].push(mIdx + 1);
+    }
+  }
+
+  // If the season is fully finished and no clinch occurred earlier (absolute tie-breaker in final round)
+  if (isFinished) {
+    if (!driverClinchMeeting && driverStandings.length > 0) {
+      const lastMeeting = sortedMeetings[sortedMeetings.length - 1];
+      driverClinchMeeting = {
+        round: sortedMeetings.length,
+        circuit_short_name: lastMeeting.circuit_short_name,
+        driver_number: driverStandings[0].driver_number
+      };
+    }
+    if (!constructorClinchMeeting && constructorStandings.length > 0) {
+      const lastMeeting = sortedMeetings[sortedMeetings.length - 1];
+      constructorClinchMeeting = {
+        round: sortedMeetings.length,
+        circuit_short_name: lastMeeting.circuit_short_name,
+        team_name: constructorStandings[0].team_name
+      };
+    }
+  }
+
   return {
     year: seasonData.year,
     drivers: driverStandings,
     constructors: constructorStandings,
     raceCount: completedRaces.filter(r => r.session_name === 'Race').length,
     raceSessions: completedRaces,
+    isFinished: isFinished,
+    driverClinched: driverClinched,
+    constructorClinched: constructorClinched,
+    driverClinchMeeting: driverClinchMeeting,
+    constructorClinchMeeting: constructorClinchMeeting,
+    driverLeadRounds: driverLeadRounds,
+    constructorLeadRounds: constructorLeadRounds,
   };
 }
 
