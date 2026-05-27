@@ -345,12 +345,20 @@ export function showChangelogModal() {
             </div>
             <ul class="changelog-list">
               <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Added global queue-wide backoff cooldown for HTTP 429 rate limits, preventing parallel rate-limiting cascades.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Caching</span>
+                <span>Implemented 30-minute transient placeholder caching for failed/incomplete GP compiles to prevent page refresh API hammers.</span>
+              </li>
+              <li class="changelog-item">
                 <span class="changelog-tag improved">Telemetry</span>
                 <span>Switched from raw crossing calculations to querying OpenF1's official <code>/session_result</code> API endpoint.</span>
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag fixed">Fixed</span>
-                <span>Programmatically resolved all post-race administrative time penalties and DSQs.</span>
+                <span>Programmatically resolved all post-race administrative time penalties and DSQs, preserving r.status in the compiler.</span>
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag fixed">Fixed</span>
@@ -361,8 +369,24 @@ export function showChangelogModal() {
                 <span>Grouped weekend sessions by meeting, combining Saturday Sprints and Sunday GPs into one timeline round.</span>
               </li>
               <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Guaranteed 100% chart-standings sync by compiling pointsHistory inside the core standings compiler, eliminating duplicate calculations.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Resolved TypeError crash in Race Detail results rendering by safely parsing gap and pit telemetry as floats.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Season Year selector persistence in LocalStorage, remembering user's active year selection across page refreshes.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Dynamic, glassmorphic hover tooltips on the Points Tracker chart, displaying real-time round scores for each driver.</span>
+              </li>
+              <li class="changelog-item">
                 <span class="changelog-tag improved" style="background: rgba(155, 89, 182, 0.12); border-color: rgba(155, 89, 182, 0.25); color: #9b59b6;">PWA</span>
-                <span>Upgraded Service Worker cache (v3) to bundle and cache local PWA launch icons offline.</span>
+                <span>Upgraded Service Worker cache (v4) to a Stale-While-Revalidate strategy, delivering instant, zero-delay F5 page loads.</span>
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag improved">Performance</span>

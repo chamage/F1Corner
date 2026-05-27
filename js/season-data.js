@@ -9,7 +9,7 @@ import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSe
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 19; // v19: natively query the official OpenF1 session_result API for 100% accurate finalized post-race classifications
+const LS_VERSION = 21; // v21: respect official DSQ/DNS/DNF statuses in season-data results compiler to avoid status overrides
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -25,7 +25,15 @@ function loadRaceFromStorage(sessionKey) {
   try {
     const raw = localStorage.getItem(lsRaceKey(sessionKey));
     if (!raw) return null;
-    return JSON.parse(raw);
+    const compiled = JSON.parse(raw);
+    if (compiled && compiled.is_incomplete) {
+      // Expire incomplete placeholders after 30 minutes to check for new data
+      if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
+        localStorage.removeItem(lsRaceKey(sessionKey));
+        return null;
+      }
+    }
+    return compiled;
   } catch {
     return null;
   }
@@ -116,10 +124,21 @@ export async function getSeasonData(year) {
       if (compiledRace) {
         raceCache.set(sessionKey, compiledRace);
         saveRaceToStorage(sessionKey, compiledRace);
+      } else {
+        // Save incomplete placeholder to prevent hammering the API
+        const placeholder = {
+          session_key: sessionKey,
+          circuit_short_name: session.circuit_short_name,
+          is_incomplete: true,
+          compiledAt: Date.now()
+        };
+        // Save to localStorage but NOT in-memory raceCache to enforce the 30-minute expiration check on future reloads
+        saveRaceToStorage(sessionKey, placeholder);
+        compiledRace = placeholder;
       }
     }
 
-    if (compiledRace) {
+    if (compiledRace && !compiledRace.is_incomplete) {
       races.push(compiledRace);
       // Aggregate driver details from this session
       if (compiledRace.drivers) {
@@ -183,11 +202,15 @@ async function fetchRaceData(session) {
       const dn = r.driver_number;
       const lapsCompleted = lapsByDriver.get(dn) || 0;
 
-      let status = 'FINISHED';
-      if (lapsCompleted <= 1) { // Laps <= 1 is a DNS
-        status = 'DNS';
-      } else if (lapsCompleted <= maxLaps - 5) {
-        status = 'DNF';
+      // Respect the official classified status (DSQ / DNS / DNF) from session result if present
+      let status = r.status || 'FINISHED';
+
+      if (status === 'FINISHED') {
+        if (lapsCompleted <= 1) { // Laps <= 1 is a DNS
+          status = 'DNS';
+        } else if (lapsCompleted <= maxLaps - 5) {
+          status = 'DNF';
+        }
       }
 
       return {
@@ -272,63 +295,37 @@ export function computeStandingsFromSeason(seasonData) {
 
   const activeDrivers = Array.from(seasonData.drivers.keys());
 
-  for (const race of completedRaces) {
-    const isSprint = race.session_name === 'Sprint';
-    const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
-    const raceDrivers = new Set(race.results.map(r => r.driver_number));
-
-    for (const { driver_number, position, status } of race.results) {
-      if (!driverStats.has(driver_number)) {
-        driverStats.set(driver_number, {
-          points: 0,
-          wins: 0,
-          podiums: 0,
-          dnfs: 0,
-          dnss: 0,
-          dsqs: 0,
-          raceResults: [],
-          allResults: [],
-        });
-      }
-      const stats = driverStats.get(driver_number);
-
-      // Points only if not disqualified (DSQ)
-      let pts = status === 'DSQ' ? 0 : getPointsForPosition(position, isSprint);
-
-      // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
-      if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
-        pts += 1;
-      }
-
-      stats.points += pts;
-
-      if (!isSprint) {
-        if (position === 1 && status === 'FINISHED') stats.wins++;
-        if (position <= 3 && status === 'FINISHED') stats.podiums++;
-        if (status === 'DNF') stats.dnfs++;
-        if (status === 'DNS') stats.dnss++;
-        if (status === 'DSQ') stats.dsqs++;
-
-        if (status === 'FINISHED' || status === 'DNF') {
-          stats.raceResults.push(position);
-        }
-      }
-      stats.allResults.push({
-        position,
-        isSprint,
-        session_key: race.session_key,
-        status: status
+  // Group completed sessions by meeting_key to treat Sprint + GP as one event on the timeline
+  const meetingsMap = new Map();
+  for (const r of completedRaces) {
+    if (!meetingsMap.has(r.meeting_key)) {
+      meetingsMap.set(r.meeting_key, {
+        meeting_key: r.meeting_key,
+        circuit_short_name: r.circuit_short_name,
+        date_end: r.date_end,
+        sessions: []
       });
     }
+    const m = meetingsMap.get(r.meeting_key);
+    m.sessions.push(r);
+    if (new Date(r.date_end) > new Date(m.date_end)) {
+      m.date_end = r.date_end;
+    }
+  }
 
-    // Process DNS / ABSENT active drivers who did not compete in this session
-    const raceDate = new Date(race.date_end);
-    for (const driverNum of activeDrivers) {
-      if (!raceDrivers.has(driverNum)) {
-        const firstDate = driverFirstRaceDate.get(driverNum);
+  // Sort meetings chronologically by their end date
+  const sortedMeetings = Array.from(meetingsMap.values())
+    .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-        if (!driverStats.has(driverNum)) {
-          driverStats.set(driverNum, {
+  for (const meeting of sortedMeetings) {
+    for (const race of meeting.sessions) {
+      const isSprint = race.session_name === 'Sprint';
+      const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
+      const raceDrivers = new Set(race.results.map(r => r.driver_number));
+
+      for (const { driver_number, position, status } of race.results) {
+        if (!driverStats.has(driver_number)) {
+          driverStats.set(driver_number, {
             points: 0,
             wins: 0,
             podiums: 0,
@@ -337,24 +334,102 @@ export function computeStandingsFromSeason(seasonData) {
             dsqs: 0,
             raceResults: [],
             allResults: [],
+            pointsHistory: []
           });
         }
-        const stats = driverStats.get(driverNum);
+        const stats = driverStats.get(driver_number);
 
-        let status = 'ABSENT';
-        if (firstDate && raceDate >= firstDate) {
-          status = 'DNS';
-          if (!isSprint) {
-            stats.dnss++;
-          }
+        // Points only if not disqualified (DSQ), DNS or absent
+        let pts = (status === 'DSQ' || status === 'DNS' || status === 'ABSENT') ? 0 : getPointsForPosition(position, isSprint);
+
+        // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
+        if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
+          pts += 1;
         }
 
+        stats.points += pts;
+
+        if (!isSprint) {
+          if (position === 1 && status === 'FINISHED') stats.wins++;
+          if (position <= 3 && status === 'FINISHED') stats.podiums++;
+          if (status === 'DNF') stats.dnfs++;
+          if (status === 'DNS') stats.dnss++;
+          if (status === 'DSQ') stats.dsqs++;
+
+          if (status === 'FINISHED' || status === 'DNF') {
+            stats.raceResults.push(position);
+          }
+        }
         stats.allResults.push({
-          position: 20,
+          position,
           isSprint,
           session_key: race.session_key,
           status: status
         });
+      }
+
+      // Process DNS / ABSENT active drivers who did not compete in this session
+      const raceDate = new Date(race.date_end);
+      for (const driverNum of activeDrivers) {
+        if (!raceDrivers.has(driverNum)) {
+          const firstDate = driverFirstRaceDate.get(driverNum);
+
+          if (!driverStats.has(driverNum)) {
+            driverStats.set(driverNum, {
+              points: 0,
+              wins: 0,
+              podiums: 0,
+              dnfs: 0,
+              dnss: 0,
+              dsqs: 0,
+              raceResults: [],
+              allResults: [],
+              pointsHistory: []
+            });
+          }
+          const stats = driverStats.get(driverNum);
+
+          let status = 'ABSENT';
+          if (firstDate && raceDate >= firstDate) {
+            status = 'DNS';
+            if (!isSprint) {
+              stats.dnss++;
+            }
+          }
+
+          stats.allResults.push({
+            position: 20,
+            isSprint,
+            session_key: race.session_key,
+            status: status
+          });
+        }
+      }
+    }
+
+    // Record cumulative points for ALL drivers seen so far at the end of this GP weekend
+    for (const stats of driverStats.values()) {
+      stats.pointsHistory.push(stats.points);
+    }
+    // Handle newly seen active drivers if they weren't initialized yet, padding their history with 0s
+    const meetingIdx = sortedMeetings.indexOf(meeting);
+    for (const driverNum of activeDrivers) {
+      if (!driverStats.has(driverNum)) {
+        driverStats.set(driverNum, {
+          points: 0,
+          wins: 0,
+          podiums: 0,
+          dnfs: 0,
+          dnss: 0,
+          dsqs: 0,
+          raceResults: [],
+          allResults: [],
+          pointsHistory: []
+        });
+      }
+      const stats = driverStats.get(driverNum);
+      while (stats.pointsHistory.length < meetingIdx + 1) {
+        stats.pointsHistory.push(stats.points);
       }
     }
   }

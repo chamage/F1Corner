@@ -2206,6 +2206,61 @@ h1, h2, h3, h4, h5, h6 {
   width: 100%;
 }
 
+.chart-tooltip {
+  position: absolute;
+  background: rgba(15, 15, 26, 0.95);
+  border: 1px solid var(--border-accent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: 'Outfit', sans-serif;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease, transform 100ms ease;
+  box-shadow: var(--shadow-glow);
+  z-index: 1000;
+  min-width: 160px;
+}
+.chart-tooltip.show {
+  opacity: 1;
+}
+.chart-tooltip-header {
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0;
+  gap: 12px;
+}
+.chart-tooltip-driver {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.chart-tooltip-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.chart-tooltip-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
 @media (max-width: 768px) {
   .points-tracker-card {
     padding: 16px 12px;

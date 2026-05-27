@@ -173,7 +173,7 @@ function drawChampionshipBattle(seasonData, driversCount) {
     } else {
       chartCanvas.style.display = 'block';
 
-      // Group completed sessions by meeting_key to treat Sprint + GP as one event on the timeline
+      // Gather completed meetings in chronological order to match the timeline indexes
       const meetingsMap = new Map();
       for (const r of seasonData.races) {
         if (!r.results || r.results.length === 0) continue;
@@ -182,61 +182,150 @@ function drawChampionshipBattle(seasonData, driversCount) {
             meeting_key: r.meeting_key,
             circuit_short_name: r.circuit_short_name,
             date_end: r.date_end,
-            sessions: []
           });
         }
         const m = meetingsMap.get(r.meeting_key);
-        m.sessions.push(r);
         if (new Date(r.date_end) > new Date(m.date_end)) {
           m.date_end = r.date_end;
         }
       }
-
-      // Sort meetings chronologically by their end date
       const sortedMeetings = Array.from(meetingsMap.values())
         .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
       const datasets = topDrivers.map(d => {
-        const pointsProgression = [];
-        let cumPoints = 0;
-
-        for (const meeting of sortedMeetings) {
-          let meetingPoints = 0;
-          for (const race of meeting.sessions) {
-            const isSprint = race.session_name === 'Sprint';
-            const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
-
-            const r = race.results.find(res => res.driver_number === d.driver_number);
-            if (r) {
-              let pts = r.status === 'DSQ' ? 0 : getPointsForPosition(r.position, isSprint);
-              if (seasonData.year < 2025 && fastestLapDriver === d.driver_number && r.position <= 10 && r.status === 'FINISHED') {
-                pts += 1;
-              }
-              meetingPoints += pts;
-            }
-          }
-          cumPoints += meetingPoints;
-          pointsProgression.push(cumPoints);
-        }
-
         return {
           label: d.name_acronym,
-          data: pointsProgression,
+          data: d.pointsHistory || [],
           color: getTeamColor(d.team_colour),
           alpha: 0.9,
         };
       });
 
-      // Draw points line chart starting exactly at yMin: 0 with integer y-ticks
-      requestAnimationFrame(() => {
-        drawLineChart(chartCanvas, datasets, {
-          xLabel: 'Races Completed',
-          yLabel: 'Points',
-          lineWidth: 2.5,
-          showDots: true,
-          yMin: 0,
+      // Store current datasets and meetings on canvas to avoid closure bugs across redraws
+      chartCanvas._chartData = {
+        datasets,
+        sortedMeetings,
+        topDrivers
+      };
+
+      // Create/grab dynamic tooltip container inside parent element
+      let tooltip = chartCanvas.parentElement.querySelector('.chart-tooltip');
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'chart-tooltip';
+        chartCanvas.parentElement.appendChild(tooltip);
+      }
+
+      function drawChartWithHover(hoverIndex) {
+        const data = chartCanvas._chartData;
+        if (!data) return;
+        requestAnimationFrame(() => {
+          drawLineChart(chartCanvas, data.datasets, {
+            xLabel: 'Races Completed',
+            yLabel: 'Points',
+            lineWidth: 2.5,
+            showDots: true,
+            yMin: 0,
+            hoveredIndex: hoverIndex,
+          });
         });
-      });
+      }
+
+      // Draw initial state (no hover)
+      drawChartWithHover(undefined);
+
+      // Attach event listeners for hover interaction (once per canvas lifetime)
+      if (!chartCanvas._hoverInitialized) {
+        chartCanvas._hoverInitialized = true;
+
+        const handleHover = (e) => {
+          const data = chartCanvas._chartData;
+          if (!data) return;
+
+          const rect = chartCanvas.getBoundingClientRect();
+          const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+          const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+          
+          const mouseX = clientX - rect.left;
+          const mouseY = clientY - rect.top;
+
+          // Padding variables used in charts.js
+          const padLeft = 60;
+          const padRight = 20;
+          const plotW = rect.width - padLeft - padRight;
+          
+          if (mouseX >= padLeft && mouseX <= rect.width - padRight) {
+            const maxLen = data.sortedMeetings.length;
+            const ratio = (mouseX - padLeft) / plotW;
+            let idx = Math.round(ratio * (maxLen - 1));
+            idx = Math.max(0, Math.min(maxLen - 1, idx));
+
+            // Repaint chart with hover highlight
+            drawChartWithHover(idx);
+
+            // Populate and position the tooltip
+            const meeting = data.sortedMeetings[idx];
+            const roundNumber = idx + 1;
+
+            // Gather values of top drivers at this index
+            const hoverDrivers = data.datasets.map(ds => {
+              const driverInfo = data.topDrivers.find(td => td.name_acronym === ds.label);
+              return {
+                acronym: ds.label,
+                fullName: driverInfo?.full_name || ds.label,
+                color: ds.color,
+                points: ds.data[idx] || 0
+              };
+            }).sort((a, b) => b.points - a.points); // sort highest points first
+
+            let html = `
+              <div class="chart-tooltip-header">
+                Round ${roundNumber}: ${meeting.circuit_short_name} GP
+              </div>
+            `;
+            
+            hoverDrivers.forEach(hd => {
+              html += `
+                <div class="chart-tooltip-row">
+                  <span class="chart-tooltip-driver">
+                    <span class="chart-tooltip-color-dot" style="background:${hd.color}"></span>
+                    <span>${hd.acronym}</span>
+                  </span>
+                  <span class="chart-tooltip-value">${hd.points} pts</span>
+                </div>
+              `;
+            });
+
+            tooltip.innerHTML = html;
+            tooltip.classList.add('show');
+
+            // Position tooltip dynamically near the hover point
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const leftOffset = mouseX + 15;
+            const rightEdge = leftOffset + tooltipRect.width;
+
+            if (rightEdge > rect.width) {
+              tooltip.style.left = `${mouseX - tooltipRect.width - 15}px`;
+            } else {
+              tooltip.style.left = `${leftOffset}px`;
+            }
+            tooltip.style.top = `${Math.max(10, Math.min(rect.height - tooltipRect.height - 10, mouseY - tooltipRect.height / 2))}px`;
+          } else {
+            clearHover();
+          }
+        };
+
+        const clearHover = () => {
+          drawChartWithHover(undefined);
+          tooltip.classList.remove('show');
+        };
+
+        chartCanvas.addEventListener('mousemove', handleHover);
+        chartCanvas.addEventListener('mouseleave', clearHover);
+        chartCanvas.addEventListener('touchstart', handleHover, { passive: true });
+        chartCanvas.addEventListener('touchmove', handleHover, { passive: true });
+        chartCanvas.addEventListener('touchend', clearHover);
+      }
 
       // Render legend
       legendEl.innerHTML = datasets.map(ds => `

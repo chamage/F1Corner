@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v3'; // Incremented to v3 to force old caches to clear and include PWA icons
+const CACHE_NAME = 'pitcorner-shell-v4'; // Incremented to v4 to enable Stale-While-Revalidate caching strategy
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -46,7 +46,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch: Network-First Strategy (Always fetch fresh online, fallback to cache offline)
+// Fetch: Stale-While-Revalidate Strategy (Serve from cache instantly, update in the background)
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
@@ -56,21 +56,23 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith(
-    // 1. Try to fetch from the network first
-    fetch(event.request)
-      .then(networkResponse => {
-        // If successful (status 200), clone and update our local cache
-        if (networkResponse.status === 200) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, responseToCache);
+    caches.open(CACHE_NAME).then(cache => {
+      return cache.match(event.request).then(cachedResponse => {
+        // Fetch fresh copy from network in parallel
+        const fetchPromise = fetch(event.request)
+          .then(networkResponse => {
+            if (networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          })
+          .catch(() => {
+            // Silently absorb network failures when background updating
           });
-        }
-        return networkResponse;
-      })
-      .catch(() => {
-        // 2. If the network fails (offline), serve the cached version instantly!
-        return caches.match(event.request);
-      })
+
+        // Serve cached version immediately if present, otherwise fallback to network fetch
+        return cachedResponse || fetchPromise;
+      });
+    })
   );
 });

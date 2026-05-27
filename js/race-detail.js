@@ -315,7 +315,13 @@ function renderResults(container) {
         if (laps && lapsDiff > 0 && lapsDiff < 10) {
           statusText = `<span style="color:var(--text-secondary);font-size:0.72rem;font-weight:600;">+${lapsDiff} Lap${lapsDiff > 1 ? 's' : ''}</span>`;
         } else if (entry && entry.gap_to_leader != null) {
-          statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;font-family:\'JetBrains Mono\',monospace;">+${entry.gap_to_leader.toFixed(3)}s</span>`;
+          const gapVal = parseFloat(entry.gap_to_leader);
+          if (!isNaN(gapVal)) {
+            statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;font-family:\'JetBrains Mono\',monospace;">+${gapVal.toFixed(3)}s</span>`;
+          } else {
+            const stops = driverPits ? driverPits.length : 0;
+            statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;">${stops} Stop${stops !== 1 ? 's' : ''}</span>`;
+          }
         } else {
           const stops = driverPits ? driverPits.length : 0;
           statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;">${stops} Stop${stops !== 1 ? 's' : ''}</span>`;
@@ -983,7 +989,8 @@ export async function showRaceDriverDetail(driverNumber) {
       pitsHtml = `
         <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
           ${driverPits.map(p => {
-            const dur = p.pit_duration ? `${p.pit_duration.toFixed(2)}s` : '—';
+            const durVal = p.pit_duration ? parseFloat(p.pit_duration) : NaN;
+            const dur = !isNaN(durVal) ? `${durVal.toFixed(2)}s` : '—';
             return `
               <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
                 <div>

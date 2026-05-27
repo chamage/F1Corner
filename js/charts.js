@@ -33,6 +33,7 @@ export function drawLineChart(canvas, datasets, options = {}) {
     yMin: forceYMin,
     yMax: forceYMax,
     yDecimals,
+    hoveredIndex,
   } = options;
 
   const plotW = W - padLeft - padRight;
@@ -142,6 +143,42 @@ export function drawLineChart(canvas, datasets, options = {}) {
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Hover indicator line & dot highlights
+  if (hoveredIndex !== undefined && hoveredIndex >= 0 && hoveredIndex < maxLen) {
+    const hX = xPos(hoveredIndex);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(hX, padTop);
+    ctx.lineTo(hX, H - padBottom);
+    ctx.stroke();
+    ctx.setLineDash([]); // reset
+
+    for (const ds of datasets) {
+      const v = ds.data[hoveredIndex];
+      if (v == null || isNaN(v)) continue;
+      const hY = yPos(v);
+
+      // Outer glow circle
+      ctx.beginPath();
+      ctx.arc(hX, hY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = ds.color || '#e10600';
+      ctx.globalAlpha = 0.4;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+
+      // Inner core circle
+      ctx.beginPath();
+      ctx.arc(hX, hY, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = ds.color || '#e10600';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 }
 

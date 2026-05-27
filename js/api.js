@@ -182,73 +182,80 @@ async function fetchAPI(endpoint, params = {}) {
 
   // Tier 4: actual API request (queued + rate limited)
   const promise = new Promise((resolve) => {
-    requestQueue = requestQueue.then(async () => {
-      // Re-check caches (another queued request may have filled them)
-      const memNow = memCache.get(cacheKey);
-      if (memNow) { resolve(memNow); inFlight.delete(cacheKey); return; }
-      const lsNow = lsGet(cacheKey);
-      if (lsNow) {
-        memCache.set(cacheKey, lsNow);
-        resolve(lsNow);
-        inFlight.delete(cacheKey);
-        return;
-      }
-
-      await waitForMinuteSlot();
-
-      let lastError = null;
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 20000);
-          const response = await fetch(url.toString(), { signal: controller.signal });
-          clearTimeout(timeout);
-
-          if (response.status === 429) {
-            const retryAfter = response.headers.get('Retry-After');
-            const waitMs = retryAfter
-              ? parseInt(retryAfter) * 1000
-              : RETRY_BASE_DELAY * Math.pow(2, attempt);
-            console.warn(`[API] 429 on ${endpoint}, retry in ${waitMs}ms (${attempt + 1}/${MAX_RETRIES})`);
-            await delay(waitMs);
-            continue;
-          }
-
-          if (response.status === 404) {
-            const emptyData = [];
-            memCache.set(cacheKey, emptyData);
-            lsSet(cacheKey, emptyData, TTL_FRESH); // short TTL for 404s
-            resolve(emptyData);
-            inFlight.delete(cacheKey);
-            return;
-          }
-
-          if (!response.ok) {
-            throw new Error(`API ${response.status} ${response.statusText}`);
-          }
-
-          const data = await response.json();
-          const ttl = getTTL(cacheKey);
-          memCache.set(cacheKey, data);
-          lsSet(cacheKey, data, ttl);
-          resolve(data);
+    requestQueue = requestQueue
+      .catch(() => {}) // Prevent previous rejections from breaking the queue
+      .then(async () => {
+        // Re-check caches (another queued request may have filled them)
+        const memNow = memCache.get(cacheKey);
+        if (memNow) { resolve(memNow); inFlight.delete(cacheKey); return; }
+        const lsNow = lsGet(cacheKey);
+        if (lsNow) {
+          memCache.set(cacheKey, lsNow);
+          resolve(lsNow);
           inFlight.delete(cacheKey);
-          await delay(REQUEST_DELAY);
           return;
-        } catch (err) {
-          lastError = err;
-          console.warn(`[API] ${err.name === 'AbortError' ? 'Timeout' : err.message} on ${endpoint} (${attempt + 1}/${MAX_RETRIES})`);
-          if (attempt < MAX_RETRIES - 1) {
-            await delay(RETRY_BASE_DELAY * Math.pow(2, attempt));
+        }
+
+        await waitForMinuteSlot();
+
+        let lastError = null;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 20000);
+            const response = await fetch(url.toString(), { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (response.status === 429) {
+              const retryAfter = response.headers.get('Retry-After');
+              const waitMs = retryAfter
+                ? (parseInt(retryAfter) * 1000 || 5000)
+                : RETRY_BASE_DELAY * Math.pow(2, attempt);
+              console.warn(`[API] 429 on ${endpoint}, retry in ${waitMs}ms (${attempt + 1}/${MAX_RETRIES})`);
+              
+              // Force the entire queue to cool down
+              minuteRequestCount = 28;
+              minuteResetTime = Date.now() + waitMs;
+
+              await delay(waitMs);
+              continue;
+            }
+
+            if (response.status === 404) {
+              const emptyData = [];
+              memCache.set(cacheKey, emptyData);
+              lsSet(cacheKey, emptyData, TTL_FRESH); // short TTL for 404s
+              resolve(emptyData);
+              inFlight.delete(cacheKey);
+              return;
+            }
+
+            if (!response.ok) {
+              throw new Error(`API ${response.status} ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            const ttl = getTTL(cacheKey);
+            memCache.set(cacheKey, data);
+            lsSet(cacheKey, data, ttl);
+            resolve(data);
+            inFlight.delete(cacheKey);
+            await delay(REQUEST_DELAY);
+            return;
+          } catch (err) {
+            lastError = err;
+            console.warn(`[API] ${err.name === 'AbortError' ? 'Timeout' : err.message} on ${endpoint} (${attempt + 1}/${MAX_RETRIES})`);
+            if (attempt < MAX_RETRIES - 1) {
+              await delay(RETRY_BASE_DELAY * Math.pow(2, attempt));
+            }
           }
         }
-      }
 
-      console.error(`[API] All ${MAX_RETRIES} attempts failed: ${endpoint}`, lastError?.message);
-      resolve([]);
-      inFlight.delete(cacheKey);
-      await delay(REQUEST_DELAY);
-    });
+        console.error(`[API] All ${MAX_RETRIES} attempts failed: ${endpoint}`, lastError?.message);
+        resolve([]);
+        inFlight.delete(cacheKey);
+        await delay(REQUEST_DELAY);
+      });
   });
 
   inFlight.set(cacheKey, promise);

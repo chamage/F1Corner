@@ -20,11 +20,16 @@ let currentYear = 2026;
 let loadGeneration = 0;
 
 async function init() {
-  // Determine default year — use current year if data is available
-  const now = new Date();
-  const thisYear = now.getFullYear();
-  if (AVAILABLE_YEARS.includes(thisYear)) {
-    currentYear = thisYear;
+  // Determine default year — use last selected year from localStorage, fallback to current year
+  const savedYear = localStorage.getItem('pitcorner_selected_year');
+  if (savedYear && AVAILABLE_YEARS.includes(parseInt(savedYear))) {
+    currentYear = parseInt(savedYear);
+  } else {
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    if (AVAILABLE_YEARS.includes(thisYear)) {
+      currentYear = thisYear;
+    }
   }
 
   // Setup year selector
@@ -40,6 +45,7 @@ async function init() {
 
   yearSelect.addEventListener('change', (e) => {
     currentYear = parseInt(e.target.value);
+    localStorage.setItem('pitcorner_selected_year', currentYear);
     loadAll(currentYear);
   });
 
