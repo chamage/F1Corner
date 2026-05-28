@@ -9,7 +9,8 @@ import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSe
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 22; // v22: fetch session drivers in fetchQualiData to append missing drivers as DNS and prevent quali standings discrepancies
+const LS_RACE_VERSION = 21; // Keep race cache at v21 to avoid re-fetching heavy race data
+const LS_QUALI_VERSION = 22; // Bump quali cache to v22 to force re-compiling of qualifying results with DNS drivers
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -17,19 +18,20 @@ let raceCache = new Map();   // session_key -> compiled race data
 
 // ── localStorage helpers ──
 
-function lsRaceKey(sessionKey) {
-  return `${LS_RACE_PREFIX}v${LS_VERSION}_${sessionKey}`;
+function lsRaceKey(sessionKey, isQuali = false) {
+  const version = isQuali ? LS_QUALI_VERSION : LS_RACE_VERSION;
+  return `${LS_RACE_PREFIX}v${version}_${sessionKey}`;
 }
 
-function loadRaceFromStorage(sessionKey) {
+function loadRaceFromStorage(sessionKey, isQuali = false) {
   try {
-    const raw = localStorage.getItem(lsRaceKey(sessionKey));
+    const raw = localStorage.getItem(lsRaceKey(sessionKey, isQuali));
     if (!raw) return null;
     const compiled = JSON.parse(raw);
     if (compiled && compiled.is_incomplete) {
       // Expire incomplete placeholders after 30 minutes to check for new data
       if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
-        localStorage.removeItem(lsRaceKey(sessionKey));
+        localStorage.removeItem(lsRaceKey(sessionKey, isQuali));
         return null;
       }
     }
@@ -39,9 +41,9 @@ function loadRaceFromStorage(sessionKey) {
   }
 }
 
-function saveRaceToStorage(sessionKey, raceData) {
+function saveRaceToStorage(sessionKey, raceData, isQuali = false) {
   try {
-    localStorage.setItem(lsRaceKey(sessionKey), JSON.stringify(raceData));
+    localStorage.setItem(lsRaceKey(sessionKey, isQuali), JSON.stringify(raceData));
   } catch (e) {
     if (e.name === 'QuotaExceededError') {
       console.warn(`[Season] localStorage quota exceeded, skipping save for race ${sessionKey}`);
@@ -136,9 +138,9 @@ export async function getSeasonData(year) {
       cacheHits++;
     } else {
       // Tier 2: localStorage race cache
-      const lsKey = `${LS_RACE_PREFIX}v${LS_VERSION}_${sessionKey}`;
+      const lsKey = `${LS_RACE_PREFIX}v${LS_RACE_VERSION}_${sessionKey}`;
       const rawExists = localStorage.getItem(lsKey) !== null;
-      compiledRace = loadRaceFromStorage(sessionKey);
+      compiledRace = loadRaceFromStorage(sessionKey, false);
       
       if (compiledRace && !compiledRace.is_incomplete) {
         // Promote to in-memory cache for faster subsequent access
@@ -160,7 +162,7 @@ export async function getSeasonData(year) {
       compiledRace = await fetchRaceData(session);
       if (compiledRace) {
         raceCache.set(sessionKey, compiledRace);
-        saveRaceToStorage(sessionKey, compiledRace);
+        saveRaceToStorage(sessionKey, compiledRace, false);
       } else {
         // Save incomplete placeholder to prevent hammering the API
         const placeholder = {
@@ -170,7 +172,7 @@ export async function getSeasonData(year) {
           compiledAt: Date.now()
         };
         // Save to localStorage but NOT in-memory raceCache to enforce the 30-minute expiration check on future reloads
-        saveRaceToStorage(sessionKey, placeholder);
+        saveRaceToStorage(sessionKey, placeholder, false);
         incompleteSkips++;
         continue;
       }
@@ -191,7 +193,7 @@ export async function getSeasonData(year) {
       cacheHits++;
     } else {
       // Tier 2: localStorage cache
-      compiledQuali = loadRaceFromStorage(sessionKey);
+      compiledQuali = loadRaceFromStorage(sessionKey, true);
       if (compiledQuali && !compiledQuali.is_incomplete) {
         raceCache.set(sessionKey, compiledQuali);
         cacheHits++;
@@ -204,7 +206,7 @@ export async function getSeasonData(year) {
       compiledQuali = await fetchQualiData(session);
       if (compiledQuali) {
         raceCache.set(sessionKey, compiledQuali);
-        saveRaceToStorage(sessionKey, compiledQuali);
+        saveRaceToStorage(sessionKey, compiledQuali, true);
       }
     }
 
