@@ -236,7 +236,13 @@ async function fetchAPI(endpoint, params = {}) {
             }
 
             const data = await response.json();
-            const ttl = getTTL(cacheKey);
+            let ttl = getTTL(cacheKey);
+            // If the data is empty and we expected records (e.g. race results, stints, laps),
+            // do NOT cache it immutably! Instead use a short TTL so it will be retried on next load.
+            if (Array.isArray(data) && data.length === 0 && ttl === TTL_IMMUTABLE) {
+              console.warn(`[API] Empty response for immutable endpoint ${endpoint}, overriding to TTL_FRESH`);
+              ttl = TTL_FRESH;
+            }
             memCache.set(cacheKey, data);
             lsSet(cacheKey, data, ttl);
             resolve(data);
@@ -428,6 +434,22 @@ export function clearCache() {
   }
   keys.forEach(k => localStorage.removeItem(k));
   console.log(`[API] Cleared ${keys.length} cached entries`);
+}
+
+/**
+ * Clear cached entries for a single season only
+ */
+export function clearSingleSeasonAPICache(year) {
+  memCache.clear();
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(LS_PREFIX) && (key.includes(`year=${year}`) || key.includes(`year%3D${year}`))) {
+      keys.push(key);
+    }
+  }
+  keys.forEach(k => localStorage.removeItem(k));
+  console.log(`[API] Cleared ${keys.length} cached entries for year ${year}`);
 }
 
 /**

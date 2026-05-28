@@ -356,10 +356,32 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.4.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.4.0 <span class="new-badge">Active</span></div>
+              <div class="changelog-date">May 28, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Safeguarded API Telemetry Cache: Prevented temporary empty OpenF1 API responses from being cached immutably as complete, allowing PitCorner to recover from rate-limiting outages automatically.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Preliminary Championship Decoupling: Prevented standings calculation engines from prematurely or incorrectly declaring World Champion clinician titles when viewing fast-path cached data or in cases of network-interrupted page loads.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Live Loading Banner Sync: Integrated seamless UI loading banner state changes, notifying the user when syncing background telemetry or experiencing network-related partial-data loads.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.3.3 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.3.3 <span class="new-badge">Active</span></div>
+              <div class="changelog-version">v1.3.3</div>
               <div class="changelog-date">May 28, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -962,4 +984,98 @@ export function initFeedbackSupport() {
       showSupportModal();
     });
   }
+}
+
+/**
+ * Launch the Clear Cache choice and confirmation modal
+ */
+export function showClearCacheModal(year, onClearSeason, onClearAll) {
+  ensureOverlay();
+  const modal = document.getElementById('feedback-modal');
+  modal.style.maxWidth = '500px';
+  modal.innerHTML = `
+    <button class="driver-modal-close" id="fbm-close" aria-label="Close">✕</button>
+    <div style="padding: var(--space-xl) var(--space-lg); font-family:'Outfit', sans-serif; position: relative; z-index: 5;">
+      <h2 style="font-weight: 800; font-size: 1.5rem; color: var(--text-primary); margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
+        <i class="fa-solid fa-trash-can" style="color: var(--f1-red);"></i> Clear Data Cache
+      </h2>
+      <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;">
+        Select an option below to clear your local database cache. Clearing helps resolve data glitches or force live updates.
+      </p>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <!-- Option 1: Current Season Only -->
+        <div class="cache-option-card" id="clear-season-opt" style="border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-md); cursor:pointer; transition: all var(--transition-fast); background: rgba(255,255,255,0.01); box-sizing: border-box;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+            <strong style="color: var(--text-primary); font-size: 0.95rem; display:flex; align-items:center; gap:8px;">
+              <i class="fa-solid fa-calendar-day" style="color: var(--f1-red);"></i> Clear viewed ${year} season only
+            </strong>
+            <span class="changelog-tag improved" style="margin: 0; padding: 2px 6px; font-size: 0.65rem;">Recommended</span>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
+            Wipes cached telemetry, race results, and standings only for the selected viewed year. Other seasons will remain cached.
+          </p>
+        </div>
+
+        <!-- Option 2: Full Wiping -->
+        <div class="cache-option-card" id="clear-all-opt" style="border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-md); cursor:pointer; transition: all var(--transition-fast); background: rgba(255,255,255,0.01); box-sizing: border-box;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
+            <strong style="color: var(--text-primary); font-size: 0.95rem; display:flex; align-items:center; gap:8px;">
+              <i class="fa-solid fa-database" style="color: var(--f1-red);"></i> Clear entire cache (All years)
+            </strong>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
+            Performs a full wipe of all F1 seasons, driver profiles, lap telemetry, and system caches. Highly thorough reset.
+          </p>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top: var(--space-xl);">
+        <button id="cache-cancel-btn" class="nav-action-btn" style="padding: 10px 18px; font-size: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background:transparent; color: var(--text-secondary); cursor:pointer; font-weight: 600;">
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+
+  const closeBtn = document.getElementById('fbm-close');
+  const cancelBtn = document.getElementById('cache-cancel-btn');
+  const seasonOpt = document.getElementById('clear-season-opt');
+  const allOpt = document.getElementById('clear-all-opt');
+
+  const close = () => {
+    closeModal();
+  };
+
+  closeBtn.addEventListener('click', close);
+  cancelBtn.addEventListener('click', close);
+
+  // Add hover effects dynamically
+  [seasonOpt, allOpt].forEach(opt => {
+    opt.addEventListener('mouseenter', () => {
+      opt.style.borderColor = 'var(--f1-red)';
+      opt.style.background = 'rgba(225, 6, 0, 0.03)';
+      opt.style.transform = 'translateY(-1px)';
+      opt.style.boxShadow = '0 4px 15px rgba(225, 6, 0, 0.08)';
+    });
+    opt.addEventListener('mouseleave', () => {
+      opt.style.borderColor = 'var(--border-subtle)';
+      opt.style.background = 'rgba(255,255,255,0.01)';
+      opt.style.transform = 'translateY(0)';
+      opt.style.boxShadow = 'none';
+    });
+  });
+
+  seasonOpt.addEventListener('click', () => {
+    close();
+    onClearSeason();
+  });
+
+  allOpt.addEventListener('click', () => {
+    close();
+    onClearAll();
+  });
+
+  document.body.style.overflow = 'hidden';
+  overlay.classList.add('open');
 }

@@ -7,10 +7,10 @@ import { initStandings } from './standings.js';
 import { initCalendar, setRaceSelectHandler } from './calendar.js';
 import { loadRaceDetail } from './race-detail.js';
 import { initH2H } from './h2h.js';
-import { getCacheStats, clearCache } from './api.js';
-import { clearSeasonCache } from './season-data.js';
+import { getCacheStats, clearCache, clearSingleSeasonAPICache } from './api.js';
+import { clearSeasonCache, isSeasonPreliminary, clearSingleSeasonCache } from './season-data.js';
 import { setupRevealAnimations, $ } from './utils.js';
-import { initFeedbackSupport } from './feedback-support.js';
+import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
 
 // Available years (OpenF1 data from 2023+)
 const AVAILABLE_YEARS = [2026, 2025, 2024, 2023];
@@ -61,19 +61,66 @@ async function init() {
     loadRaceDetail(sessionKey, meetingInfo);
   });
 
-  // Setup clear cache button
+  // Setup clear cache button with confirmation modal and single-season option
   const clearBtn = document.getElementById('clear-cache-btn');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
-      clearCache();
-      clearSeasonCache();
-      updateCacheStatus();
-      loadAll(currentYear);
+      showClearCacheModal(
+        currentYear,
+        // Option 1: Clear current season only
+        () => {
+          clearSingleSeasonAPICache(currentYear);
+          clearSingleSeasonCache(currentYear);
+          updateCacheStatus();
+          loadAll(currentYear);
+        },
+        // Option 2: Clear entire cache
+        () => {
+          clearCache();
+          clearSeasonCache();
+          updateCacheStatus();
+          loadAll(currentYear);
+        }
+      );
     });
   }
 
   // Load everything
   loadAll(currentYear);
+
+  // Setup background refresh listener
+  document.addEventListener('pitcorner:season-updated', async (e) => {
+    if (e.detail.year === currentYear) {
+      console.log('[App] 🔄 Background season update received. Silently re-rendering...');
+      try {
+        await initDashboard(currentYear);
+        await initStandings(currentYear);
+        await initCalendar(currentYear);
+        await initH2H(currentYear);
+      } catch (err) {
+        console.warn('[App] Silent background refresh failed:', err);
+      }
+      
+      const loadingBanner = $('#api-loading-banner');
+      if (loadingBanner) {
+        if (e.detail.seasonData.is_preliminary) {
+          const textEl = loadingBanner.querySelector('.api-loading-text');
+          if (textEl) {
+            textEl.innerHTML = `
+              <strong>Warning: Partial Standings Data</strong>
+              <span>Failed to fetch some completed sessions due to OpenF1 API timeouts. Displaying partial standings. Retrying on next load! ⚠️</span>
+            `;
+          }
+          setTimeout(() => {
+            loadingBanner.classList.remove('show');
+          }, 5000);
+        } else {
+          loadingBanner.classList.remove('show');
+        }
+      }
+      updateCacheStatus();
+    }
+  });
 }
 
 async function loadAll(year) {
@@ -84,6 +131,14 @@ async function loadAll(year) {
   const loadingBanner = $('#api-loading-banner');
   if (loadingBanner) {
     loadingBanner.classList.add('show');
+    // Restore default text
+    const textEl = loadingBanner.querySelector('.api-loading-text');
+    if (textEl) {
+      textEl.innerHTML = `
+        <strong>Streaming Live OpenF1 Data...</strong>
+        <span>PitCorner is 100% free &amp; fetches real-time data. This may take a moment — thank you for your patience! 🏁</span>
+      `;
+    }
   }
 
   // Reset race detail
@@ -121,9 +176,18 @@ async function loadAll(year) {
   // Update cache stats in footer
   updateCacheStatus();
 
-  // Hide loading banner when loaded successfully
-  if (loadingBanner) {
+  // Hide loading banner when loaded successfully, or update text if preliminary
+  const isPrelim = isSeasonPreliminary(year);
+  if (!isPrelim && loadingBanner) {
     loadingBanner.classList.remove('show');
+  } else if (isPrelim && loadingBanner) {
+    const textEl = loadingBanner.querySelector('.api-loading-text');
+    if (textEl) {
+      textEl.innerHTML = `
+        <strong>Syncing Missing Telemetry (BG)...</strong>
+        <span>PitCorner loaded the cached standings instantly and is fetching the latest completed sessions in the background! 🏁</span>
+      `;
+    }
   }
 }
 

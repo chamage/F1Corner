@@ -98,7 +98,6 @@ export async function getSeasonData(year) {
   if (seasonCache.has(year)) {
     const cached = seasonCache.get(year);
     // Quick validation: does the number of compiled races match current completed sessions?
-    // Use the stored totalRaceSessions (which includes both Race + Sprint) for a consistent comparison
     const cachedTotal = (cached.totalRaceSessions || []).filter(s => isPast(s.date_end)).length;
     if (cachedTotal === cached.races.length) {
       console.log(`[Season] ✅ ${year} served from in-memory season cache (${cached.races.length} races)`);
@@ -128,98 +127,100 @@ export async function getSeasonData(year) {
   let apiFetches = 0;
   let incompleteSkips = 0;
 
-  // Load or fetch each race/sprint session individually
+  // Let's identify which sessions are already in cache, and which are missing!
+  const missingSessions = [];
+  const missingQuali = [];
+
+  // Check race sessions cache
   for (const session of completedSessions) {
     const sessionKey = session.session_key;
-
-    // Tier 1: in-memory race cache
-    let compiledRace = raceCache.get(sessionKey);
-    if (compiledRace) {
-      cacheHits++;
-    } else {
-      // Tier 2: localStorage race cache
-      const lsKey = `${LS_RACE_PREFIX}v${LS_RACE_VERSION}_${sessionKey}`;
-      const rawExists = localStorage.getItem(lsKey) !== null;
-      compiledRace = loadRaceFromStorage(sessionKey, false);
-      
-      if (compiledRace && !compiledRace.is_incomplete) {
-        // Promote to in-memory cache for faster subsequent access
-        raceCache.set(sessionKey, compiledRace);
-        cacheHits++;
-      } else if (compiledRace && compiledRace.is_incomplete) {
-        incompleteSkips++;
-        // Skip — placeholder is still valid (not expired)
-        continue;
-      } else {
-        // Cache miss — log why
-        console.log(`[Season] ⚠️ Cache miss for ${sessionKey} (${session.circuit_short_name}) — localStorage key "${lsKey}" exists: ${rawExists}`);
-      }
-    }
-
-    if (!compiledRace) {
-      console.log(`[Season] 🌐 Fetching race ${sessionKey} (${session.circuit_short_name})`);
-      apiFetches++;
-      compiledRace = await fetchRaceData(session);
-      if (compiledRace) {
-        raceCache.set(sessionKey, compiledRace);
-        saveRaceToStorage(sessionKey, compiledRace, false);
-      } else {
-        // Save incomplete placeholder to prevent hammering the API
-        const placeholder = {
-          session_key: sessionKey,
-          circuit_short_name: session.circuit_short_name,
-          is_incomplete: true,
-          compiledAt: Date.now()
-        };
-        // Save to localStorage but NOT in-memory raceCache to enforce the 30-minute expiration check on future reloads
-        saveRaceToStorage(sessionKey, placeholder, false);
-        incompleteSkips++;
-        continue;
-      }
-    }
-
+    let compiledRace = raceCache.get(sessionKey) || loadRaceFromStorage(sessionKey, false);
     if (compiledRace && !compiledRace.is_incomplete) {
       races.push(compiledRace);
+      cacheHits++;
+    } else {
+      missingSessions.push(session);
     }
   }
 
-  // Load or fetch each completed qualifying session individually
+  // Check qualifying sessions cache
   for (const session of completedQuali) {
     const sessionKey = session.session_key;
-
-    // Tier 1: in-memory cache
-    let compiledQuali = raceCache.get(sessionKey);
-    if (compiledQuali) {
+    let compiledQuali = raceCache.get(sessionKey) || loadRaceFromStorage(sessionKey, true);
+    if (compiledQuali && !compiledQuali.is_incomplete) {
+      qualifying.push(compiledQuali);
       cacheHits++;
     } else {
-      // Tier 2: localStorage cache
-      compiledQuali = loadRaceFromStorage(sessionKey, true);
-      if (compiledQuali && !compiledQuali.is_incomplete) {
-        raceCache.set(sessionKey, compiledQuali);
-        cacheHits++;
+      missingQuali.push(session);
+    }
+  }
+
+  const hasMissing = missingSessions.length > 0 || missingQuali.length > 0;
+
+  if (hasMissing && races.length > 0) {
+    // ── FAST PATH: Return preliminary data instantly ──
+    races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+    qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+    for (const race of races) {
+      if (race.drivers) {
+        for (const d of race.drivers) {
+          drivers.set(d.driver_number, d);
+        }
       }
     }
 
-    if (!compiledQuali) {
-      console.log(`[Season] 🌐 Fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
-      apiFetches++;
-      compiledQuali = await fetchQualiData(session);
-      if (compiledQuali) {
-        raceCache.set(sessionKey, compiledQuali);
-        saveRaceToStorage(sessionKey, compiledQuali, true);
-      }
-    }
+    const prelimSeason = {
+      year,
+      compiledAt: Date.now(),
+      races,
+      qualifying,
+      drivers,
+      totalRaceSessions: allRaceSessions,
+      is_preliminary: true
+    };
 
-    if (compiledQuali && !compiledQuali.is_incomplete) {
+    seasonCache.set(year, prelimSeason);
+    console.log(`[Season] ⚡ Fast path loaded! Preliminary data returned in ${(performance.now() - t0).toFixed(0)}ms (${races.length} GP/Sprint races cached)`);
+
+    // Run missing compilation in the background
+    compileMissingInBackground(year, allRaceSessions, completedSessions, completedQuali, missingSessions, missingQuali);
+
+    return prelimSeason;
+  }
+
+  // ── SYNCHRONOUS FALLBACK PATH: For first load or cold cache ──
+  // Fetch missing race sessions synchronously
+  for (const session of missingSessions) {
+    const sessionKey = session.session_key;
+    console.log(`[Season] 🌐 Synchronously fetching race ${sessionKey} (${session.circuit_short_name})`);
+    apiFetches++;
+    const compiledRace = await fetchRaceData(session);
+    if (compiledRace) {
+      raceCache.set(sessionKey, compiledRace);
+      saveRaceToStorage(sessionKey, compiledRace, false);
+      races.push(compiledRace);
+    } else {
+      incompleteSkips++;
+    }
+  }
+
+  // Fetch missing qualifying sessions synchronously
+  for (const session of missingQuali) {
+    const sessionKey = session.session_key;
+    console.log(`[Season] 🌐 Synchronously fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
+    apiFetches++;
+    const compiledQuali = await fetchQualiData(session);
+    if (compiledQuali) {
+      raceCache.set(sessionKey, compiledQuali);
+      saveRaceToStorage(sessionKey, compiledQuali, true);
       qualifying.push(compiledQuali);
     }
   }
 
-  // Always keep races sorted chronologically by date_end
   races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
   qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-  // Aggregate driver details from sorted races to ensure latest team/colour is captured
   for (const race of races) {
     if (race.drivers) {
       for (const d of race.drivers) {
@@ -228,18 +229,108 @@ export async function getSeasonData(year) {
     }
   }
 
-  const seasonData = {
+  const finalSeason = {
     year,
     compiledAt: Date.now(),
     races,
     qualifying,
     drivers,
     totalRaceSessions: allRaceSessions,
+    is_preliminary: (incompleteSkips > 0 || races.length < completedSessions.length || qualifying.length < completedQuali.length)
   };
 
-  seasonCache.set(year, seasonData);
-  console.log(`[Season] ✅ ${year} loaded in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${apiFetches} API fetches, ${incompleteSkips} incomplete skips`);
-  return seasonData;
+  seasonCache.set(year, finalSeason);
+  console.log(`[Season] ✅ ${year} loaded synchronously in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${apiFetches} API fetches, ${incompleteSkips} incomplete skips`);
+  return finalSeason;
+}
+
+/**
+ * Compile missing sessions in the background and dispatch update event.
+ */
+async function compileMissingInBackground(year, allRaceSessions, completedSessions, completedQuali, missingSessions, missingQuali) {
+  console.log(`[Season] 🚀 Starting background compile of ${missingSessions.length} races and ${missingQuali.length} qualifying sessions...`);
+  
+  try {
+    // 1. Fetch missing races
+    for (const session of missingSessions) {
+      const sessionKey = session.session_key;
+      console.log(`[Season] 🌐 [BG] Fetching race ${sessionKey} (${session.circuit_short_name})`);
+      const compiledRace = await fetchRaceData(session);
+      if (compiledRace) {
+        raceCache.set(sessionKey, compiledRace);
+        saveRaceToStorage(sessionKey, compiledRace, false);
+      }
+    }
+
+    // 2. Fetch missing qualifying
+    for (const session of missingQuali) {
+      const sessionKey = session.session_key;
+      console.log(`[Season] 🌐 [BG] Fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
+      const compiledQuali = await fetchQualiData(session);
+      if (compiledQuali) {
+        raceCache.set(sessionKey, compiledQuali);
+        saveRaceToStorage(sessionKey, compiledQuali, true);
+      }
+    }
+
+    // 3. Re-assemble final lists
+    const finalRaces = [];
+    const finalQualifying = [];
+    const drivers = new Map();
+
+    for (const session of completedSessions) {
+      const compiledRace = raceCache.get(session.session_key) || loadRaceFromStorage(session.session_key, false);
+      if (compiledRace && !compiledRace.is_incomplete) {
+        finalRaces.push(compiledRace);
+      }
+    }
+
+    for (const session of completedQuali) {
+      const compiledQuali = raceCache.get(session.session_key) || loadRaceFromStorage(session.session_key, true);
+      if (compiledQuali && !compiledQuali.is_incomplete) {
+        finalQualifying.push(compiledQuali);
+      }
+    }
+
+    finalRaces.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+    finalQualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+    for (const race of finalRaces) {
+      if (race.drivers) {
+        for (const d of race.drivers) {
+          drivers.set(d.driver_number, d);
+        }
+      }
+    }
+
+    const finalSeasonData = {
+      year,
+      compiledAt: Date.now(),
+      races: finalRaces,
+      qualifying: finalQualifying,
+      drivers,
+      totalRaceSessions: allRaceSessions,
+      is_preliminary: (finalRaces.length < completedSessions.length || finalQualifying.length < completedQuali.length)
+    };
+
+    seasonCache.set(year, finalSeasonData);
+    console.log(`[Season] ✅ Background compile complete! Dispatched update event.`);
+
+    // Trigger silent refresh in the app
+    document.dispatchEvent(new CustomEvent('pitcorner:season-updated', { detail: { year, seasonData: finalSeasonData } }));
+  } catch (e) {
+    console.error('[Season] Background compile failed:', e);
+  }
+}
+
+/**
+ * Check if the loaded season in-memory data is a preliminary/partial load.
+ */
+export function isSeasonPreliminary(year) {
+  if (seasonCache.has(year)) {
+    return !!seasonCache.get(year).is_preliminary;
+  }
+  return false;
 }
 
 /**
@@ -708,10 +799,12 @@ export function computeStandingsFromSeason(seasonData) {
   const maxConstructorPointsPerGP = seasonData.year < 2025 ? 44 : 43;
   const maxConstructorRemainingPoints = (remainingGPs * maxConstructorPointsPerGP) + (remainingSprints * 15);
 
-  const driverClinched = driverStandings.length >= 2 && 
+  const isPrelim = !!seasonData.is_preliminary;
+
+  const driverClinched = !isPrelim && driverStandings.length >= 2 && 
     (driverStandings[0].points - driverStandings[1].points) > maxRemainingPoints;
 
-  const constructorClinched = constructorStandings.length >= 2 && 
+  const constructorClinched = !isPrelim && constructorStandings.length >= 2 && 
     (constructorStandings[0].points - constructorStandings[1].points) > maxConstructorRemainingPoints;
 
   // ── Compute Chronological Clinch GP Round for Drivers & Constructors ──
@@ -753,7 +846,7 @@ export function computeStandingsFromSeason(seasonData) {
     const maxConstRemPts = (remGPs * maxConstructorPointsPerGP) + (remSprints * 15);
 
     // Check Driver Clinch at round mIdx
-    if (!driverClinchMeeting) {
+    if (!isPrelim && !driverClinchMeeting) {
       const roundDriverPoints = driverStandings.map(d => ({
         driver_number: d.driver_number,
         points: d.pointsHistory[mIdx] || 0
@@ -772,7 +865,7 @@ export function computeStandingsFromSeason(seasonData) {
     }
 
     // Check Constructor Clinch at round mIdx
-    if (!constructorClinchMeeting) {
+    if (!isPrelim && !constructorClinchMeeting) {
       const roundConstructorPoints = Array.from(teamPointsHistories.entries()).map(([teamName, history]) => ({
         team_name: teamName,
         points: history[mIdx] || 0
@@ -813,7 +906,7 @@ export function computeStandingsFromSeason(seasonData) {
   }
 
   // If the season is fully finished and no clinch occurred earlier (absolute tie-breaker in final round)
-  if (isFinished) {
+  if (!isPrelim && isFinished) {
     if (!driverClinchMeeting && driverStandings.length > 0) {
       const lastMeeting = sortedMeetings[sortedMeetings.length - 1];
       driverClinchMeeting = {
@@ -838,7 +931,7 @@ export function computeStandingsFromSeason(seasonData) {
     constructors: constructorStandings,
     raceCount: completedRaces.filter(r => r.session_name === 'Race').length,
     raceSessions: completedRaces,
-    isFinished: isFinished,
+    isFinished: isFinished && !isPrelim,
     driverClinched: driverClinched,
     constructorClinched: constructorClinched,
     driverClinchMeeting: driverClinchMeeting,
@@ -848,9 +941,6 @@ export function computeStandingsFromSeason(seasonData) {
   };
 }
 
-/**
- * Clear compiled season cache
- */
 export function clearSeasonCache() {
   seasonCache.clear();
   raceCache.clear();
@@ -862,4 +952,26 @@ export function clearSeasonCache() {
     }
   }
   keys.forEach(k => localStorage.removeItem(k));
+}
+
+/**
+ * Clear cache for a single season
+ */
+export function clearSingleSeasonCache(year) {
+  const cached = seasonCache.get(year);
+  if (cached) {
+    if (cached.races) {
+      for (const r of cached.races) {
+        localStorage.removeItem(lsRaceKey(r.session_key, false));
+        raceCache.delete(r.session_key);
+      }
+    }
+    if (cached.qualifying) {
+      for (const q of cached.qualifying) {
+        localStorage.removeItem(lsRaceKey(q.session_key, true));
+        raceCache.delete(q.session_key);
+      }
+    }
+    seasonCache.delete(year);
+  }
 }

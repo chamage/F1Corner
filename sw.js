@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v40'; // v40: ensure qualifying DNS/DNQ drivers are included to equalize qualifying counts in driver profile modals
+const CACHE_NAME = 'pitcorner-shell-v44'; // v44: clear cache confirmation modal and single-season cache clearing choice
 const STATIC_ASSETS = [
   './',
   './index.html',
