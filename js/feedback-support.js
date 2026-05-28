@@ -356,10 +356,76 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.3.3 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.3.3 <span class="new-badge">Active</span></div>
+              <div class="changelog-date">May 28, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Qualifying & Practice DNS Inclusion: Ensured registered drivers who did not set a time in qualifying or practice are now fully listed in session results tables as DNS (with 0 laps completed) rather than being completely omitted, resolving season-long qualifying count discrepancies in driver profiles.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Sprint Tab Section Reordering: Reorganized the layout of the driver profile Sprint tab to match the Grand Prix tab ordering — displaying Sprint Qualifying Performance immediately below the primary stats grid, followed by the Sprint Results chart and Sprint Consistency gauges.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Sprint Standing Segregation & Crashes: Cleanly segregated Sprint Qualifying statistics from standard Grand Prix qualifying averages inside driver profiles, and resolved a TypeError standing crash on page startup.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.3.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.3.2</div>
+              <div class="changelog-date">May 28, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Collapsible Laps & Sector Times accordion: Click any driver row to open a deep-dive modal detailing all individual sector times, personal bests, and tyre compound timeline stints.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Qualifying Segment Tags (Q1/Q2/Q3): Precise segment tags next to lap times in driver deep-dives and compiled season-long GP & Sprint Q3 appearances rates.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Qualifying Performance stats: Full season driver profile modals now feature a dedicated section displaying average grid positions and best qualifying results.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v1.3.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.3.0</div>
+              <div class="changelog-date">May 28, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>All Weekend Sessions: Browse Practice (FP1, FP2, FP3), Qualifying, Sprint Qualifying, Sprint, and Race results for completed weekends, sorted by fastest lap with gap-to-P1 deltas.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Segmented Qualifying Results: Automated Q1, Q2, and Q3 elimination segmented tables with driver elimination rankings.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Session-Aware Navigation: Session tabs (Overtakes, Positions) automatically show/hide based on session context, with a sleek full-width selector pill bar.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.2.2 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.2.2 <span>Active</span></div>
+              <div class="changelog-version">v1.2.2</div>
               <div class="changelog-date">May 27, 2026</div>
             </div>
             <ul class="changelog-list">

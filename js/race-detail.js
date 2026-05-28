@@ -3,7 +3,7 @@
 // Lazy-loads heavy charts and feeds to avoid API timeouts
 // =============================================
 
-import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions } from './api.js';
+import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
 import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, getPointsForPosition, isPast, buildDriverMap, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
@@ -11,17 +11,308 @@ import { drawLineChart, drawPositionChart } from './charts.js';
 let currentTab = 'results';
 let raceDataCache = null;
 
+// Short display labels for session pills
+const SESSION_LABELS = {
+  'Practice 1': 'FP1',
+  'Practice 2': 'FP2',
+  'Practice 3': 'FP3',
+  'Qualifying': 'Quali',
+  'Sprint Qualifying': 'SQ',
+  'Sprint Shootout': 'SQ',
+  'Sprint': 'Sprint',
+  'Race': 'Race',
+};
+
+// Session display order (chronological weekend order)
+const SESSION_ORDER = ['Practice 1', 'Practice 2', 'Practice 3', 'Sprint Qualifying', 'Sprint Shootout', 'Sprint', 'Qualifying', 'Race'];
+
+/**
+ * Check if a session type is a "race" format (has finishing order, points, overtakes, etc.)
+ */
+function isRaceSession(sessionName) {
+  return sessionName === 'Race' || sessionName === 'Sprint';
+}
+
+/**
+ * Helper to identify qualifying sessions (Qualifying, Sprint Qualifying, Sprint Shootout).
+ */
+function isQualifyingSession(sessionName) {
+  if (!sessionName) return false;
+  return sessionName.toLowerCase().includes('qualifying') || sessionName.toLowerCase().includes('shootout');
+}
+
+/**
+ * Intelligent self-correcting partitioning of qualifying laps into Q1, Q2, and Q3.
+ * Identifies breaks using standard F1 duration parameters and driver size constraints.
+ */
+function partitionQualiLaps(laps) {
+  if (!laps || laps.length === 0) return { q1: [], q2: [], q3: [] };
+
+  const lapsWithTime = laps
+    .map(lap => ({
+      ...lap,
+      time: lap.date_start ? new Date(lap.date_start).getTime() : 0
+    }))
+    .filter(lap => lap.time > 0 && lap.lap_duration > 0)
+    .sort((a, b) => a.time - b.time);
+
+  if (lapsWithTime.length === 0) {
+    return { q1: laps, q2: [], q3: [] };
+  }
+
+  const minT = lapsWithTime[0].time;
+  const maxT = lapsWithTime[lapsWithTime.length - 1].time;
+  const totalDuration = maxT - minT;
+
+  // Fallback if session is extremely short (e.g. less than 10 mins)
+  if (totalDuration < 10 * 60 * 1000) {
+    return { q1: lapsWithTime, q2: [], q3: [] };
+  }
+
+  // Find gaps larger than 1.5 minutes (break candidates)
+  const gaps = [];
+  for (let i = 1; i < lapsWithTime.length; i++) {
+    const gapMs = lapsWithTime[i].time - lapsWithTime[i-1].time;
+    if (gapMs > 1.5 * 60 * 1000) {
+      gaps.push({
+        gapMs,
+        splitTime: lapsWithTime[i-1].time + gapMs / 2
+      });
+    }
+  }
+
+  gaps.sort((a, b) => b.gapMs - a.gapMs);
+
+  const candidates = [];
+  const topGaps = gaps.slice(0, 6);
+
+  // Generate combinations of splits
+  for (let i = 0; i < topGaps.length; i++) {
+    for (let j = i + 1; j < topGaps.length; j++) {
+      const s1 = Math.min(topGaps[i].splitTime, topGaps[j].splitTime);
+      const s2 = Math.max(topGaps[i].splitTime, topGaps[j].splitTime);
+      candidates.push([s1, s2]);
+    }
+  }
+
+  for (let i = 0; i < topGaps.length; i++) {
+    candidates.push([topGaps[i].splitTime, null]);
+  }
+
+  const fallbackS1 = minT + totalDuration * 0.40;
+  const fallbackS2 = minT + totalDuration * 0.75;
+  candidates.push([fallbackS1, fallbackS2]);
+  candidates.push([fallbackS1, null]);
+
+  let bestScore = -1;
+  let selectedSplits = [fallbackS1, fallbackS2];
+
+  for (const [s1, s2] of candidates) {
+    const q1Drivers = new Set();
+    const q2Drivers = new Set();
+    const q3Drivers = new Set();
+
+    for (const lap of lapsWithTime) {
+      if (lap.time < s1) {
+        q1Drivers.add(lap.driver_number);
+      } else if (!s2 || lap.time < s2) {
+        q2Drivers.add(lap.driver_number);
+      } else {
+        q3Drivers.add(lap.driver_number);
+      }
+    }
+
+    const n1 = q1Drivers.size;
+    const n2 = q2Drivers.size;
+    const n3 = s2 ? q3Drivers.size : 0;
+
+    let isValid = false;
+    let score = 0;
+
+    if (s2) {
+      if (n1 >= n2 && n2 >= n3 && n1 > 0) {
+        isValid = true;
+        const p1 = Math.abs(n1 - 20);
+        const p2 = Math.abs(n2 - 15);
+        const p3 = Math.abs(n3 - 10);
+        score = 1000 - (p1 + p2 + p3) * 10;
+      }
+    } else {
+      if (n1 >= n2 && n1 > 0) {
+        isValid = true;
+        score = 500 - Math.abs(n1 - 20) * 10 - Math.abs(n2 - 15) * 10;
+      }
+    }
+
+    if (isValid && score > bestScore) {
+      bestScore = score;
+      selectedSplits = [s1, s2];
+    }
+  }
+
+  const [s1, s2] = selectedSplits;
+  const q1 = [];
+  const q2 = [];
+  const q3 = [];
+
+  for (const lap of lapsWithTime) {
+    if (lap.time < s1) {
+      q1.push(lap);
+    } else if (!s2 || lap.time < s2) {
+      q2.push(lap);
+    } else {
+      q3.push(lap);
+    }
+  }
+
+  return { q1, q2, q3 };
+}
+
+/**
+ * Build a qualifying/practice-style classification from lap data.
+ * Supports standard practice best-lap ranking, and intelligent multi-segment (Q1, Q2, Q3) elimination grids.
+ */
+function buildQualifyingOrder(laps, driverMap, sessionType = '') {
+  if (!laps) return [];
+
+  // For Practice sessions, standard best lap sorting is perfectly fine
+  if (!isQualifyingSession(sessionType)) {
+    const driverBestLaps = new Map();
+    for (const lap of laps) {
+      if (!lap.lap_duration || lap.lap_duration <= 0) continue;
+      const dn = lap.driver_number;
+      const current = driverBestLaps.get(dn);
+      if (!current || lap.lap_duration < current.bestLap) {
+        driverBestLaps.set(dn, { bestLap: lap.lap_duration, lapCount: (current ? current.lapCount : 0) + 1 });
+      } else {
+        driverBestLaps.set(dn, { ...current, lapCount: current.lapCount + 1 });
+      }
+    }
+
+    const allDrivers = Array.from(new Set([
+      ...laps.map(l => l.driver_number),
+      ...(driverMap ? Array.from(driverMap.keys()) : [])
+    ]));
+
+    const driverRecords = allDrivers.map(dn => {
+      const best = driverBestLaps.get(dn);
+      return {
+        driver_number: dn,
+        bestLap: best ? best.bestLap : null,
+        lapCount: best ? best.lapCount : 0
+      };
+    });
+
+    // Sort: drivers with times first (sorted by best lap), followed by drivers with no times
+    const withTime = driverRecords.filter(r => r.bestLap !== null).sort((a, b) => a.bestLap - b.bestLap);
+    const noTime = driverRecords.filter(r => r.bestLap === null);
+    const sorted = [...withTime, ...noTime];
+
+    return sorted.map((r, idx) => ({
+      driver_number: r.driver_number,
+      position: idx + 1,
+      status: r.lapCount === 0 ? 'DNS' : 'FINISHED',
+      bestLap: r.bestLap,
+      lapCount: r.lapCount,
+    }));
+  }
+
+  // It is a Qualifying session! Partition laps into Q1, Q2, Q3
+  const { q1, q2, q3 } = partitionQualiLaps(laps);
+
+  const getBestForSegment = (segmentLaps, dn) => {
+    const lapsForDriver = segmentLaps.filter(l => l.driver_number === dn && l.lap_duration > 0);
+    if (lapsForDriver.length === 0) return null;
+    return Math.min(...lapsForDriver.map(l => l.lap_duration));
+  };
+
+  const getLapCountForDriver = (dn) => {
+    return laps.filter(l => l.driver_number === dn && l.lap_duration > 0).length;
+  };
+
+  const allDrivers = Array.from(new Set([
+    ...laps.map(l => l.driver_number),
+    ...(driverMap ? Array.from(driverMap.keys()) : [])
+  ]));
+
+  const driverRecords = allDrivers.map(dn => {
+    const q1Best = getBestForSegment(q1, dn);
+    const q2Best = getBestForSegment(q2, dn);
+    const q3Best = getBestForSegment(q3, dn);
+    const totalLaps = getLapCountForDriver(dn);
+
+    return {
+      driver_number: dn,
+      q1: q1Best,
+      q2: q2Best,
+      q3: q3Best,
+      lapCount: totalLaps
+    };
+  });
+
+  // Sort drivers based on elimination logic:
+  // Group 3: Drivers who set a time in Q3 (top 10)
+  // Group 2: Drivers who set a time in Q2 but not in Q3 (positions 11-15)
+  // Group 1: Drivers who only set a time in Q1 (positions 16-20)
+  const q3Group = driverRecords.filter(r => r.q3 !== null).sort((a, b) => a.q3 - b.q3);
+  const q2Group = driverRecords.filter(r => r.q3 === null && r.q2 !== null).sort((a, b) => a.q2 - b.q2);
+  const q1Group = driverRecords.filter(r => r.q3 === null && r.q2 === null && r.q1 !== null).sort((a, b) => a.q1 - b.q1);
+  const noTimeGroup = driverRecords.filter(r => r.q3 === null && r.q2 === null && r.q1 === null);
+
+  const sortedRecords = [...q3Group, ...q2Group, ...q1Group, ...noTimeGroup];
+
+  return sortedRecords.map((r, idx) => ({
+    driver_number: r.driver_number,
+    position: idx + 1,
+    status: r.lapCount === 0 ? 'DNS' : 'FINISHED',
+    bestLap: r.q3 || r.q2 || r.q1 || null,
+    q1: r.q1,
+    q2: r.q2,
+    q3: r.q3,
+    lapCount: r.lapCount
+  }));
+}
+
+/**
+ * Show/hide tabs based on session type.
+ * Non-race sessions hide Positions and Overtakes tabs.
+ */
+function updateTabVisibility(sessionName) {
+  const tabs = document.querySelectorAll('#race-detail-tabs button');
+  const isRace = isRaceSession(sessionName);
+  
+  tabs.forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (tab === 'positions' || tab === 'overtakes') {
+      btn.style.display = isRace ? '' : 'none';
+    }
+  });
+
+  // If current tab is hidden, fallback to results
+  if (!isRace && (currentTab === 'positions' || currentTab === 'overtakes')) {
+    currentTab = 'results';
+    tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === 'results'));
+  }
+}
+
 export async function loadRaceDetail(sessionKey, meetingInfo) {
   const section = $('#race-detail');
   const header = $('#race-detail-header');
   const content = $('#race-detail-content');
   const weatherBar = $('#race-weather-bar');
+  const sessionDropdown = $('#race-session-dropdown');
+  const sessionDropdownContainer = $('#race-session-selector-container');
 
   section.style.display = 'block';
   header.innerHTML = `
     <div class="race-detail-title">${meetingInfo.meeting_name}</div>
     <div style="color:var(--text-muted);font-size:0.85rem;">${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</div>
   `;
+  
+  if (sessionDropdownContainer) {
+    sessionDropdownContainer.style.display = 'none';
+  }
+  sessionDropdown.innerHTML = '';
 
   content.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
 
@@ -31,47 +322,75 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     // Trigger weather load instantly in background
     loadAndRenderWeather(sessionKey, weatherBar);
 
-    // 1. Fetch only seasonData and drivers list (extremely light & fast!)
-    const [seasonData, drivers] = await Promise.all([
+    // 1. Fetch season data, drivers list, and ALL meeting sessions in parallel
+    const [seasonData, drivers, allMeetingSessions] = await Promise.all([
       getSeasonData(year),
       getSessionDrivers(sessionKey),
+      getMeetingSessions(meetingInfo.meeting_key),
     ]);
 
-    // Check for Sprint session on this race weekend
-    const meetingSessions = seasonData.races.filter(r => r.meeting_key === meetingInfo.meeting_key);
-    const gpSession = meetingSessions.find(r => r.session_name === 'Race') || { session_key: sessionKey, results: getResultsForSession(seasonData, sessionKey) };
-    const sprintSession = meetingSessions.find(r => r.session_name === 'Sprint');
-    const hasSprint = !!sprintSession;
+    // Filter to completed sessions and sort by weekend chronological order
+    const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
+    completedSessions.sort((a, b) => {
+      const orderA = SESSION_ORDER.indexOf(a.session_name);
+      const orderB = SESSION_ORDER.indexOf(b.session_name);
+      return (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB);
+    });
 
-    // Render title with Saturday Sprint switch toggle if available
+    // Build sessions map for quick lookup
+    const sessions = {};
+    for (const s of completedSessions) {
+      // Enrich race/sprint sessions with compiled results from season data
+      const compiledRace = seasonData.races.find(r => r.session_key === s.session_key);
+      sessions[s.session_name] = {
+        session_key: s.session_key,
+        session_name: s.session_name,
+        date_start: s.date_start,
+        date_end: s.date_end,
+        results: compiledRace ? compiledRace.results : [],
+      };
+    }
+
+    // Default to the Race session (or the initially clicked session)
+    const defaultSessionName = sessions['Race'] ? 'Race' : (completedSessions.length > 0 ? completedSessions[completedSessions.length - 1].session_name : 'Race');
+    const defaultSession = sessions[defaultSessionName] || { session_key: sessionKey, results: getResultsForSession(seasonData, sessionKey) };
+
+    // Render session dropdown options if there are multiple sessions
+    if (completedSessions.length > 1) {
+      sessionDropdown.innerHTML = completedSessions.map(s => {
+        const label = SESSION_LABELS[s.session_name] || s.session_name;
+        const isActive = s.session_name === defaultSessionName;
+        return `<option value="${s.session_name}" ${isActive ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      if (sessionDropdownContainer) {
+        sessionDropdownContainer.style.display = 'flex';
+      }
+    } else {
+      if (sessionDropdownContainer) {
+        sessionDropdownContainer.style.display = 'none';
+      }
+      sessionDropdown.innerHTML = '';
+    }
+
     header.innerHTML = `
       <div class="race-detail-title">${meetingInfo.meeting_name}</div>
       <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:6px;">
         <span style="color:var(--text-muted);font-size:0.85rem;">${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</span>
-        ${hasSprint ? `
-          <div class="session-selector-toggle" style="display:inline-flex; background:rgba(0,0,0,0.25); border:1px solid var(--border-subtle); padding:2px; border-radius:100px; margin-left:12px;">
-            <button class="toggle-btn" data-session-type="Race" style="font-family:inherit; font-size:0.7rem; font-weight:700; padding:4px 12px; border-radius:100px; border:none; background:var(--bg-tertiary); color:var(--text-primary); cursor:pointer; transition:all 150ms ease; box-shadow: 0 2px 6px rgba(0,0,0,0.25);">Grand Prix</button>
-            <button class="toggle-btn" data-session-type="Sprint" style="font-family:inherit; font-size:0.7rem; font-weight:700; padding:4px 12px; border-radius:100px; border:none; background:transparent; color:var(--text-secondary); cursor:pointer; transition:all 150ms ease;">Sprint</button>
-          </div>
-        ` : ''}
       </div>
     `;
 
-    const sessions = { Race: gpSession };
-    if (sprintSession) sessions.Sprint = sprintSession;
-
-    const order = gpSession.results || [];
+    const order = defaultSession.results || [];
     const driverMap = buildDriverMap(drivers);
 
     // Initial minimal cache
     raceDataCache = { 
-      sessionKey, 
+      sessionKey: defaultSession.session_key || sessionKey, 
       meetingInfo, 
       order, 
       drivers, 
       driverMap,
       sessions,
-      currentSessionType: 'Race',
+      currentSessionType: defaultSessionName,
       laps: null,
       stints: null,
       pits: null,
@@ -82,22 +401,11 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       driverTelemetry: {}
     };
 
-    if (hasSprint) {
-      const btns = header.querySelectorAll('.toggle-btn');
-      btns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          btns.forEach(b => {
-            b.style.background = 'transparent';
-            b.style.color = 'var(--text-secondary)';
-            b.style.boxShadow = 'none';
-          });
-          btn.style.background = 'var(--bg-tertiary)';
-          btn.style.color = 'var(--text-primary)';
-          btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.25)';
-          
-          switchRaceDetailSession(btn.dataset.sessionType);
-        });
-      });
+    // Bind session dropdown change handler
+    if (completedSessions.length > 1) {
+      sessionDropdown.onchange = (e) => {
+        switchRaceDetailSession(e.target.value);
+      };
     }
 
     // Reset tab to results
@@ -105,24 +413,31 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     const tabs = document.querySelectorAll('#race-detail-tabs button');
     tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === 'results'));
 
+    // Update tab visibility for the default session type
+    updateTabVisibility(defaultSessionName);
+
     renderTab();
     setupTabs();
 
-
-
     // 2. Background Enrichment: fetch detailed lap, pit, and overtake counts asynchronously
+    const activeSessionKey = raceDataCache.sessionKey;
     Promise.all([
-      getLaps({ session_key: sessionKey }),
-      getPits({ session_key: sessionKey }),
-      getOvertakes({ session_key: sessionKey }),
-      getIntervals({ session_key: sessionKey }),
+      getLaps({ session_key: activeSessionKey }),
+      getPits({ session_key: activeSessionKey }),
+      isRaceSession(defaultSessionName) ? getOvertakes({ session_key: activeSessionKey }) : Promise.resolve([]),
+      isRaceSession(defaultSessionName) ? getIntervals({ session_key: activeSessionKey }) : Promise.resolve([]),
     ]).then(([laps, pits, overtakes, intervals]) => {
       // Safely update cache if we are still viewing the same race session
-      if (raceDataCache && raceDataCache.sessionKey === sessionKey) {
+      if (raceDataCache && raceDataCache.sessionKey === activeSessionKey) {
         raceDataCache.laps = laps;
         raceDataCache.pits = pits;
         raceDataCache.overtakes = overtakes;
         raceDataCache.intervals = intervals;
+        
+        // For non-race sessions, build results from lap data if we don't have results yet
+        if (!isRaceSession(raceDataCache.currentSessionType) && (!raceDataCache.order || raceDataCache.order.length === 0)) {
+          raceDataCache.order = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
+        }
         
         // Dynamic pop-in: re-render results tab if active
         if (currentTab === 'results') {
@@ -171,11 +486,33 @@ function renderTab() {
 
 function renderResults(container) {
   const { order, driverMap, laps, overtakes, pits } = raceDataCache;
+  const sessionType = raceDataCache.currentSessionType;
+  const isRace = isRaceSession(sessionType);
 
-  if (order.length === 0) {
-    container.innerHTML = '<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-car-side fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No results data available for this race</div></div>';
+  // For non-race sessions, try to build order from laps if not set
+  if (!isRace && (!order || order.length === 0) && laps && laps.length > 0) {
+    raceDataCache.order = buildQualifyingOrder(laps, driverMap, sessionType);
+    return renderResults(container); // Re-enter with populated order
+  }
+
+  if (!order || order.length === 0) {
+    const sessionLabel = SESSION_LABELS[sessionType] || sessionType;
+    container.innerHTML = `<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-car-side fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No results data available for ${sessionLabel}</div></div>`;
     return;
   }
+
+  if (isRace) {
+    renderRaceResults(container);
+  } else {
+    renderSessionResults(container);
+  }
+}
+
+/**
+ * Render race/sprint results with full columns (Laps, Pts, Status, etc.)
+ */
+function renderRaceResults(container) {
+  const { order, driverMap, laps, overtakes, pits } = raceDataCache;
 
   // 1. Calculate and correct driver lap counts using max lap number and backwards propagation
   const computedLapCounts = new Map();
@@ -316,7 +653,7 @@ function renderResults(container) {
         } else if (entry && entry.gap_to_leader != null) {
           const gapVal = parseFloat(entry.gap_to_leader);
           if (!isNaN(gapVal)) {
-            statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;font-family:\'JetBrains Mono\',monospace;">+${gapVal.toFixed(3)}s</span>`;
+            statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;font-family:\\'JetBrains Mono\\',monospace;">+${gapVal.toFixed(3)}s</span>`;
           } else {
             const stops = driverPits ? driverPits.length : 0;
             statusText = `<span style="color:var(--text-secondary);font-size:0.75rem;">${stops} Stop${stops !== 1 ? 's' : ''}</span>`;
@@ -353,6 +690,178 @@ function renderResults(container) {
   container.innerHTML = html;
 
   // Bind clicks to driver rows for deep-dive stats modal
+  bindDriverRowClicks(container);
+}
+
+/**
+ * Render qualifying/practice session results — ranked by best lap time with gap-to-P1
+ */
+function renderSessionResults(container) {
+  const { order, driverMap, laps } = raceDataCache;
+  const sessionType = raceDataCache.currentSessionType;
+  const sessionLabel = SESSION_LABELS[sessionType] || sessionType;
+  const isQuali = isQualifyingSession(sessionType);
+
+  // Compute best laps per driver from raw lap data (for non-quali)
+  const driverBestLaps = new Map();
+  if (laps && laps.length > 0) {
+    for (const lap of laps) {
+      if (!lap.lap_duration || lap.lap_duration <= 0) continue;
+      const dn = lap.driver_number;
+      const current = driverBestLaps.get(dn);
+      if (!current || lap.lap_duration < current) {
+        driverBestLaps.set(dn, lap.lap_duration);
+      }
+    }
+  }
+
+  // Count laps per driver
+  const driverLapCounts = new Map();
+  if (laps && laps.length > 0) {
+    for (const lap of laps) {
+      const dn = lap.driver_number;
+      driverLapCounts.set(dn, (driverLapCounts.get(dn) || 0) + 1);
+    }
+  }
+
+  // P1 best lap for gap calculation
+  const p1Best = order.length > 0 && order[0].bestLap ? order[0].bestLap : (driverBestLaps.size > 0 ? Math.min(...driverBestLaps.values()) : null);
+
+  // Count unique drivers
+  const driverCount = order.length;
+  const totalLaps = laps ? new Set(laps.map(l => l.driver_number)).size > 0 ? laps.length : 0 : '…';
+  const bestTimeStr = p1Best ? formatLapTime(p1Best) : '…';
+
+  let html = `
+    <div class="key-stats-grid">
+      <div class="key-stat">
+        <div class="key-stat-value">${driverCount}</div>
+        <div class="key-stat-label">Drivers</div>
+      </div>
+      <div class="key-stat">
+        <div class="key-stat-value">${totalLaps}</div>
+        <div class="key-stat-label">Total Laps</div>
+      </div>
+      <div class="key-stat">
+        <div class="key-stat-value">${bestTimeStr}</div>
+        <div class="key-stat-label">Fastest Lap</div>
+      </div>
+      <div class="key-stat">
+        <div class="key-stat-value">${sessionLabel}</div>
+        <div class="key-stat-label">Session</div>
+      </div>
+    </div>
+  `;
+
+  let headersHtml = '';
+  if (isQuali) {
+    headersHtml = `
+      <tr>
+        <th>Pos</th>
+        <th>Driver</th>
+        <th>Team</th>
+        <th>Q1</th>
+        <th>Q2</th>
+        <th>Q3</th>
+        <th>Laps</th>
+      </tr>
+    `;
+  } else {
+    headersHtml = `
+      <tr>
+        <th>Pos</th>
+        <th>Driver</th>
+        <th>Team</th>
+        <th>Best Lap</th>
+        <th>Gap</th>
+        <th>Laps</th>
+      </tr>
+    `;
+  }
+
+  html += `
+    <div style="overflow-x:auto;">
+    <table class="results-table">
+      <thead>
+        ${headersHtml}
+      </thead>
+      <tbody>
+  `;
+
+  for (const entry of order) {
+    const { driver_number, position, status } = entry;
+    const d = driverMap.get(driver_number) || { name_acronym: `#${driver_number}`, team_name: '?', team_colour: '666', full_name: `Driver #${driver_number}`, headshot_url: '' };
+    const teamColor = getTeamColor(d.team_colour);
+    
+    const isDNS = status === 'DNS';
+    const displayPos = isDNS ? 'DNS' : position;
+    const posClass = isDNS ? 'dns-badge' : (position <= 3 ? `p${position}` : '');
+    
+    const lapCount = entry.lapCount || driverLapCounts.get(driver_number) || 0;
+
+    let rowContent = '';
+
+    if (isQuali) {
+      const q1Str = entry.q1 ? formatLapTime(entry.q1) : '—';
+      const q2Str = entry.q2 ? formatLapTime(entry.q2) : '—';
+      const q3Str = entry.q3 ? formatLapTime(entry.q3) : '—';
+
+      rowContent = `
+        <td class="mono" style="font-size:0.8rem;">${q1Str}</td>
+        <td class="mono" style="font-size:0.8rem;">${q2Str}</td>
+        <td class="mono" style="font-size:0.8rem;">${q3Str}</td>
+      `;
+    } else {
+      const bestLap = entry.bestLap || driverBestLaps.get(driver_number) || null;
+      const isFastest = position === 1;
+      
+      // Gap to P1
+      let gapText = '';
+      if (position === 1) {
+        gapText = '<span style="color:#ffd700;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;">P1</span>';
+      } else if (bestLap && p1Best) {
+        const gap = bestLap - p1Best;
+        gapText = `<span style="color:var(--text-secondary);font-size:0.8rem;font-family:'JetBrains Mono',monospace;">+${gap.toFixed(3)}s</span>`;
+      } else {
+        gapText = '<span style="color:var(--text-muted);">—</span>';
+      }
+
+      rowContent = `
+        <td class="mono ${isFastest ? 'fastest-lap' : ''}" style="font-size:0.8rem;">${bestLap ? formatLapTime(bestLap) : '—'} ${isFastest ? '<span style="color:#a855f7;font-size:0.65rem;margin-left:4px;" title="Fastest">🟣</span>' : ''}</td>
+        <td style="text-align:center;">${gapText}</td>
+      `;
+    }
+
+    html += `
+      <tr class="clickable-driver-row" data-driver-number="${driver_number}" style="cursor:pointer;" title="Click for driver session deep-dive stats">
+        <td><span class="position-badge ${posClass}">${displayPos}</span></td>
+        <td>
+          <div class="driver-cell">
+            <div class="team-color-bar" style="background:${teamColor}"></div>
+            <img class="driver-headshot" src="${d.headshot_url || ''}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'" style="width:32px;height:32px;">
+            <div class="driver-info">
+              <div class="driver-name">${d.full_name || d.name_acronym}</div>
+            </div>
+          </div>
+        </td>
+        <td style="color:var(--text-muted);font-size:0.8rem;">${d.team_name}</td>
+        ${rowContent}
+        <td class="mono" style="font-size:0.8rem;color:var(--text-muted);">${lapCount}</td>
+      </tr>
+    `;
+  }
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  // Bind clicks to driver rows for deep-dive stats modal
+  bindDriverRowClicks(container);
+}
+
+/**
+ * Bind driver row click events for deep-dive modal
+ */
+function bindDriverRowClicks(container) {
   const rows = container.querySelectorAll('.clickable-driver-row');
   rows.forEach(row => {
     row.addEventListener('click', () => {
@@ -361,6 +870,7 @@ function renderResults(container) {
     });
   });
 }
+
 
 // ── Lazy-Load Tab Wrappers ──
 
@@ -836,6 +1346,17 @@ export async function showRaceDriverDetail(driverNumber) {
   };
   const teamColor = getTeamColor(d.team_colour);
 
+  const sessionType = raceDataCache.currentSessionType;
+  const isRace = isRaceSession(sessionType);
+  const isQuali = isQualifyingSession(sessionType);
+
+  let loadingLabel = 'Analyzing GP Telemetry...';
+  if (isQuali) {
+    loadingLabel = 'Analyzing Qualifying Telemetry...';
+  } else if (!isRace) {
+    loadingLabel = 'Analyzing Practice Telemetry...';
+  }
+
   // Render a glassmorphic loader skeleton
   modal.innerHTML = `
     <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
@@ -851,7 +1372,7 @@ export async function showRaceDriverDetail(driverNumber) {
         <div class="skeleton skeleton-row" style="height:14px; width:85%;"></div>
         <div class="skeleton skeleton-row" style="height:14px; width:95%;"></div>
       </div>
-      <div style="font-size:0.8rem; color:var(--text-muted); margin-top:20px; font-weight:600;">Analyzing GP Telemetry...</div>
+      <div style="font-size:0.8rem; color:var(--text-muted); margin-top:20px; font-weight:600;">${loadingLabel}</div>
     </div>
   `;
   document.getElementById('dm-close').addEventListener('click', closeModal);
@@ -874,12 +1395,17 @@ export async function showRaceDriverDetail(driverNumber) {
         getStints({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
         getPits({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
         getLaps({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
-        getPositions({ session_key: raceDataCache.sessionKey, driver_number: driverNumber })
+        getPositions({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
+        (!raceDataCache.laps && isQuali) ? getLaps({ session_key: raceDataCache.sessionKey }) : Promise.resolve(null)
       ]);
       stints = results[0];
       pits = results[1];
       laps = results[2];
       positions = results[3];
+
+      if (results[4]) {
+        raceDataCache.laps = results[4];
+      }
 
       // Save in driver-specific cache
       raceDataCache.driverTelemetry[driverNumber] = { stints, pits, laps, positions };
@@ -893,28 +1419,45 @@ export async function showRaceDriverDetail(driverNumber) {
     const driverPits = pits.sort((a, b) => a.lap_number - b.lap_number);
     const driverLaps = laps.sort((a, b) => a.lap_number - b.lap_number);
 
-    // Calculate grid starting position from chronological positions telemetry
-    const sortedPositions = [...positions].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const startPos = sortedPositions.length > 0 ? sortedPositions[0].position : '—';
+    const sessionType = raceDataCache.currentSessionType;
+    const isRace = isRaceSession(sessionType);
+    const isQuali = isQualifyingSession(sessionType);
+
+    // Calculate grid starting position from chronological positions telemetry (only for races)
+    let startPos = '—';
+    let gainLossText = '';
+    let gainLossClass = '';
+    
+    if (isRace) {
+      const sortedPositions = [...positions].sort((a, b) => new Date(a.date) - new Date(b.date));
+      startPos = sortedPositions.length > 0 ? sortedPositions[0].position : '—';
+    }
 
     const finishEntry = raceDataCache.order.find(o => o.driver_number === driverNumber);
     const finishPos = finishEntry ? finishEntry.position : '—';
     const finishStatus = finishEntry ? finishEntry.status : '—';
 
-    let gainLossText = '';
-    let gainLossClass = '';
-    if (typeof startPos === 'number' && typeof finishPos === 'number') {
-      const diff = startPos - finishPos;
-      if (diff > 0) {
-        gainLossText = `<i class="fa-solid fa-circle-up" style="color:var(--f1-green); margin-right:6px;"></i>Gained ${diff} position${diff > 1 ? 's' : ''} from starting grid`;
-        gainLossClass = 'style="color:var(--f1-green); font-weight:700; display:flex; align-items:center;"';
-      } else if (diff < 0) {
-        gainLossText = `<i class="fa-solid fa-circle-down" style="color:var(--f1-red); margin-right:6px;"></i>Lost ${Math.abs(diff)} position${Math.abs(diff) > 1 ? 's' : ''} from starting grid`;
-        gainLossClass = 'style="color:var(--f1-red); font-weight:700; display:flex; align-items:center;"';
-      } else {
-        gainLossText = `<i class="fa-solid fa-circle-right" style="color:var(--text-muted); margin-right:6px;"></i>Maintained grid position`;
-        gainLossClass = 'style="color:var(--text-muted); font-weight:700; display:flex; align-items:center;"';
+    if (isRace) {
+      if (typeof startPos === 'number' && typeof finishPos === 'number') {
+        const diff = startPos - finishPos;
+        if (diff > 0) {
+          gainLossText = `<i class="fa-solid fa-circle-up" style="color:var(--f1-green); margin-right:6px;"></i>Gained ${diff} position${diff > 1 ? 's' : ''} from starting grid`;
+          gainLossClass = 'style="color:var(--f1-green); font-weight:700; display:flex; align-items:center;"';
+        } else if (diff < 0) {
+          gainLossText = `<i class="fa-solid fa-circle-down" style="color:var(--f1-red); margin-right:6px;"></i>Lost ${Math.abs(diff)} position${Math.abs(diff) > 1 ? 's' : ''} from starting grid`;
+          gainLossClass = 'style="color:var(--f1-red); font-weight:700; display:flex; align-items:center;"';
+        } else {
+          gainLossText = `<i class="fa-solid fa-circle-right" style="color:var(--text-muted); margin-right:6px;"></i>Maintained grid position`;
+          gainLossClass = 'style="color:var(--text-muted); font-weight:700; display:flex; align-items:center;"';
+        }
       }
+    } else {
+      if (isQuali) {
+        gainLossText = `<i class="fa-solid fa-flag-checkered" style="color:var(--text-secondary); margin-right:6px;"></i>Qualified P${finishPos}`;
+      } else {
+        gainLossText = `<i class="fa-solid fa-gauge-high" style="color:var(--text-secondary); margin-right:6px;"></i>Finished P${finishPos} in classification`;
+      }
+      gainLossClass = 'style="color:var(--text-secondary); font-weight:700; display:flex; align-items:center;"';
     }
 
     // Extract fastest sector times and lap markers
@@ -939,6 +1482,27 @@ export async function showRaceDriverDetail(driverNumber) {
         bestS3Num = l.lap_number;
       }
     });
+
+    const theoreticalBest = (bestS1 < Infinity && bestS2 < Infinity && bestS3 < Infinity)
+      ? (bestS1 + bestS2 + bestS3)
+      : null;
+
+    // Helper for mini tyre badges in laps list
+    const getMiniTyreBadge = (comp) => {
+      if (!comp) return '<span style="color:var(--text-muted);">—</span>';
+      const cClass = getCompoundClass(comp);
+      let bg = 'rgba(255,255,255,0.05)';
+      let color = 'var(--text-muted)';
+      let char = comp[0] || '?';
+      
+      if (cClass.includes('soft')) { bg = 'var(--tyre-soft)'; color = '#fff'; }
+      else if (cClass.includes('medium')) { bg = 'var(--tyre-medium)'; color = '#000'; }
+      else if (cClass.includes('hard')) { bg = 'var(--tyre-hard)'; color = '#000'; }
+      else if (cClass.includes('inter')) { bg = 'var(--tyre-inter)'; color = '#fff'; }
+      else if (cClass.includes('wet')) { bg = 'var(--tyre-wet)'; color = '#fff'; }
+      
+      return `<span class="tyre-badge ${cClass}" style="width:14px; height:14px; font-size:0.48rem; border-radius:50%; font-weight:900; display:inline-flex; align-items:center; justify-content:center; background:${bg}; color:${color}; border:1px solid rgba(255,255,255,0.1); line-height: 1;" title="${comp}">${char}</span>`;
+    };
 
     // Build stints timeline content
     let stintsHtml = '';
@@ -980,30 +1544,190 @@ export async function showRaceDriverDetail(driverNumber) {
       `;
     }
 
-    // Build pit stop content
-    let pitsHtml = '';
-    if (driverPits.length === 0) {
-      pitsHtml = `<div style="color:var(--text-muted); font-size:0.8rem; padding:8px 0;">No pit stops recorded during this Grand Prix</div>`;
-    } else {
-      pitsHtml = `
-        <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
-          ${driverPits.map(p => {
-            const durVal = p.pit_duration ? parseFloat(p.pit_duration) : NaN;
-            const dur = !isNaN(durVal) ? `${durVal.toFixed(2)}s` : '—';
-            return `
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-                <div>
-                  <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Lap ${p.lap_number}</span>
+    // Build pit stop content (only for race)
+    let pitsSectionHtml = '';
+    if (isRace) {
+      let pitsHtml = '';
+      if (driverPits.length === 0) {
+        pitsHtml = `<div style="color:var(--text-muted); font-size:0.8rem; padding:8px 0;">No pit stops recorded during this Grand Prix</div>`;
+      } else {
+        pitsHtml = `
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+            ${driverPits.map(p => {
+              const durVal = p.pit_duration ? parseFloat(p.pit_duration) : NaN;
+              const dur = !isNaN(durVal) ? `${durVal.toFixed(2)}s` : '—';
+              return `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
+                  <div>
+                    <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Lap ${p.lap_number}</span>
+                  </div>
+                  <div style="text-align:right; font-family:'JetBrains Mono', monospace; font-size:0.85rem; font-weight:700; color:var(--text-primary);">
+                    <i class="fa-solid fa-stopwatch" style="color: var(--text-muted); margin-right: 4px;"></i> Duration: ${dur}
+                  </div>
                 </div>
-                <div style="text-align:right; font-family:'JetBrains Mono', monospace; font-size:0.85rem; font-weight:700; color:var(--text-primary);">
-                  <i class="fa-solid fa-stopwatch" style="color: var(--text-muted); margin-right: 4px;"></i> Duration: ${dur}
-                </div>
-              </div>
-            `;
-          }).join('')}
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+      
+      pitsSectionHtml = `
+        <!-- Pit Stop Records -->
+        <div>
+          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-wrench" style="color: var(--text-secondary); width: 14px;"></i> Pit Stop Telemetry
+          </div>
+          ${pitsHtml}
         </div>
       `;
     }
+
+    // Build qualifying classification segments (only for qualifying)
+    let qualiSegmentsSectionHtml = '';
+    if (isQuali) {
+      const entry = raceDataCache.order.find(o => o.driver_number === driverNumber) || {};
+      const q1Str = entry.q1 ? formatLapTime(entry.q1) : '—';
+      const q2Str = entry.q2 ? formatLapTime(entry.q2) : '—';
+      const q3Str = entry.q3 ? formatLapTime(entry.q3) : '—';
+
+      qualiSegmentsSectionHtml = `
+        <!-- Qualifying Segments -->
+        <div>
+          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-chart-line" style="color: var(--text-secondary); width: 14px;"></i> Qualifying Classification Times
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px;">
+            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
+              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q1 Session</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q1Str}</div>
+            </div>
+            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
+              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q2 Session</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q2Str}</div>
+            </div>
+            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
+              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q3 Session</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q3Str}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // If it is a Qualifying session, partition all laps for Q-sessions to find which Q-segment each lap belongs to
+    let q1Laps = [], q2Laps = [], q3Laps = [];
+    if (isQuali && raceDataCache.laps) {
+      const partitioned = partitionQualiLaps(raceDataCache.laps);
+      q1Laps = partitioned.q1 || [];
+      q2Laps = partitioned.q2 || [];
+      q3Laps = partitioned.q3 || [];
+    }
+
+    // Build the all-laps table rows
+    const lapRowsHtml = driverLaps.map(l => {
+      const lapNum = l.lap_number;
+      const isPersonalBest = l.lap_duration && l.lap_duration === bestLap;
+      
+      let qualiSegment = '';
+      if (isQuali && raceDataCache.laps) {
+        const inQ1 = q1Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
+        const inQ2 = q2Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
+        const inQ3 = q3Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
+        
+        if (inQ1) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:var(--text-secondary); background:rgba(255,255,255,0.05); padding:1px 4px; border-radius:2px; margin-left:4px;">Q1</span>';
+        else if (inQ2) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.1); padding:1px 4px; border-radius:2px; margin-left:4px;">Q2</span>';
+        else if (inQ3) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:#a855f7; background:rgba(168,85,247,0.1); padding:1px 4px; border-radius:2px; margin-left:4px;">Q3</span>';
+      }
+      
+      const timeStr = l.lap_duration 
+        ? (isPersonalBest 
+            ? `<span style="color:#c084fc; font-weight:700;">${formatLapTime(l.lap_duration)} 🟣</span>` 
+            : formatLapTime(l.lap_duration)) 
+        : '—';
+      
+      const s1Str = l.duration_sector_1 
+        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_1 === bestS1 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_1 === bestS1 ? '700' : 'normal'}">${l.duration_sector_1.toFixed(3)}s</span>` 
+        : '—';
+        
+      const s2Str = l.duration_sector_2 
+        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_2 === bestS2 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_2 === bestS2 ? '700' : 'normal'}">${l.duration_sector_2.toFixed(3)}s</span>` 
+        : '—';
+        
+      const s3Str = l.duration_sector_3 
+        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_3 === bestS3 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_3 === bestS3 ? '700' : 'normal'}">${l.duration_sector_3.toFixed(3)}s</span>` 
+        : '—';
+
+      const stint = driverStints.find(s => lapNum >= (s.lap_start || 1) && lapNum <= (s.lap_end || 999));
+      const comp = stint ? stint.compound : null;
+      const tyreBadge = getMiniTyreBadge(comp);
+
+      return `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.02); height: 28px;">
+          <td style="padding: 6px 8px; font-weight: 700; color: var(--text-muted);">Lap ${lapNum}${qualiSegment}</td>
+          <td style="padding: 6px 8px; font-family:'JetBrains Mono',monospace;">${timeStr}</td>
+          <td style="padding: 6px 8px;">${s1Str}</td>
+          <td style="padding: 6px 8px;">${s2Str}</td>
+          <td style="padding: 6px 8px;">${s3Str}</td>
+          <td style="padding: 6px 8px; text-align: center;">${tyreBadge}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const allLapsAccordionHtml = `
+      <!-- Collapsible Laps & Sector Times Feed -->
+      <div class="dm-accordion-wrapper" style="margin-top: 4px;">
+        <button class="accordion-toggle" id="dm-laps-toggle" style="
+          width: 100%;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-md);
+          padding: 12px 16px;
+          color: var(--text-primary);
+          font-family: 'Outfit', sans-serif;
+          font-size: 0.85rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          cursor: pointer;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          transition: all var(--transition-fast);
+          outline: none;
+        ">
+          <span style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-list-ol" style="color: var(--text-secondary); width:14px;"></i> All Laps & Sector Times</span>
+          <i class="fa-solid fa-chevron-down toggle-icon" id="dm-laps-chevron" style="transition: transform var(--transition-fast); color: var(--text-muted); font-size: 0.8rem;"></i>
+        </button>
+        
+        <div class="accordion-panel" id="dm-laps-panel" style="
+          max-height: 0;
+          overflow: hidden;
+          transition: max-height 300ms cubic-bezier(0.4, 0, 0.2, 1);
+          margin-top: 8px;
+          border-radius: var(--radius-md);
+          background: rgba(0, 0, 0, 0.15);
+          border: 1px solid transparent;
+        ">
+          <div style="padding: 12px; overflow-x: auto; max-height: 320px; overflow-y: auto;" class="custom-scrollbar">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.72rem; text-align: left;">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.62rem; letter-spacing: 0.03em;">
+                  <th style="padding: 6px 8px;">Lap</th>
+                  <th style="padding: 6px 8px;">Lap Time</th>
+                  <th style="padding: 6px 8px;">Sector 1</th>
+                  <th style="padding: 6px 8px;">Sector 2</th>
+                  <th style="padding: 6px 8px;">Sector 3</th>
+                  <th style="padding: 6px 8px; text-align: center;">Tyre</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${lapRowsHtml || '<tr><td colspan="6" style="padding: 12px; text-align: center; color: var(--text-muted);">No laps recorded</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
 
     // Steward decisions and events filtering
     const acronym = d.name_acronym || '';
@@ -1057,6 +1781,54 @@ export async function showRaceDriverDetail(driverNumber) {
       `;
     }
 
+    // Dynamic stats grid
+    let statsGridHtml = '';
+    if (isRace) {
+      statsGridHtml = `
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Start Grid</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">P${startPos}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Race Finish</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: ${finishStatus === 'DNF' ? 'var(--f1-red)' : 'var(--text-primary)'}; margin-top: 4px;">
+            ${finishStatus === 'DNS' ? 'DNS' : finishStatus === 'DSQ' ? 'DSQ' : `P${finishPos}`}
+            ${finishStatus === 'DNF' ? '<span style="font-size:0.75rem;color:var(--f1-red);">(DNF)</span>' : ''}
+          </div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Completed Laps</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">${driverLaps.length}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Pit Stops</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">${driverPits.length}</div>
+        </div>
+      `;
+    } else {
+      const bestTimeStr = bestLap < Infinity ? formatLapTime(bestLap) : '—';
+      const theoreticalBestStr = theoreticalBest ? formatLapTime(theoreticalBest) : '—';
+      
+      statsGridHtml = `
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Classification</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">P${finishPos}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Best Lap</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">${bestTimeStr}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Theo. Best</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.1rem; font-weight: 800; color: #a855f7; margin-top: 4px;">${theoreticalBestStr}</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
+          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Laps Completed</div>
+          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">${driverLaps.length}</div>
+        </div>
+      `;
+    }
+
     // Compile beautiful UI with clean styled details
     modal.innerHTML = `
       <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
@@ -1084,25 +1856,7 @@ export async function showRaceDriverDetail(driverNumber) {
 
       <!-- Quick Race Stats Metrics -->
       <div class="dm-grid-stats">
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Start Grid</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">P${startPos}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Race Finish</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: ${finishStatus === 'DNF' ? 'var(--f1-red)' : 'var(--text-primary)'}; margin-top: 4px;">
-            ${finishStatus === 'DNS' ? 'DNS' : finishStatus === 'DSQ' ? 'DSQ' : `P${finishPos}`}
-            ${finishStatus === 'DNF' ? '<span style="font-size:0.75rem;color:var(--f1-red);">(DNF)</span>' : ''}
-          </div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Completed Laps</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">${driverLaps.length}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Pit Stops</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">${driverPits.length}</div>
-        </div>
+        ${statsGridHtml}
       </div>
 
       <!-- Telemetry and Stints Timeline -->
@@ -1137,6 +1891,10 @@ export async function showRaceDriverDetail(driverNumber) {
           </div>
         </div>
 
+        ${qualiSegmentsSectionHtml}
+
+        ${allLapsAccordionHtml}
+
         <!-- Tyre Stints Timeline -->
         <div>
           <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
@@ -1145,13 +1903,7 @@ export async function showRaceDriverDetail(driverNumber) {
           ${stintsHtml}
         </div>
 
-        <!-- Pit Stop Records -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-wrench" style="color: var(--text-secondary); width: 14px;"></i> Pit Stop Telemetry
-          </div>
-          ${pitsHtml}
-        </div>
+        ${pitsSectionHtml}
 
         <!-- Stewarding & Personal Incidents Feed -->
         <div>
@@ -1163,6 +1915,30 @@ export async function showRaceDriverDetail(driverNumber) {
 
       </div>
     `;
+
+    // Setup Accordion Toggle Listener
+    const lapsToggle = document.getElementById('dm-laps-toggle');
+    const lapsPanel = document.getElementById('dm-laps-panel');
+    const lapsChevron = document.getElementById('dm-laps-chevron');
+    
+    if (lapsToggle && lapsPanel) {
+      lapsToggle.addEventListener('click', () => {
+        const isCollapsed = lapsPanel.style.maxHeight === '0px' || !lapsPanel.style.maxHeight || lapsPanel.style.maxHeight === '0';
+        if (isCollapsed) {
+          lapsPanel.style.maxHeight = lapsPanel.scrollHeight + 'px';
+          lapsPanel.style.border = '1px solid var(--border-subtle)';
+          lapsChevron.style.transform = 'rotate(180deg)';
+          lapsToggle.style.background = 'rgba(255, 255, 255, 0.05)';
+          lapsToggle.style.borderColor = 'var(--text-muted)';
+        } else {
+          lapsPanel.style.maxHeight = '0px';
+          lapsPanel.style.border = '1px solid transparent';
+          lapsChevron.style.transform = 'rotate(0deg)';
+          lapsToggle.style.background = 'rgba(255, 255, 255, 0.02)';
+          lapsToggle.style.borderColor = 'var(--border-subtle)';
+        }
+      });
+    }
 
     // Rebind closing event to X button
     document.getElementById('dm-close').addEventListener('click', closeModal);
@@ -1182,8 +1958,8 @@ export async function showRaceDriverDetail(driverNumber) {
 }
 
 /**
- * Controller to switch active session detail between Grand Prix Race and Saturday Sprint.
- * Clears cached telemetry objects so Saturday Sprint loads fresh telemetry records.
+ * Controller to switch active session detail between any weekend session type.
+ * Clears cached telemetry objects so the new session loads fresh telemetry records.
  */
 async function switchRaceDetailSession(sessionType) {
   if (!raceDataCache || raceDataCache.currentSessionType === sessionType) return;
@@ -1191,11 +1967,18 @@ async function switchRaceDetailSession(sessionType) {
   const session = raceDataCache.sessions[sessionType];
   if (!session) return;
   
+  const isRace = isRaceSession(sessionType);
+  
+  const sessionDropdown = $('#race-session-dropdown');
+  if (sessionDropdown) {
+    sessionDropdown.value = sessionType;
+  }
+  
   raceDataCache.currentSessionType = sessionType;
   raceDataCache.sessionKey = session.session_key;
-  raceDataCache.order = session.results;
+  raceDataCache.order = session.results || [];
   
-  // Clear lazy-loaded telemetries so they get fetched fresh for the Sprint
+  // Clear lazy-loaded telemetries so they get fetched fresh
   raceDataCache.laps = null;
   raceDataCache.stints = null;
   raceDataCache.pits = null;
@@ -1204,6 +1987,9 @@ async function switchRaceDetailSession(sessionType) {
   raceDataCache.intervals = null;
   raceDataCache.driverTelemetry = {};
   
+  // Update tab visibility for new session type
+  updateTabVisibility(sessionType);
+  
   // Render loading skeleton
   const content = $('#race-detail-content');
   content.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
@@ -1211,16 +1997,27 @@ async function switchRaceDetailSession(sessionType) {
   const weatherBar = $('#race-weather-bar');
   loadAndRenderWeather(session.session_key, weatherBar);
   
+  // Fetch fresh drivers for this session
+  try {
+    const sessionDrivers = await getSessionDrivers(session.session_key);
+    if (sessionDrivers && sessionDrivers.length > 0) {
+      raceDataCache.drivers = sessionDrivers;
+      raceDataCache.driverMap = buildDriverMap(sessionDrivers);
+    }
+  } catch (err) {
+    console.warn('[Race Detail] Failed to fetch session drivers:', err);
+  }
+  
   try {
     // Render current active tab layout in skeleton state
     renderTab();
     
-    // Background enrichment
+    // Background enrichment — only fetch overtakes/intervals for race sessions
     const [laps, pits, overtakes, intervals] = await Promise.all([
       getLaps({ session_key: session.session_key }),
       getPits({ session_key: session.session_key }),
-      getOvertakes({ session_key: session.session_key }),
-      getIntervals({ session_key: session.session_key }),
+      isRace ? getOvertakes({ session_key: session.session_key }) : Promise.resolve([]),
+      isRace ? getIntervals({ session_key: session.session_key }) : Promise.resolve([]),
     ]);
     
     if (raceDataCache && raceDataCache.sessionKey === session.session_key) {
@@ -1228,6 +2025,11 @@ async function switchRaceDetailSession(sessionType) {
       raceDataCache.pits = pits;
       raceDataCache.overtakes = overtakes;
       raceDataCache.intervals = intervals;
+      
+      // For non-race sessions, build results from lap data
+      if (!isRace && (!raceDataCache.order || raceDataCache.order.length === 0)) {
+        raceDataCache.order = buildQualifyingOrder(laps, raceDataCache.driverMap, sessionType);
+      }
       
       if (currentTab === 'results') {
         renderResults(content);

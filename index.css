@@ -3153,7 +3153,8 @@ body:has(.driver-modal-overlay.open) .back-to-top-btn {
 }
 
 /* Tag variations */
-.changelog-tag.added {
+.changelog-tag.added,
+.changelog-tag.new {
   background: rgba(46, 204, 113, 0.12);
   border: 1px solid rgba(46, 204, 113, 0.25);
   color: #2ecc71;
@@ -3207,3 +3208,41 @@ body:has(.driver-modal-overlay.open) .back-to-top-btn {
   color: #9b59b6;
 }
 
+
+/* ── Custom Styled Session Dropdown Picker ── */
+.session-dropdown {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 36px 6px 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  outline: none;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.session-dropdown:hover {
+  border-color: var(--text-muted) !important;
+  background: var(--bg-tertiary) !important;
+}
+
+.session-dropdown:focus {
+  border-color: var(--f1-red) !important;
+  box-shadow: 0 0 8px rgba(225, 6, 0, 0.2);
+}
+
+.session-dropdown:hover + i {
+  color: var(--text-primary) !important;
+}
+
+.session-dropdown:focus + i {
+  color: var(--f1-red) !important;
+}

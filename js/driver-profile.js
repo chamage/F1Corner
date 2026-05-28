@@ -101,6 +101,22 @@ export function showDriverProfile(driver, standings, raceSessions) {
     else consistencyLabel = 'Wild Card';
   }
 
+  // ── Compute Qualifying derived stats ──
+  const q3Count = driver.q3Appearances || 0;
+  const qr = driver.qualiResults || [];
+  const totalQuali = qr.length;
+  const q3Rate = totalQuali > 0 ? Math.round((q3Count / totalQuali) * 100) : 0;
+  const avgQuali = totalQuali > 0 ? (qr.reduce((a, b) => a + b, 0) / totalQuali).toFixed(1) : '—';
+  const bestQuali = totalQuali > 0 ? Math.min(...qr) : '—';
+
+  // ── Compute Sprint Qualifying derived stats ──
+  const sprintQ3Count = driver.sprintQ3Appearances || 0;
+  const sqr = driver.sprintQualiResults || [];
+  const totalSprintQuali = sqr.length;
+  const sprintQ3Rate = totalSprintQuali > 0 ? Math.round((sprintQ3Count / totalSprintQuali) * 100) : 0;
+  const avgSprintQuali = totalSprintQuali > 0 ? (sqr.reduce((a, b) => a + b, 0) / totalSprintQuali).toFixed(1) : '—';
+  const bestSprintQuali = totalSprintQuali > 0 ? Math.min(...sqr) : '—';
+
   // ── Compute Sprint derived stats ──
   const sprintRr = driver.sprintResults || [];
   const hasSprints = sprintRr.length > 0;
@@ -581,6 +597,29 @@ export function showDriverProfile(driver, standings, raceSessions) {
         </div>
       ` : ''}
 
+      <!-- Qualifying Performance stats row -->
+      <div style="font-family:'Outfit',sans-serif; font-size:0.75rem; font-weight:800; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin: 20px 0 8px 0; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-stopwatch" style="color:var(--text-muted); width: 12px;"></i> Qualifying Performance
+      </div>
+      <div class="dm-stats-grid" style="margin-bottom: var(--space-md);">
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:#a855f7">${q3Count} <span style="font-size:0.75rem; font-weight:normal; color:var(--text-muted);">/${totalQuali}</span></div>
+          <div class="dm-stat-label">Q3 Reached</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:#38bdf8">${q3Rate}%</div>
+          <div class="dm-stat-label">Q3 Rate</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value">${avgQuali}</div>
+          <div class="dm-stat-label">Avg Grid Pos</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:#ffd700">P${bestQuali}</div>
+          <div class="dm-stat-label">Best Quali</div>
+        </div>
+      </div>
+
       ${raceBarHtml}
       ${pointsChartHtml}
       ${consistencyHtml}
@@ -629,6 +668,29 @@ export function showDriverProfile(driver, standings, raceSessions) {
           <div class="dm-stat-tile">
             <div class="dm-stat-value">${sprintPointsRate}%</div>
             <div class="dm-stat-label">Points Rate</div>
+          </div>
+        </div>
+
+        <!-- Sprint Qualifying Performance stats row -->
+        <div style="font-family:'Outfit',sans-serif; font-size:0.75rem; font-weight:800; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin: 20px 0 8px 0; display:flex; align-items:center; gap:8px;">
+          <i class="fa-solid fa-stopwatch" style="color:var(--text-muted); width: 12px;"></i> Sprint Qualifying Performance
+        </div>
+        <div class="dm-stats-grid" style="margin-bottom: var(--space-md);">
+          <div class="dm-stat-tile">
+            <div class="dm-stat-value" style="color:#a855f7">${sprintQ3Count} <span style="font-size:0.75rem; font-weight:normal; color:var(--text-muted);">/${totalSprintQuali}</span></div>
+            <div class="dm-stat-label">SQ3 Reached</div>
+          </div>
+          <div class="dm-stat-tile">
+            <div class="dm-stat-value" style="color:#38bdf8">${sprintQ3Rate}%</div>
+            <div class="dm-stat-label">SQ3 Rate</div>
+          </div>
+          <div class="dm-stat-tile">
+            <div class="dm-stat-value">${avgSprintQuali}</div>
+            <div class="dm-stat-label">Avg Grid Pos</div>
+          </div>
+          <div class="dm-stat-tile">
+            <div class="dm-stat-value" style="color:#ffd700">P${bestSprintQuali}</div>
+            <div class="dm-stat-label">Best Quali</div>
           </div>
         </div>
 

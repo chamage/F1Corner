@@ -9,7 +9,7 @@ import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSe
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_VERSION = 21; // v21: respect official DSQ/DNS/DNF statuses in season-data results compiler to avoid status overrides
+const LS_VERSION = 22; // v22: fetch session drivers in fetchQualiData to append missing drivers as DNS and prevent quali standings discrepancies
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -111,15 +111,22 @@ export async function getSeasonData(year) {
   const activeSprints = sprintSessions.filter(s => !s.is_cancelled);
   const allRaceSessions = [...gpSessions, ...activeSprints];
   const completedSessions = allRaceSessions.filter(s => isPast(s.date_end));
-  console.log(`[Season] ${completedSessions.length} completed sessions to process (${(performance.now() - t0).toFixed(0)}ms for session list)`);
+  
+  // Load qualifying sessions list
+  const qualifyingSessions = await getSessions({ year, session_type: 'Qualifying' });
+  const activeQuali = qualifyingSessions.filter(s => !s.is_cancelled);
+  const completedQuali = activeQuali.filter(s => isPast(s.date_end));
+  
+  console.log(`[Season] ${completedSessions.length} completed sessions and ${completedQuali.length} completed qualifying sessions to process (${(performance.now() - t0).toFixed(0)}ms for session list)`);
 
   const races = [];
+  const qualifying = [];
   const drivers = new Map();
   let cacheHits = 0;
   let apiFetches = 0;
   let incompleteSkips = 0;
 
-  // Load or fetch each session individually
+  // Load or fetch each race/sprint session individually
   for (const session of completedSessions) {
     const sessionKey = session.session_key;
 
@@ -174,8 +181,41 @@ export async function getSeasonData(year) {
     }
   }
 
+  // Load or fetch each completed qualifying session individually
+  for (const session of completedQuali) {
+    const sessionKey = session.session_key;
+
+    // Tier 1: in-memory cache
+    let compiledQuali = raceCache.get(sessionKey);
+    if (compiledQuali) {
+      cacheHits++;
+    } else {
+      // Tier 2: localStorage cache
+      compiledQuali = loadRaceFromStorage(sessionKey);
+      if (compiledQuali && !compiledQuali.is_incomplete) {
+        raceCache.set(sessionKey, compiledQuali);
+        cacheHits++;
+      }
+    }
+
+    if (!compiledQuali) {
+      console.log(`[Season] 🌐 Fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
+      apiFetches++;
+      compiledQuali = await fetchQualiData(session);
+      if (compiledQuali) {
+        raceCache.set(sessionKey, compiledQuali);
+        saveRaceToStorage(sessionKey, compiledQuali);
+      }
+    }
+
+    if (compiledQuali && !compiledQuali.is_incomplete) {
+      qualifying.push(compiledQuali);
+    }
+  }
+
   // Always keep races sorted chronologically by date_end
   races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+  qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
   // Aggregate driver details from sorted races to ensure latest team/colour is captured
   for (const race of races) {
@@ -190,6 +230,7 @@ export async function getSeasonData(year) {
     year,
     compiledAt: Date.now(),
     races,
+    qualifying,
     drivers,
     totalRaceSessions: allRaceSessions,
   };
@@ -197,6 +238,49 @@ export async function getSeasonData(year) {
   seasonCache.set(year, seasonData);
   console.log(`[Season] ✅ ${year} loaded in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${apiFetches} API fetches, ${incompleteSkips} incomplete skips`);
   return seasonData;
+}
+
+/**
+ * Fetch data for a single qualifying session and return compiled finishing positions.
+ */
+async function fetchQualiData(session) {
+  try {
+    const [results, sessionDrivers] = await Promise.all([
+      getFinishingOrder(session.session_key),
+      getSessionDrivers(session.session_key).catch(() => [])
+    ]);
+
+    if (!results || results.length === 0) {
+      throw new Error('Empty qualifying results fetched');
+    }
+
+    const updatedResults = [...results];
+    const resultsDrivers = new Set(results.map(r => r.driver_number));
+
+    let nextPos = results.length + 1;
+    for (const d of sessionDrivers) {
+      const dn = d.driver_number;
+      if (!resultsDrivers.has(dn)) {
+        updatedResults.push({
+          driver_number: dn,
+          position: nextPos++,
+          status: 'DNS'
+        });
+      }
+    }
+
+    return {
+      session_key: session.session_key,
+      session_name: session.session_name,
+      meeting_key: session.meeting_key,
+      circuit_short_name: session.circuit_short_name,
+      date_end: session.date_end,
+      results: updatedResults
+    };
+  } catch (e) {
+    console.warn(`[Season] Failed to fetch qualifying ${session.session_key}:`, e.message);
+    return null;
+  }
 }
 
 /**
@@ -298,6 +382,32 @@ export function getResultsForSession(seasonData, sessionKey) {
 }
 
 /**
+ * Helper to initialize empty driver statistics object including Q3/Quali metrics.
+ */
+function initDriverStats() {
+  return {
+    points: 0,
+    wins: 0,
+    podiums: 0,
+    dnfs: 0,
+    dnss: 0,
+    dsqs: 0,
+    raceResults: [],
+    allResults: [],
+    pointsHistory: [],
+    sprintPoints: 0,
+    sprintWins: 0,
+    sprintPodiums: 0,
+    sprintDnfs: 0,
+    sprintResults: [],
+    q3Appearances: 0,
+    qualiResults: [],
+    sprintQ3Appearances: 0,
+    sprintQualiResults: []
+  };
+}
+
+/**
  * Build computed standings from compiled season data.
  * Zero API calls — everything from already-compiled race results.
  */
@@ -359,22 +469,7 @@ export function computeStandingsFromSeason(seasonData) {
 
       for (const { driver_number, position, status } of race.results) {
         if (!driverStats.has(driver_number)) {
-          driverStats.set(driver_number, {
-            points: 0,
-            wins: 0,
-            podiums: 0,
-            dnfs: 0,
-            dnss: 0,
-            dsqs: 0,
-            raceResults: [],
-            allResults: [],
-            pointsHistory: [],
-            sprintPoints: 0,
-            sprintWins: 0,
-            sprintPodiums: 0,
-            sprintDnfs: 0,
-            sprintResults: []
-          });
+          driverStats.set(driver_number, initDriverStats());
         }
         const stats = driverStats.get(driver_number);
 
@@ -446,22 +541,7 @@ export function computeStandingsFromSeason(seasonData) {
           const firstDate = driverFirstRaceDate.get(driverNum);
 
           if (!driverStats.has(driverNum)) {
-            driverStats.set(driverNum, {
-              points: 0,
-              wins: 0,
-              podiums: 0,
-              dnfs: 0,
-              dnss: 0,
-              dsqs: 0,
-              raceResults: [],
-              allResults: [],
-              pointsHistory: [],
-              sprintPoints: 0,
-              sprintWins: 0,
-              sprintPodiums: 0,
-              sprintDnfs: 0,
-              sprintResults: []
-            });
+            driverStats.set(driverNum, initDriverStats());
           }
           const stats = driverStats.get(driverNum);
 
@@ -491,26 +571,34 @@ export function computeStandingsFromSeason(seasonData) {
     const meetingIdx = sortedMeetings.indexOf(meeting);
     for (const driverNum of activeDrivers) {
       if (!driverStats.has(driverNum)) {
-        driverStats.set(driverNum, {
-          points: 0,
-          wins: 0,
-          podiums: 0,
-          dnfs: 0,
-          dnss: 0,
-          dsqs: 0,
-          raceResults: [],
-          allResults: [],
-          pointsHistory: [],
-          sprintPoints: 0,
-          sprintWins: 0,
-          sprintPodiums: 0,
-          sprintDnfs: 0,
-          sprintResults: []
-        });
+        driverStats.set(driverNum, initDriverStats());
       }
       const stats = driverStats.get(driverNum);
       while (stats.pointsHistory.length < meetingIdx + 1) {
         stats.pointsHistory.push(stats.points);
+      }
+    }
+  }
+
+  // Process qualifying sessions to extract GP and Sprint Quali stats
+  const completedQualifying = seasonData.qualifying || [];
+  for (const quali of completedQualifying) {
+    const isSprintQ = quali.session_name.toLowerCase().includes('sprint') || quali.session_name.toLowerCase().includes('shootout');
+    for (const { driver_number, position } of quali.results) {
+      if (!driverStats.has(driver_number)) {
+        driverStats.set(driver_number, initDriverStats());
+      }
+      const stats = driverStats.get(driver_number);
+      if (isSprintQ) {
+        stats.sprintQualiResults.push(position);
+        if (position <= 10) {
+          stats.sprintQ3Appearances++;
+        }
+      } else {
+        stats.qualiResults.push(position);
+        if (position <= 10) {
+          stats.q3Appearances++;
+        }
       }
     }
   }

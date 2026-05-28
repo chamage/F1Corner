@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v23'; // v23: Eliminate page-level auto-scrolling on load (via containerscrollTo on calendar) and card select (removing section scrollIntoView)
+const CACHE_NAME = 'pitcorner-shell-v40'; // v40: ensure qualifying DNS/DNQ drivers are included to equalize qualifying counts in driver profile modals
 const STATIC_ASSETS = [
   './',
   './index.html',

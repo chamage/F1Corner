@@ -200,6 +200,13 @@
           <div class="race-detail-title">Select a race above</div>
         </div>
         <div class="race-weather-bar" id="race-weather-bar"></div>
+        <div class="race-session-selector-container" id="race-session-selector-container" style="display: none; flex: 1 0 100%; margin-top: 10px; margin-bottom: 2px; align-items: center; gap: 8px;">
+          <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Session:</span>
+          <div class="custom-select-wrapper" style="position: relative; display: inline-block;">
+            <select class="session-dropdown" id="race-session-dropdown"></select>
+            <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.7rem; transition: color var(--transition-fast);"></i>
+          </div>
+        </div>
       </div>
 
       <div class="race-detail-tabs" id="race-detail-tabs">
