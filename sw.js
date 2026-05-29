@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v57'; // v57: deploy high-resolution favicon.ico fallback and root-relative paths for Google Search and iOS support
+const CACHE_NAME = 'pitcorner-shell-v58'; // v58: integrate comprehensive privacy policy modal and consent checks to comply with Google search console safe browsing
 const STATIC_ASSETS = [
   './',
   './index.html',

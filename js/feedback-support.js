@@ -134,6 +134,14 @@ export function showFeedbackModal() {
         <div class="feedback-group">
           <label class="feedback-label" for="fb-email">Email Address <span style="color:var(--text-muted);text-transform:none;font-size:0.7rem;font-weight:normal;">(Optional — for follow-ups)</span></label>
           <input type="email" id="fb-email" class="feedback-input" placeholder="name@example.com">
+          <span style="display:block; font-size:0.68rem; color:var(--text-muted); margin-top:4px; line-height:1.3;"><i class="fa-solid fa-circle-info" style="color:var(--f1-red); margin-right:3px;"></i> We will only contact you about this feedback. Never shared or sold.</span>
+        </div>
+
+        <div class="feedback-group" style="margin-top: 14px;">
+          <label class="feedback-checkbox-label" style="display:flex; align-items:flex-start; gap:8px; font-size:0.78rem; color:var(--text-secondary); cursor:pointer; line-height:1.4; user-select:none;">
+            <input type="checkbox" id="fb-privacy-consent" style="margin-top:2px; accent-color:var(--f1-red);" required>
+            <span>I agree to the <a href="#" id="fb-form-privacy-link" style="color:var(--f1-red); text-decoration:none; font-weight:600; border-bottom:1px dashed var(--f1-red); padding-bottom:1px;">Privacy Policy</a> and consent to securely sending this feedback.</span>
+          </label>
         </div>
 
         <button type="submit" class="feedback-submit-btn">
@@ -144,6 +152,14 @@ export function showFeedbackModal() {
   `;
 
   document.getElementById('fbm-close').addEventListener('click', closeModal);
+
+  const privacyLink = document.getElementById('fb-form-privacy-link');
+  if (privacyLink) {
+    privacyLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      showPrivacyModal();
+    });
+  }
 
   // Wire Star Rating Interaction
   const starsContainer = document.getElementById('feedback-stars');
@@ -335,6 +351,77 @@ function showSupportToast(platform) {
     toast.style.transform = 'translateX(-50%) translateY(-20px)';
     setTimeout(() => toast.remove(), 400);
   }, 3500);
+}
+
+/**
+ * Launch the Privacy Policy interactive modal
+ */
+export function showPrivacyModal() {
+  ensureOverlay();
+  const modal = document.getElementById('feedback-modal');
+  modal.style.maxWidth = '580px';
+  modal.innerHTML = `
+    <button class="driver-modal-close" id="fbm-close" aria-label="Close">✕</button>
+    <div style="padding: var(--space-xl) var(--space-lg); font-family:'Outfit', sans-serif; position: relative; z-index: 5; max-height: 80vh; display: flex; flex-direction: column;">
+      <h2 style="font-weight: 800; font-size: 1.5rem; color: var(--text-primary); margin-bottom: 4px; display:flex; align-items:center; gap:10px;">
+        <i class="fa-solid fa-shield-halved" style="color: var(--f1-red);"></i> Privacy Policy
+      </h2>
+      <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px;">
+        Last updated: May 29, 2026 • We respect your privacy and never sell your personal data.
+      </p>
+
+      <div style="flex: 1; overflow-y: auto; padding-right: 8px; font-size: 0.84rem; color: var(--text-secondary); line-height: 1.6;" class="custom-scrollbar">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">1. Transparency First</strong>
+            <span>PitCorner is a completely free, open-source dashboard designed by F1 fans, for F1 fans. We do not track you, show ads, or require any registration to access F1 season analytics.</span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">2. Telemetry and F1 Data</strong>
+            <span>All championship standings, practice/qualifying/race results, strategy statistics, and lap timeline visualizations are compiled directly in your browser. This data is pulled from the official public <a href="https://openf1.org" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">OpenF1 API</a> and cached locally on your device (using LocalStorage) to keep startup times high and API server loads low. We do not store or track your viewing history.</span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">3. Feedback Form Data</strong>
+            <span>If you decide to fill out the <strong>Send Feedback</strong> form to report a bug or request a feature, the following data is transmitted:
+              <ul style="margin: 6px 0 0 16px; padding: 0; list-style-type: disc; display:flex; flex-direction:column; gap:4px;">
+                <li>Your selected star rating and category (Bug, Feature, UI/UX, Praise).</li>
+                <li>Your written feedback message.</li>
+                <li><strong>Optional Email Address:</strong> Provided strictly at your discretion if you want the developer to follow up regarding your report.</li>
+              </ul>
+            </span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">4. Secure Transmission</strong>
+            <span>Feedback submissions are encrypted and transmitted securely via HTTPS to our private Cloudflare Worker API at <code>https://api.pitcorner.com/feedback</code> (or a secure Formspree endpoint fallback). We implement strict security measures to protect this data. We will never sell, lease, or share your email address with third parties. It is used solely for developer communications.</span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">5. Local Device Storage</strong>
+            <span>We use standard browser local storage to save your selected active season year and cache telemetry compiles. No persistent marketing cookies or third-party advertising cookies are stored on your device.</span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">6. Support &amp; Donations</strong>
+            <span>Our "Support Me" donation modal utilizes a secure external link to Ko-fi. PitCorner does not process or see any payment information. Financial transactions are conducted entirely under Ko-fi's secure payment processors and privacy policies.</span>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">7. Data Deletion Requests</strong>
+            <span>If you previously provided your email via the feedback form and wish to have it deleted from our records, simply submit a new feedback request or contact us directly. We will wipe your email from our logs immediately.</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('fbm-close').addEventListener('click', closeModal);
+  document.body.style.overflow = 'hidden';
+  overlay.classList.add('open');
 }
 
 /**
@@ -1031,9 +1118,11 @@ export function initFeedbackSupport() {
   const footerRmBtn = document.getElementById('footer-roadmap-btn');
   const footerFbBtn = document.getElementById('footer-feedback-btn');
   const footerSpBtn = document.getElementById('footer-support-btn');
+  const footerPrBtn = document.getElementById('footer-privacy-btn');
 
   const triggerChangelog = () => showChangelogModal();
   const triggerRoadmap = () => showRoadmapModal();
+  const triggerPrivacy = () => showPrivacyModal();
 
   if (navClBtn) {
     navClBtn.addEventListener('click', triggerChangelog);
@@ -1061,6 +1150,10 @@ export function initFeedbackSupport() {
     footerSpBtn.addEventListener('click', () => {
       showSupportModal();
     });
+  }
+
+  if (footerPrBtn) {
+    footerPrBtn.addEventListener('click', triggerPrivacy);
   }
 }
 
