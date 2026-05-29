@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v51'; // v51: remove redundant Race Detail navigation link
+const CACHE_NAME = 'pitcorner-shell-v53'; // v53: remove horizontal calendar card autoscroll to prevent vertical jumps
 const STATIC_ASSETS = [
   './',
   './index.html',

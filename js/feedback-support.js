@@ -356,10 +356,36 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.6.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.6.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">May 29, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Constructors Graph Toggle: Added a highly interactive, custom capsule selector toggle next to the preset select dropdown to switch seamlessly between Driver and Constructor points progression graphs.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Interactive Legend Chips: Replaced the static text legend with interactive, color-coded buttons that users can click to dynamically toggle individual drivers or constructors on and off the chart.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Chronological Leaders Timeline Sync: Refined the Championship Leader History timeline to automatically sync with the active chart selection, displaying constructor leaders round-by-round when the Constructor tab is selected.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Eliminated Horizontal Calendar Autoscroll: Removed the horizontal container autoscroll inside the race calendar to prevent browser-level vertical page jumps on load.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.5.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.5.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v1.5.0</div>
               <div class="changelog-date">May 29, 2026</div>
             </div>
             <ul class="changelog-list">

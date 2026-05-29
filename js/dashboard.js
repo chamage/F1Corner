@@ -133,12 +133,12 @@ export async function initDashboard(year) {
     currentSeasonData = seasonData;
     const selectEl = document.getElementById('chart-drivers-count');
     const defaultCount = selectEl ? parseInt(selectEl.value, 10) : 5;
-    drawChampionshipBattle(seasonData, defaultCount);
+    drawChampionshipBattle(seasonData, defaultCount, false);
 
     if (selectEl && !changeListenerAdded) {
       selectEl.addEventListener('change', (e) => {
         if (currentSeasonData) {
-          drawChampionshipBattle(currentSeasonData, parseInt(e.target.value, 10));
+          drawChampionshipBattle(currentSeasonData, parseInt(e.target.value, 10), true);
         }
       });
       changeListenerAdded = true;
@@ -158,16 +158,39 @@ export async function initDashboard(year) {
 
 let currentSeasonData = null;
 let changeListenerAdded = false;
+let chartActiveType = 'drivers'; // 'drivers' or 'constructors'
+let chartSelectedDrivers = new Set();
+let chartSelectedConstructors = new Set();
+let lastLoadedSeasonYear = null;
+let chartTogglesInitialized = false;
 
-function drawChampionshipBattle(seasonData, driversCount) {
+function resetChartSelections(standings, count) {
+  chartSelectedDrivers.clear();
+  chartSelectedConstructors.clear();
+
+  const topDrivers = standings.drivers.slice(0, count);
+  topDrivers.forEach(d => chartSelectedDrivers.add(d.name_acronym));
+
+  const topConstructors = standings.constructors.slice(0, count);
+  topConstructors.forEach(c => chartSelectedConstructors.add(c.team_name));
+}
+
+function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
   const standings = computeStandingsFromSeason(seasonData);
-  const topDrivers = standings.drivers.slice(0, driversCount);
+
+  if (lastLoadedSeasonYear !== seasonData.year || forceReset) {
+    lastLoadedSeasonYear = seasonData.year;
+    resetChartSelections(standings, presetCount);
+  }
 
   const chartCanvas = document.getElementById('dashboard-championship-chart');
   const legendEl = document.getElementById('dashboard-chart-legend');
 
+  const allItems = chartActiveType === 'drivers' ? standings.drivers : standings.constructors;
+  const selectedSet = chartActiveType === 'drivers' ? chartSelectedDrivers : chartSelectedConstructors;
+
   if (chartCanvas && legendEl) {
-    if (topDrivers.length === 0) {
+    if (allItems.length === 0) {
       chartCanvas.style.display = 'none';
       legendEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">No points data available yet</div>';
       const timelineEl = document.getElementById('championship-leaders-timeline');
@@ -175,7 +198,7 @@ function drawChampionshipBattle(seasonData, driversCount) {
     } else {
       chartCanvas.style.display = 'block';
 
-      // Gather completed meetings in chronological order to match the timeline indexes
+      // Gather completed meetings in chronological order
       const meetingsMap = new Map();
       for (const r of seasonData.races) {
         if (!r.results || r.results.length === 0) continue;
@@ -194,11 +217,18 @@ function drawChampionshipBattle(seasonData, driversCount) {
       const sortedMeetings = Array.from(meetingsMap.values())
         .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-      const datasets = topDrivers.map(d => {
+      // Filter to only active/selected items
+      const activeItems = allItems.filter(item => {
+        const id = chartActiveType === 'drivers' ? item.name_acronym : item.team_name;
+        return selectedSet.has(id);
+      });
+
+      const datasets = activeItems.map(item => {
+        const label = chartActiveType === 'drivers' ? item.name_acronym : item.team_name;
         return {
-          label: d.name_acronym,
-          data: d.pointsHistory || [],
-          color: getTeamColor(d.team_colour),
+          label: label,
+          data: item.pointsHistory || [],
+          color: getTeamColor(item.team_colour),
           alpha: 0.9,
         };
       });
@@ -207,7 +237,7 @@ function drawChampionshipBattle(seasonData, driversCount) {
       chartCanvas._chartData = {
         datasets,
         sortedMeetings,
-        topDrivers
+        activeItems
       };
 
       // Create/grab dynamic tooltip container inside parent element
@@ -258,6 +288,7 @@ function drawChampionshipBattle(seasonData, driversCount) {
           
           if (mouseX >= padLeft && mouseX <= rect.width - padRight) {
             const maxLen = data.sortedMeetings.length;
+            if (maxLen === 0) return;
             const ratio = (mouseX - padLeft) / plotW;
             let idx = Math.round(ratio * (maxLen - 1));
             idx = Math.max(0, Math.min(maxLen - 1, idx));
@@ -269,12 +300,19 @@ function drawChampionshipBattle(seasonData, driversCount) {
             const meeting = data.sortedMeetings[idx];
             const roundNumber = idx + 1;
 
-            // Gather values of top drivers at this index
-            const hoverDrivers = data.datasets.map(ds => {
-              const driverInfo = data.topDrivers.find(td => td.name_acronym === ds.label);
+            // Gather values of active items at this index
+            const hoverItems = data.datasets.map(ds => {
+              const itemInfo = data.activeItems.find(ai => {
+                const id = chartActiveType === 'drivers' ? ai.name_acronym : ai.team_name;
+                return id === ds.label;
+              });
+              const displayName = chartActiveType === 'drivers'
+                ? (itemInfo?.full_name || ds.label)
+                : ds.label;
+
               return {
-                acronym: ds.label,
-                fullName: driverInfo?.full_name || ds.label,
+                label: ds.label,
+                displayName: displayName,
                 color: ds.color,
                 points: ds.data[idx] || 0
               };
@@ -286,14 +324,14 @@ function drawChampionshipBattle(seasonData, driversCount) {
               </div>
             `;
             
-            hoverDrivers.forEach(hd => {
+            hoverItems.forEach(hi => {
               html += `
                 <div class="chart-tooltip-row">
                   <span class="chart-tooltip-driver">
-                    <span class="chart-tooltip-color-dot" style="background:${hd.color}"></span>
-                    <span>${hd.acronym}</span>
+                    <span class="chart-tooltip-color-dot" style="background:${hi.color}"></span>
+                    <span>${hi.displayName}</span>
                   </span>
-                  <span class="chart-tooltip-value">${hd.points} pts</span>
+                  <span class="chart-tooltip-value">${hi.points} pts</span>
                 </div>
               `;
             });
@@ -329,38 +367,127 @@ function drawChampionshipBattle(seasonData, driversCount) {
         chartCanvas.addEventListener('touchend', clearHover);
       }
 
-      // Render legend
-      legendEl.innerHTML = datasets.map(ds => `
-        <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.75rem;font-weight:600;color:var(--text-primary);">
-          <span style="width:12px;height:12px;border-radius:50%;background:${ds.color};display:inline-block;border:2px solid var(--bg-card);"></span>
-          ${ds.label}
-        </span>
-      `).join('');
+      // Wire up Drivers / Constructors Toggle button tabs (once per page load)
+      const driversToggle = document.getElementById('chart-toggle-drivers');
+      const constructorsToggle = document.getElementById('chart-toggle-constructors');
 
-      // Render Championship Leaders Timeline
+      if (driversToggle && constructorsToggle && !chartTogglesInitialized) {
+        chartTogglesInitialized = true;
+
+        driversToggle.addEventListener('click', () => {
+          if (chartActiveType === 'drivers') return;
+          chartActiveType = 'drivers';
+          driversToggle.classList.add('active');
+          constructorsToggle.classList.remove('active');
+
+          const countSelect = document.getElementById('chart-drivers-count');
+          const count = countSelect ? parseInt(countSelect.value, 10) : 5;
+          drawChampionshipBattle(currentSeasonData, count, true);
+        });
+
+        constructorsToggle.addEventListener('click', () => {
+          if (chartActiveType === 'constructors') return;
+          chartActiveType = 'constructors';
+          constructorsToggle.classList.add('active');
+          driversToggle.classList.remove('active');
+
+          const countSelect = document.getElementById('chart-drivers-count');
+          const count = countSelect ? parseInt(countSelect.value, 10) : 5;
+          drawChampionshipBattle(currentSeasonData, count, true);
+        });
+      }
+
+      // Ensure active classes are in sync on toggle buttons
+      if (driversToggle && constructorsToggle) {
+        if (chartActiveType === 'drivers') {
+          driversToggle.classList.add('active');
+          constructorsToggle.classList.remove('active');
+        } else {
+          constructorsToggle.classList.add('active');
+          driversToggle.classList.remove('active');
+        }
+      }
+
+      // Render legend as interactive chips
+      legendEl.innerHTML = allItems.map(item => {
+        const id = chartActiveType === 'drivers' ? item.name_acronym : item.team_name;
+        const color = getTeamColor(item.team_colour);
+        const isActive = selectedSet.has(id);
+        const activeClass = isActive ? 'active' : '';
+
+        return `
+          <button class="chart-legend-chip ${activeClass}" data-id="${id}">
+            <span class="color-dot" style="background:${isActive ? color : 'transparent'}; border-color:${color}"></span>
+            <span>${id}</span>
+          </button>
+        `;
+      }).join('');
+
+      // Wire up clicks on chips to toggle lines on/off
+      legendEl.querySelectorAll('.chart-legend-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const id = chip.dataset.id;
+          if (selectedSet.has(id)) {
+            // Keep at least one selected
+            if (selectedSet.size > 1) {
+              selectedSet.delete(id);
+            } else {
+              return;
+            }
+          } else {
+            selectedSet.add(id);
+          }
+
+          const countSelect = document.getElementById('chart-drivers-count');
+          const count = countSelect ? parseInt(countSelect.value, 10) : 5;
+          drawChampionshipBattle(seasonData, count, false);
+        });
+      });
+
+      // Render Championship Leaders Timeline (Drivers or Constructors)
       const timelineEl = document.getElementById('championship-leaders-timeline');
       if (timelineEl) {
         const leadersByRound = [];
         for (let mIdx = 0; mIdx < sortedMeetings.length; mIdx++) {
-          const roundDriverPoints = standings.drivers.map(d => ({
-            driver_number: d.driver_number,
-            name_acronym: d.name_acronym,
-            full_name: d.full_name,
-            team_name: d.team_name,
-            team_colour: d.team_colour,
-            points: d.pointsHistory[mIdx] || 0
-          })).sort((a, b) => b.points - a.points);
+          if (chartActiveType === 'drivers') {
+            const roundDriverPoints = standings.drivers.map(d => ({
+              driver_number: d.driver_number,
+              name_acronym: d.name_acronym,
+              full_name: d.full_name,
+              team_name: d.team_name,
+              team_colour: d.team_colour,
+              points: d.pointsHistory[mIdx] || 0
+            })).sort((a, b) => b.points - a.points);
 
-          if (roundDriverPoints.length > 0 && roundDriverPoints[0].points > 0) {
-            const leader = roundDriverPoints[0];
-            leadersByRound.push({
-              round: mIdx + 1,
-              driver_number: leader.driver_number,
-              name: leader.name_acronym,
-              fullName: leader.full_name,
-              teamName: leader.team_name,
-              teamColour: leader.team_colour
-            });
+            if (roundDriverPoints.length > 0 && roundDriverPoints[0].points > 0) {
+              const leader = roundDriverPoints[0];
+              leadersByRound.push({
+                round: mIdx + 1,
+                id: leader.driver_number,
+                name: leader.name_acronym,
+                fullName: leader.full_name,
+                teamName: leader.team_name,
+                teamColour: leader.team_colour
+              });
+            }
+          } else {
+            const roundConstructorPoints = standings.constructors.map(c => ({
+              team_name: c.team_name,
+              team_colour: c.team_colour,
+              points: c.pointsHistory[mIdx] || 0
+            })).sort((a, b) => b.points - a.points);
+
+            if (roundConstructorPoints.length > 0 && roundConstructorPoints[0].points > 0) {
+              const leader = roundConstructorPoints[0];
+              leadersByRound.push({
+                round: mIdx + 1,
+                id: leader.team_name,
+                name: leader.team_name,
+                fullName: leader.team_name,
+                teamName: leader.team_name,
+                teamColour: leader.team_colour
+              });
+            }
           }
         }
 
@@ -370,19 +497,19 @@ function drawChampionshipBattle(seasonData, driversCount) {
           let currentGroup = {
             startRound: leadersByRound[0].round,
             endRound: leadersByRound[0].round,
-            driver: leadersByRound[0]
+            item: leadersByRound[0]
           };
 
           for (let i = 1; i < leadersByRound.length; i++) {
             const current = leadersByRound[i];
-            if (current.driver_number === currentGroup.driver.driver_number) {
+            if (current.id === currentGroup.item.id) {
               currentGroup.endRound = current.round;
             } else {
               groups.push(currentGroup);
               currentGroup = {
                 startRound: current.round,
                 endRound: current.round,
-                driver: current
+                item: current
               };
             }
           }
@@ -391,10 +518,15 @@ function drawChampionshipBattle(seasonData, driversCount) {
 
         if (groups.length > 0) {
           timelineEl.style.display = 'block';
+          
+          const titleText = chartActiveType === 'drivers' 
+            ? 'Driver Leader History' 
+            : 'Constructor Leader History';
+
           timelineEl.innerHTML = `
             <button id="fb-timeline-toggle" style="background:none;border:none;width:100%;text-align:left;padding:0;font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;display:flex;align-items:center;justify-content:space-between;cursor:pointer;outline:none;transition:color var(--transition-fast);">
               <span style="display:flex;align-items:center;gap:6px;">
-                <i class="fa-solid fa-timeline" style="color:var(--f1-red);"></i> Championship Leader History
+                <i class="fa-solid fa-timeline" style="color:var(--f1-red);"></i> ${titleText}
               </span>
               <span style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--text-muted);text-transform:none;">
                 <span id="fb-timeline-toggle-text">Show History</span>
@@ -404,14 +536,16 @@ function drawChampionshipBattle(seasonData, driversCount) {
             <div id="fb-timeline-content" style="display:none;gap:10px;overflow-x:auto;padding-bottom:10px;scrollbar-width:thin;" class="custom-scrollbar">
               ${groups.map(g => {
                 const roundsText = g.startRound === g.endRound ? `Round ${g.startRound}` : `Rounds ${g.startRound}–${g.endRound}`;
-                const tColor = getTeamColor(g.driver.teamColour);
+                const tColor = getTeamColor(g.item.teamColour);
+                const subtitleText = chartActiveType === 'drivers' ? g.item.teamName : 'Constructor';
+                
                 return `
                   <div style="background:var(--bg-tertiary);border:1px solid var(--border-subtle);border-left:4px solid ${tColor};border-radius:var(--radius-sm);padding:8px 12px;flex:0 0 auto;min-width:150px;display:flex;flex-direction:column;gap:2px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">${roundsText}</div>
                     <div style="font-family:'Outfit',sans-serif;font-weight:800;font-size:0.9rem;color:var(--text-primary);">
-                      ${g.driver.fullName || g.driver.name}
+                      ${g.item.fullName || g.item.name}
                     </div>
-                    <div style="font-size:0.68rem;color:var(--text-secondary);">${g.driver.teamName}</div>
+                    <div style="font-size:0.68rem;color:var(--text-secondary);">${subtitleText}</div>
                   </div>
                 `;
               }).join('')}
@@ -455,4 +589,5 @@ function drawChampionshipBattle(seasonData, driversCount) {
     }
   }
 }
+
 

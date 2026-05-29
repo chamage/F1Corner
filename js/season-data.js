@@ -747,6 +747,11 @@ export function computeStandingsFromSeason(seasonData) {
     }
   }
 
+  // Assign pointsHistory to constructors
+  for (const team of constructorStandings) {
+    team.pointsHistory = teamPointsHistories.get(team.team_name) || new Array(sortedMeetings.length).fill(0);
+  }
+
   // ── Track Championship Leadership History ──
   const driverLeadRounds = {};      // driver_number -> array of round numbers
   const constructorLeadRounds = {}; // team_name -> array of round numbers

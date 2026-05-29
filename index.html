@@ -144,11 +144,15 @@
         <div class="glass-card reveal points-tracker-card">
           <div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:1.25rem;margin-bottom:20px;color:var(--text-primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
             <span>Championship Battle — Points Tracker</span>
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div class="chart-type-toggle" style="display:inline-flex;background:rgba(255,255,255,0.02);border:1px solid var(--border-subtle);border-radius:100px;padding:2px;">
+                <button id="chart-toggle-drivers" class="active">Drivers</button>
+                <button id="chart-toggle-constructors">Constructors</button>
+              </div>
               <select id="chart-drivers-count" style="font-family:inherit;font-size:0.75rem;padding:6px 12px;border-radius:100px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);color:var(--text-primary);cursor:pointer;outline:none;font-weight:600;transition:all 150ms ease;">
-                <option value="5" style="background:#1a1a2e;">Top 5 Drivers</option>
-                <option value="3" style="background:#1a1a2e;">Top 3 Drivers</option>
-                <option value="10" style="background:#1a1a2e;">Top 10 Drivers</option>
+                <option value="5" style="background:#1a1a2e;">Top 5 Display</option>
+                <option value="3" style="background:#1a1a2e;">Top 3 Display</option>
+                <option value="10" style="background:#1a1a2e;">Top 10 Display</option>
               </select>
             </div>
           </div>
