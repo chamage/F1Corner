@@ -108,7 +108,7 @@ export async function getSeasonData(year) {
   const t0 = performance.now();
   console.log(`[Season] Loading season ${year}...`);
   const gpSessions = await getRaceSessions(year);
-  const sprintSessions = await getSessions({ year, session_type: 'Sprint' });
+  const sprintSessions = await getSessions({ year, session_name: 'Sprint' });
   const activeSprints = sprintSessions.filter(s => !s.is_cancelled);
   const allRaceSessions = [...gpSessions, ...activeSprints];
   const completedSessions = allRaceSessions.filter(s => isPast(s.date_end));
@@ -157,38 +157,6 @@ export async function getSeasonData(year) {
 
   const hasMissing = missingSessions.length > 0 || missingQuali.length > 0;
 
-  if (hasMissing && races.length > 0) {
-    // ── FAST PATH: Return preliminary data instantly ──
-    races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
-    qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
-
-    for (const race of races) {
-      if (race.drivers) {
-        for (const d of race.drivers) {
-          drivers.set(d.driver_number, d);
-        }
-      }
-    }
-
-    const prelimSeason = {
-      year,
-      compiledAt: Date.now(),
-      races,
-      qualifying,
-      drivers,
-      totalRaceSessions: allRaceSessions,
-      is_preliminary: true
-    };
-
-    seasonCache.set(year, prelimSeason);
-    console.log(`[Season] ⚡ Fast path loaded! Preliminary data returned in ${(performance.now() - t0).toFixed(0)}ms (${races.length} GP/Sprint races cached)`);
-
-    // Run missing compilation in the background
-    compileMissingInBackground(year, allRaceSessions, completedSessions, completedQuali, missingSessions, missingQuali);
-
-    return prelimSeason;
-  }
-
   // ── SYNCHRONOUS FALLBACK PATH: For first load or cold cache ──
   // Fetch missing race sessions synchronously
   for (const session of missingSessions) {
@@ -202,6 +170,20 @@ export async function getSeasonData(year) {
       races.push(compiledRace);
     } else {
       incompleteSkips++;
+      const placeholder = {
+        session_key: sessionKey,
+        session_name: session.session_name,
+        meeting_key: session.meeting_key,
+        circuit_short_name: session.circuit_short_name,
+        date_end: session.date_end,
+        results: [],
+        drivers: [],
+        is_incomplete: true,
+        compiledAt: Date.now()
+      };
+      raceCache.set(sessionKey, placeholder);
+      saveRaceToStorage(sessionKey, placeholder, false);
+      races.push(placeholder);
     }
   }
 
@@ -215,6 +197,20 @@ export async function getSeasonData(year) {
       raceCache.set(sessionKey, compiledQuali);
       saveRaceToStorage(sessionKey, compiledQuali, true);
       qualifying.push(compiledQuali);
+    } else {
+      const placeholder = {
+        session_key: sessionKey,
+        session_name: session.session_name,
+        meeting_key: session.meeting_key,
+        circuit_short_name: session.circuit_short_name,
+        date_end: session.date_end,
+        results: [],
+        is_incomplete: true,
+        compiledAt: Date.now()
+      };
+      raceCache.set(sessionKey, placeholder);
+      saveRaceToStorage(sessionKey, placeholder, true);
+      qualifying.push(placeholder);
     }
   }
 
@@ -242,85 +238,6 @@ export async function getSeasonData(year) {
   seasonCache.set(year, finalSeason);
   console.log(`[Season] ✅ ${year} loaded synchronously in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${apiFetches} API fetches, ${incompleteSkips} incomplete skips`);
   return finalSeason;
-}
-
-/**
- * Compile missing sessions in the background and dispatch update event.
- */
-async function compileMissingInBackground(year, allRaceSessions, completedSessions, completedQuali, missingSessions, missingQuali) {
-  console.log(`[Season] 🚀 Starting background compile of ${missingSessions.length} races and ${missingQuali.length} qualifying sessions...`);
-  
-  try {
-    // 1. Fetch missing races
-    for (const session of missingSessions) {
-      const sessionKey = session.session_key;
-      console.log(`[Season] 🌐 [BG] Fetching race ${sessionKey} (${session.circuit_short_name})`);
-      const compiledRace = await fetchRaceData(session);
-      if (compiledRace) {
-        raceCache.set(sessionKey, compiledRace);
-        saveRaceToStorage(sessionKey, compiledRace, false);
-      }
-    }
-
-    // 2. Fetch missing qualifying
-    for (const session of missingQuali) {
-      const sessionKey = session.session_key;
-      console.log(`[Season] 🌐 [BG] Fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
-      const compiledQuali = await fetchQualiData(session);
-      if (compiledQuali) {
-        raceCache.set(sessionKey, compiledQuali);
-        saveRaceToStorage(sessionKey, compiledQuali, true);
-      }
-    }
-
-    // 3. Re-assemble final lists
-    const finalRaces = [];
-    const finalQualifying = [];
-    const drivers = new Map();
-
-    for (const session of completedSessions) {
-      const compiledRace = raceCache.get(session.session_key) || loadRaceFromStorage(session.session_key, false);
-      if (compiledRace && !compiledRace.is_incomplete) {
-        finalRaces.push(compiledRace);
-      }
-    }
-
-    for (const session of completedQuali) {
-      const compiledQuali = raceCache.get(session.session_key) || loadRaceFromStorage(session.session_key, true);
-      if (compiledQuali && !compiledQuali.is_incomplete) {
-        finalQualifying.push(compiledQuali);
-      }
-    }
-
-    finalRaces.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
-    finalQualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
-
-    for (const race of finalRaces) {
-      if (race.drivers) {
-        for (const d of race.drivers) {
-          drivers.set(d.driver_number, d);
-        }
-      }
-    }
-
-    const finalSeasonData = {
-      year,
-      compiledAt: Date.now(),
-      races: finalRaces,
-      qualifying: finalQualifying,
-      drivers,
-      totalRaceSessions: allRaceSessions,
-      is_preliminary: (finalRaces.length < completedSessions.length || finalQualifying.length < completedQuali.length)
-    };
-
-    seasonCache.set(year, finalSeasonData);
-    console.log(`[Season] ✅ Background compile complete! Dispatched update event.`);
-
-    // Trigger silent refresh in the app
-    document.dispatchEvent(new CustomEvent('pitcorner:season-updated', { detail: { year, seasonData: finalSeasonData } }));
-  } catch (e) {
-    console.error('[Season] Background compile failed:', e);
-  }
 }
 
 /**

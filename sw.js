@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v44'; // v44: clear cache confirmation modal and single-season cache clearing choice
+const CACHE_NAME = 'pitcorner-shell-v49'; // v49: release v2.0.0 with Decade Picker, Session Pills, and standing fixes
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -17,6 +17,7 @@ const STATIC_ASSETS = [
   './js/team-profile.js',
   './js/feedback-support.js',
   './js/charts.js',
+  './js/season-picker.js',
   './logo.svg',
   './icon-192.png',
   './icon-512.png'

@@ -300,8 +300,8 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
   const header = $('#race-detail-header');
   const content = $('#race-detail-content');
   const weatherBar = $('#race-weather-bar');
-  const sessionDropdown = $('#race-session-dropdown');
   const sessionDropdownContainer = $('#race-session-selector-container');
+  const pillsContainer = $('#race-session-pills');
 
   section.style.display = 'block';
   header.innerHTML = `
@@ -312,7 +312,9 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
   if (sessionDropdownContainer) {
     sessionDropdownContainer.style.display = 'none';
   }
-  sessionDropdown.innerHTML = '';
+  if (pillsContainer) {
+    pillsContainer.innerHTML = '';
+  }
 
   content.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
 
@@ -355,21 +357,30 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     const defaultSessionName = sessions['Race'] ? 'Race' : (completedSessions.length > 0 ? completedSessions[completedSessions.length - 1].session_name : 'Race');
     const defaultSession = sessions[defaultSessionName] || { session_key: sessionKey, results: getResultsForSession(seasonData, sessionKey) };
 
-    // Render session dropdown options if there are multiple sessions
-    if (completedSessions.length > 1) {
-      sessionDropdown.innerHTML = completedSessions.map(s => {
+    // Render session pills if there are multiple sessions
+    if (completedSessions.length > 1 && pillsContainer) {
+      pillsContainer.innerHTML = completedSessions.map(s => {
         const label = SESSION_LABELS[s.session_name] || s.session_name;
         const isActive = s.session_name === defaultSessionName;
-        return `<option value="${s.session_name}" ${isActive ? 'selected' : ''}>${label}</option>`;
+        return `<button class="session-pill-btn ${isActive ? 'active' : ''}" data-session="${s.session_name}">${label}</button>`;
       }).join('');
       if (sessionDropdownContainer) {
         sessionDropdownContainer.style.display = 'flex';
       }
+
+      // Add click handlers for the pills
+      pillsContainer.querySelectorAll('.session-pill-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          pillsContainer.querySelectorAll('.session-pill-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          switchRaceDetailSession(btn.dataset.session);
+        });
+      });
     } else {
       if (sessionDropdownContainer) {
         sessionDropdownContainer.style.display = 'none';
       }
-      sessionDropdown.innerHTML = '';
+      if (pillsContainer) pillsContainer.innerHTML = '';
     }
 
     header.innerHTML = `
@@ -401,12 +412,7 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       driverTelemetry: {}
     };
 
-    // Bind session dropdown change handler
-    if (completedSessions.length > 1) {
-      sessionDropdown.onchange = (e) => {
-        switchRaceDetailSession(e.target.value);
-      };
-    }
+
 
     // Reset tab to results
     currentTab = 'results';
@@ -1969,9 +1975,11 @@ async function switchRaceDetailSession(sessionType) {
   
   const isRace = isRaceSession(sessionType);
   
-  const sessionDropdown = $('#race-session-dropdown');
-  if (sessionDropdown) {
-    sessionDropdown.value = sessionType;
+  const pillsContainer = $('#race-session-pills');
+  if (pillsContainer) {
+    pillsContainer.querySelectorAll('.session-pill-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.session === sessionType);
+    });
   }
   
   raceDataCache.currentSessionType = sessionType;

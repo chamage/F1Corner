@@ -23,7 +23,7 @@ const TTL_FRESH     = 10 * 60 * 1000;              // 10 min (current/live data)
 
 // ── Rate Limiting ──
 let requestQueue = Promise.resolve();
-const REQUEST_DELAY = 400;
+const REQUEST_DELAY = 450;
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY = 2000;
 
@@ -319,7 +319,7 @@ export async function getSessionResult(params = {}) {
 }
 
 export async function getRaceSessions(year) {
-  const sessions = await getSessions({ year, session_type: 'Race' });
+  const sessions = await getSessions({ year, session_name: 'Race' });
   return sessions.filter(s => !s.is_cancelled);
 }
 

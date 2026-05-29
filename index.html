@@ -73,10 +73,11 @@
           <i class="fa-solid fa-map"></i><span>Roadmap</span>
         </button>
         <div class="year-selector">
-          <label for="year-select">Season</label>
-          <select id="year-select">
-            <option value="2025">2025</option>
-          </select>
+          <label>Season</label>
+          <button id="year-select-trigger" class="year-select-btn" title="Choose Season">
+            <span id="current-year-display">2026</span>
+            <i class="fa-solid fa-chevron-down"></i>
+          </button>
         </div>
         <button class="nav-toggle" id="nav-toggle" aria-label="Menu">
           <span></span><span></span><span></span>
@@ -200,12 +201,9 @@
           <div class="race-detail-title">Select a race above</div>
         </div>
         <div class="race-weather-bar" id="race-weather-bar"></div>
-        <div class="race-session-selector-container" id="race-session-selector-container" style="display: none; flex: 1 0 100%; margin-top: 10px; margin-bottom: 2px; align-items: center; gap: 8px;">
-          <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Session:</span>
-          <div class="custom-select-wrapper" style="position: relative; display: inline-block;">
-            <select class="session-dropdown" id="race-session-dropdown"></select>
-            <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.7rem; transition: color var(--transition-fast);"></i>
-          </div>
+        <div class="race-session-selector-container" id="race-session-selector-container" style="display: none; flex: 1 0 100%; margin-top: 12px; margin-bottom: 4px; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; margin-right: 4px;">Sessions:</span>
+          <div id="race-session-pills" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
         </div>
       </div>
 

@@ -23,6 +23,18 @@ export async function initCalendar(year) {
       getSeasonData(year), // already compiled from standings
     ]);
 
+    // Swap 2026 Spanish GP (Madrid) and Barcelona GP (Catalunya) track maps if mismatched in the API
+    if (year === 2026) {
+      const spanishGP = meetings.find(m => m.meeting_name && m.meeting_name.includes('Spanish'));
+      const barcelonaGP = meetings.find(m => m.meeting_name && m.meeting_name.includes('Barcelona'));
+      if (spanishGP && barcelonaGP) {
+        const tempImg = spanishGP.circuit_image;
+        spanishGP.circuit_image = barcelonaGP.circuit_image;
+        barcelonaGP.circuit_image = tempImg;
+        console.log('[Calendar] Swapped 2026 Spanish GP and Barcelona GP circuit outlines to correct Madrid/Barcelona mismatch.');
+      }
+    }
+
     // Filter to Grand Prix events that are not cancelled
     const gps = meetings.filter(m =>
       m.meeting_name.includes('Grand Prix') && !m.is_cancelled
@@ -56,13 +68,14 @@ export async function initCalendar(year) {
       card.dataset.meetingKey = gp.meeting_key;
       if (raceSession) card.dataset.sessionKey = raceSession.session_key;
 
-      // Circuit image uses 'race-card-circuit' class (has filter:invert), flag does NOT
-      const circuitImg = gp.circuit_image
-        ? `<img class="race-card-circuit" src="${gp.circuit_image}" alt="${gp.circuit_short_name}" loading="lazy" onerror="this.style.display='none'">`
+      // Render country flag as full-bleed background
+      const flagBg = gp.country_flag
+        ? `<img class="race-card-flag-bg" src="${gp.country_flag}" alt="${gp.country_code}" loading="lazy">`
         : '';
 
-      const flagImg = gp.country_flag
-        ? `<img class="race-card-flag" src="${gp.country_flag}" alt="${gp.country_code}" loading="lazy">`
+      // Render circuit outline overlay in center if available (hide on error, no map fallback)
+      const circuitImg = gp.circuit_image
+        ? `<img class="race-card-circuit" src="${gp.circuit_image}" alt="${gp.circuit_short_name}" loading="lazy" onerror="this.style.display='none'">`
         : '';
 
       const winnerHtml = winner
@@ -71,8 +84,8 @@ export async function initCalendar(year) {
 
       card.innerHTML = `
         <div class="race-card-header">
+          ${flagBg}
           ${circuitImg}
-          ${flagImg}
         </div>
         <div class="race-card-body">
           <div class="race-card-round">Round ${i + 1}</div>

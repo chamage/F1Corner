@@ -356,10 +356,44 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
+          <!-- v1.5.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.5.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">May 29, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Decade Cockpit Season Picker Modal: Implemented a highly premium, visual decade-grouped year chip selector overlay modal, restoring modern season exploration from 2023 to 2026.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Tactile Scrolling Session Pills: Coded horizontal button pills (FP1, FP2, FP3, Quali, Race) inside race weekend detail pages to seamlessly toggle between sessions, replacing the browser dropdown.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Full-Color Flag & Card Backgrounds: Restored beautiful full-color country flag calendar card backdrops with high-brightness animations on completed races and custom vector circuit contours.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Standings Points Duplication: Completely resolved duplicate Sprint points double-counting by segregating GP races and Sprints at the database fetch layer.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Fail-Safe Placeholders & Queue Delays: Integrated is_incomplete: true localStorage caching placeholders for slow sessions and spaced sequential queue delay to 450ms, resolving rate limits.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>2026 Madrid/Barcelona Map Swap & 2025 Sprints 404: Mapped the correct circuit image overlays for 2026 Spanish & Barcelona GPs, and resolved 2025 Sprint session filter errors.</span>
+              </li>
+            </ul>
+          </div>
+          
           <!-- v1.4.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.4.0 <span class="new-badge">Active</span></div>
+              <div class="changelog-version">v1.4.0</div>
               <div class="changelog-date">May 28, 2026</div>
             </div>
             <ul class="changelog-list">

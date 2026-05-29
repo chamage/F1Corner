@@ -11,6 +11,7 @@ import { getCacheStats, clearCache, clearSingleSeasonAPICache } from './api.js';
 import { clearSeasonCache, isSeasonPreliminary, clearSingleSeasonCache } from './season-data.js';
 import { setupRevealAnimations, $ } from './utils.js';
 import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
+import { openSeasonPickerModal } from './season-picker.js';
 
 // Available years (OpenF1 data from 2023+)
 const AVAILABLE_YEARS = [2026, 2025, 2024, 2023];
@@ -32,22 +33,25 @@ async function init() {
     }
   }
 
-  // Setup year selector
-  const yearSelect = $('#year-select');
-  yearSelect.innerHTML = '';
-  for (const y of AVAILABLE_YEARS) {
-    const opt = document.createElement('option');
-    opt.value = y;
-    opt.textContent = y;
-    if (y === currentYear) opt.selected = true;
-    yearSelect.appendChild(opt);
+  // Setup year selector using our premium visual cockpit grid modal
+  const currentYearDisplay = $('#current-year-display');
+  if (currentYearDisplay) {
+    currentYearDisplay.textContent = currentYear;
   }
 
-  yearSelect.addEventListener('change', (e) => {
-    currentYear = parseInt(e.target.value);
-    localStorage.setItem('pitcorner_selected_year', currentYear);
-    loadAll(currentYear);
-  });
+  const trigger = $('#year-select-trigger');
+  if (trigger) {
+    trigger.addEventListener('click', () => {
+      openSeasonPickerModal(currentYear, AVAILABLE_YEARS, (selectedYear) => {
+        currentYear = selectedYear;
+        localStorage.setItem('pitcorner_selected_year', currentYear);
+        if (currentYearDisplay) {
+          currentYearDisplay.textContent = currentYear;
+        }
+        loadAll(currentYear);
+      });
+    });
+  }
 
   // Setup navigation
   setupNav();
