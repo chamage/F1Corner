@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v49'; // v49: release v2.0.0 with Decade Picker, Session Pills, and standing fixes
+const CACHE_NAME = 'pitcorner-shell-v51'; // v51: remove redundant Race Detail navigation link
 const STATIC_ASSETS = [
   './',
   './index.html',
