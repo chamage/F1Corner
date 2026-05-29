@@ -356,10 +356,10 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
           
-          <!-- v1.6.0 -->
+          <!-- v1.5.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.6.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v1.5.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
               <div class="changelog-date">May 29, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -377,7 +377,7 @@ export function showChangelogModal() {
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag fixed">Fixed</span>
-                <span>Eliminated Horizontal Calendar Autoscroll: Removed the horizontal container autoscroll inside the race calendar to prevent browser-level vertical page jumps on load.</span>
+                <span>Eliminated Page-Level Viewport Jumps: Redesigned the horizontal calendar auto-scroll to use an instantaneous layout offset shift, ensuring the active/latest race card is centered in the container without triggering browser-level vertical page jumps on load.</span>
               </li>
             </ul>
           </div>

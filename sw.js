@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v53'; // v53: remove horizontal calendar card autoscroll to prevent vertical jumps
+const CACHE_NAME = 'pitcorner-shell-v54'; // v54: shift calendar horizontal cards instantly without page vertical jumps
 const STATIC_ASSETS = [
   './',
   './index.html',

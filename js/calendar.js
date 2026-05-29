@@ -109,6 +109,17 @@ export async function initCalendar(year) {
       container.appendChild(card);
     });
 
+    // Scroll to current/latest completed race inside the horizontal scroll container (instantly to prevent vertical page jumps)
+    const currentCard = container.querySelector('.race-card.current');
+    const lastCompletedCards = container.querySelectorAll('.race-card:not(.upcoming)');
+    const scrollTarget = currentCard || (lastCompletedCards.length > 0 ? lastCompletedCards[lastCompletedCards.length - 1] : null);
+    if (scrollTarget) {
+      setTimeout(() => {
+        const scrollOffset = scrollTarget.offsetLeft - container.offsetWidth / 2 + scrollTarget.offsetWidth / 2;
+        container.scrollLeft = scrollOffset;
+      }, 150);
+    }
+
 
 
   } catch (err) {
