@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v55'; // v55: make graph active competitor selector collapsible
+const CACHE_NAME = 'pitcorner-shell-v57'; // v57: deploy high-resolution favicon.ico fallback and root-relative paths for Google Search and iOS support
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -20,7 +20,8 @@ const STATIC_ASSETS = [
   './js/season-picker.js',
   './logo.svg',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './favicon.ico'
 ];
 
 // Install: Cache all static shell files

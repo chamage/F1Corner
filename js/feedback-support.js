@@ -367,6 +367,10 @@ export function showChangelogModal() {
                 <span class="changelog-tag added">New</span>
                 <span>Collapsible Competitor Customizer: Wrapped the interactive legend chips in a collapsible Filter Competitors container, keeping the dashboard points tracker extremely clean while offering high-fidelity competitor selection at a single click.</span>
               </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>SEO Favicon & PWA Headers: Compiled and registered a unified high-resolution favicon.ico fallback at the root level, and switched to stable root-relative paths for all favicon and manifest declarations. This complies fully with the official Google Search Favicon Guidelines to guarantee robust crawling and indexing across Google Search mobile/desktop results, as well as fixing iOS home screen bookmarked clips.</span>
+              </li>
             </ul>
           </div>
           
