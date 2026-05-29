@@ -355,11 +355,25 @@ export function showChangelogModal() {
 
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
+
+          <!-- v1.5.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v1.5.2 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">May 29, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Collapsible Competitor Customizer: Wrapped the interactive legend chips in a collapsible Filter Competitors container, keeping the dashboard points tracker extremely clean while offering high-fidelity competitor selection at a single click.</span>
+              </li>
+            </ul>
+          </div>
           
           <!-- v1.5.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.5.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v1.5.1</div>
               <div class="changelog-date">May 29, 2026</div>
             </div>
             <ul class="changelog-list">

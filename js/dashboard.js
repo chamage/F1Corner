@@ -163,6 +163,8 @@ let chartSelectedDrivers = new Set();
 let chartSelectedConstructors = new Set();
 let lastLoadedSeasonYear = null;
 let chartTogglesInitialized = false;
+let chartLegendExpanded = false;
+
 
 function resetChartSelections(standings, count) {
   chartSelectedDrivers.clear();
@@ -443,6 +445,52 @@ function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
           drawChampionshipBattle(seasonData, count, false);
         });
       });
+
+      // Wire legend expand/collapse toggle
+      const legendToggle = document.getElementById('fb-legend-toggle');
+      const legendToggleText = document.getElementById('fb-legend-toggle-text');
+      const legendToggleIcon = document.getElementById('fb-legend-toggle-icon');
+
+      if (legendToggle && legendEl) {
+        // Sync visual states on load/redraw
+        if (chartLegendExpanded) {
+          legendEl.style.display = 'flex';
+          if (legendToggleText) legendToggleText.textContent = 'Hide Selection';
+          if (legendToggleIcon) {
+            legendToggleIcon.style.transform = 'rotate(-180deg)';
+            legendToggleIcon.style.color = 'var(--f1-red)';
+          }
+        } else {
+          legendEl.style.display = 'none';
+          if (legendToggleText) legendToggleText.textContent = 'Show Selection';
+          if (legendToggleIcon) {
+            legendToggleIcon.style.transform = 'rotate(0deg)';
+            legendToggleIcon.style.color = 'var(--text-muted)';
+          }
+        }
+
+        // Click handler (wire once)
+        if (!legendToggle._listenerAdded) {
+          legendToggle._listenerAdded = true;
+          legendToggle.addEventListener('click', () => {
+            chartLegendExpanded = !chartLegendExpanded;
+            
+            // Re-draw chart with new toggle state
+            const countSelect = document.getElementById('chart-drivers-count');
+            const count = countSelect ? parseInt(countSelect.value, 10) : 5;
+            drawChampionshipBattle(seasonData, count, false);
+          });
+
+          // Hover effects on toggle button
+          legendToggle.addEventListener('mouseenter', () => {
+            legendToggle.style.color = 'var(--text-primary)';
+          });
+          legendToggle.addEventListener('mouseleave', () => {
+            legendToggle.style.color = 'var(--text-secondary)';
+          });
+        }
+      }
+
 
       // Render Championship Leaders Timeline (Drivers or Constructors)
       const timelineEl = document.getElementById('championship-leaders-timeline');

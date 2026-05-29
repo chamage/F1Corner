@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v54'; // v54: shift calendar horizontal cards instantly without page vertical jumps
+const CACHE_NAME = 'pitcorner-shell-v55'; // v55: make graph active competitor selector collapsible
 const STATIC_ASSETS = [
   './',
   './index.html',
