@@ -39,12 +39,12 @@ function renderDriverStandings(standings, container) {
     const posClass = pos <= 3 ? `p${pos}` : '';
     const barWidth = maxPoints > 0 ? (d.points / maxPoints) * 100 : 0;
     const teamColor = getTeamColor(d.team_colour);
-    const sparkId = `sparkline-driver-${d.driver_number}`;
+    const sparkId = `sparkline-driver-${d.name_acronym}`;
     const isChampion = i === 0 && (standings.isFinished || standings.driverClinched);
     const champClass = isChampion ? 'champion-row' : '';
 
     html += `
-      <tr data-driver="${d.driver_number}" class="${champClass}">
+      <tr data-driver="${d.name_acronym}" class="${champClass}">
         <td><span class="position-badge ${posClass}">${pos}</span></td>
         <td>
           <div class="driver-cell">
@@ -78,7 +78,7 @@ function renderDriverStandings(standings, container) {
 
   requestAnimationFrame(() => {
     standings.drivers.forEach(d => {
-      const canvas = document.getElementById(`sparkline-driver-${d.driver_number}`);
+      const canvas = document.getElementById(`sparkline-driver-${d.name_acronym}`);
       if (canvas && (d.pointsHistory && d.pointsHistory.length > 1)) {
         drawSparkline(canvas, d.pointsHistory, getTeamColor(d.team_colour));
       } else if (canvas && d.raceResults.length > 1) {
@@ -96,22 +96,22 @@ function renderDriverStandings(standings, container) {
   // Click-to-open driver profile & Teammate hover visual connection
   container.querySelectorAll('tr[data-driver]').forEach(row => {
     row.addEventListener('click', () => {
-      const dn = parseInt(row.dataset.driver);
-      const driver = standings.drivers.find(d => d.driver_number === dn);
+      const acronym = row.dataset.driver;
+      const driver = standings.drivers.find(d => d.name_acronym === acronym);
       if (driver) {
         showDriverProfile(driver, standings, standings.raceSessions || []);
       }
     });
 
     row.addEventListener('mouseenter', () => {
-      const dn = parseInt(row.dataset.driver);
-      const driver = standings.drivers.find(d => d.driver_number === dn);
+      const acronym = row.dataset.driver;
+      const driver = standings.drivers.find(d => d.name_acronym === acronym);
       if (driver) {
         const teamName = driver.team_name;
         container.querySelectorAll('tr[data-driver]').forEach(otherRow => {
           if (otherRow !== row) {
-            const otherDn = parseInt(otherRow.dataset.driver);
-            const otherDriver = standings.drivers.find(d => d.driver_number === otherDn);
+            const otherAcronym = otherRow.dataset.driver;
+            const otherDriver = standings.drivers.find(d => d.name_acronym === otherAcronym);
             if (otherDriver && otherDriver.team_name === teamName) {
               otherRow.style.background = 'rgba(255, 255, 255, 0.04)';
               otherRow.style.boxShadow = `inset 4px 0 0 ${getTeamColor(driver.team_colour)}`;

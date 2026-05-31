@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v64'; // v64: fix dropdown season switching fails by adding rate limiting & caching to bulk Ergast calls
+const CACHE_NAME = 'pitcorner-shell-v67'; // v67: add v2.0.1 and v2.1.0 to changelog
 const STATIC_ASSETS = [
   './',
   './index.html',

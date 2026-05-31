@@ -107,8 +107,8 @@ export async function initH2H(year) {
 
     // Initial driver selections (top 2 drivers on the grid)
     if (h2hDrivers.length >= 2) {
-      selectDriver(h2hDrivers[0].driver_number, true);
-      selectDriver(h2hDrivers[1].driver_number, false);
+      selectDriver(h2hDrivers[0].name_acronym, true);
+      selectDriver(h2hDrivers[1].name_acronym, false);
     }
 
     renderTeammatePicks();
@@ -156,13 +156,13 @@ function setupCustomDropdown(containerSel, triggerSel, textSel, lineSel, options
     for (const d of teamDrivers) {
       const opt = document.createElement('div');
       opt.className = 'custom-option';
-      opt.dataset.value = d.driver_number;
+      opt.dataset.value = d.name_acronym;
       opt.innerHTML = `${d.name_acronym} — ${d.full_name}`;
       
       opt.addEventListener('click', (e) => {
         e.stopPropagation();
         container.classList.remove('open');
-        selectDriver(d.driver_number, isFirstDriver);
+        selectDriver(d.name_acronym, isFirstDriver);
       });
       
       optionsEl.appendChild(opt);
@@ -170,27 +170,27 @@ function setupCustomDropdown(containerSel, triggerSel, textSel, lineSel, options
   }
 }
 
-function selectDriver(driverNumber, isFirstDriver) {
-  const d = h2hDrivers.find(drv => drv.driver_number === driverNumber);
+function selectDriver(driverAcronym, isFirstDriver) {
+  const d = h2hDrivers.find(drv => drv.name_acronym === driverAcronym);
   if (!d) return;
 
   if (isFirstDriver) {
-    selectedDriver1 = driverNumber;
+    selectedDriver1 = driverAcronym;
     $('#h2h-trigger-text-1').textContent = `${d.name_acronym} — ${d.full_name}`;
     $('#h2h-trigger-line-1').style.background = getTeamColor(d.team_colour);
     
     // Update selected class in options
     $$('#h2h-options-1 .custom-option').forEach(opt => {
-      opt.classList.toggle('selected', parseInt(opt.dataset.value) === driverNumber);
+      opt.classList.toggle('selected', opt.dataset.value === driverAcronym);
     });
   } else {
-    selectedDriver2 = driverNumber;
+    selectedDriver2 = driverAcronym;
     $('#h2h-trigger-text-2').textContent = `${d.name_acronym} — ${d.full_name}`;
     $('#h2h-trigger-line-2').style.background = getTeamColor(d.team_colour);
     
     // Update selected class in options
     $$('#h2h-options-2 .custom-option').forEach(opt => {
-      opt.classList.toggle('selected', parseInt(opt.dataset.value) === driverNumber);
+      opt.classList.toggle('selected', opt.dataset.value === driverAcronym);
     });
   }
 
@@ -199,8 +199,8 @@ function selectDriver(driverNumber, isFirstDriver) {
 }
 
 function updateHeadshots() {
-  const d1 = h2hDrivers.find(d => d.driver_number === selectedDriver1);
-  const d2 = h2hDrivers.find(d => d.driver_number === selectedDriver2);
+  const d1 = h2hDrivers.find(d => d.name_acronym === selectedDriver1);
+  const d2 = h2hDrivers.find(d => d.name_acronym === selectedDriver2);
 
   const img1 = $('#h2h-headshot1');
   const img2 = $('#h2h-headshot2');
@@ -242,8 +242,8 @@ function renderTeammatePicks() {
       btn.className = 'teammate-btn';
       btn.textContent = `${drivers[0].name_acronym} vs ${drivers[1].name_acronym}`;
       btn.addEventListener('click', () => {
-        selectDriver(drivers[0].driver_number, true);
-        selectDriver(drivers[1].driver_number, false);
+        selectDriver(drivers[0].name_acronym, true);
+        selectDriver(drivers[1].name_acronym, false);
         container.querySelectorAll('.teammate-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
       });
@@ -264,8 +264,8 @@ async function runComparison() {
 
   container.innerHTML = Array(6).fill('<div class="skeleton skeleton-row"></div>').join('');
 
-  const d1 = h2hDrivers.find(d => d.driver_number === dn1);
-  const d2 = h2hDrivers.find(d => d.driver_number === dn2);
+  const d1 = h2hDrivers.find(d => d.name_acronym === dn1);
+  const d2 = h2hDrivers.find(d => d.name_acronym === dn2);
   const c1 = getTeamColor(d1?.team_colour);
   const c2 = getTeamColor(d2?.team_colour);
 
@@ -274,8 +274,14 @@ async function runComparison() {
     let raceH2H_1 = 0, raceH2H_2 = 0;
 
     for (const race of h2hCompletedRaces) {
-      const pos1 = race.results.find(o => o.driver_number === dn1);
-      const pos2 = race.results.find(o => o.driver_number === dn2);
+      const rd1 = race.drivers ? race.drivers.find(d => d.name_acronym === dn1) : null;
+      const rd2 = race.drivers ? race.drivers.find(d => d.name_acronym === dn2) : null;
+      
+      const num1 = rd1 ? rd1.driver_number : null;
+      const num2 = rd2 ? rd2.driver_number : null;
+
+      const pos1 = num1 ? race.results.find(o => o.driver_number === num1) : null;
+      const pos2 = num2 ? race.results.find(o => o.driver_number === num2) : null;
 
       if (pos1 && pos2) {
         if (pos1.position < pos2.position) raceH2H_1++;
@@ -309,14 +315,22 @@ async function runComparison() {
           getPits({ session_key: race.session_key }),
         ]);
 
-        overtakesMade1 += overtakes.filter(o => o.overtaking_driver_number === dn1).length;
-        overtakesMade2 += overtakes.filter(o => o.overtaking_driver_number === dn2).length;
+        const rd1 = race.drivers ? race.drivers.find(d => d.name_acronym === dn1) : null;
+        const rd2 = race.drivers ? race.drivers.find(d => d.name_acronym === dn2) : null;
+        const num1 = rd1 ? rd1.driver_number : null;
+        const num2 = rd2 ? rd2.driver_number : null;
 
-        for (const p of pits.filter(p => p.driver_number === dn1)) {
-          if (p.pit_duration) { pitTotal1 += p.pit_duration; pitCount1++; }
+        if (num1) {
+          overtakesMade1 += overtakes.filter(o => o.overtaking_driver_number === num1).length;
+          for (const p of pits.filter(p => p.driver_number === num1)) {
+            if (p.pit_duration) { pitTotal1 += p.pit_duration; pitCount1++; }
+          }
         }
-        for (const p of pits.filter(p => p.driver_number === dn2)) {
-          if (p.pit_duration) { pitTotal2 += p.pit_duration; pitCount2++; }
+        if (num2) {
+          overtakesMade2 += overtakes.filter(o => o.overtaking_driver_number === num2).length;
+          for (const p of pits.filter(p => p.driver_number === num2)) {
+            if (p.pit_duration) { pitTotal2 += p.pit_duration; pitCount2++; }
+          }
         }
       } catch { /* ignore */ }
     }

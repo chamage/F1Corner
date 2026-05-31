@@ -9,7 +9,7 @@ import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSe
 import { isPast, getPointsForPosition } from './utils.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_RACE_VERSION = 21; // Keep race cache at v21 to avoid re-fetching heavy race data
+const LS_RACE_VERSION = 25; // Bump race cache to v25 to force acronym-grouped compilation with unique collision resolving
 const LS_QUALI_VERSION = 22; // Bump quali cache to v22 to force re-compiling of qualifying results with DNS drivers
 
 // In-memory cache
@@ -235,7 +235,7 @@ export async function getSeasonData(year) {
   for (const race of races) {
     if (race.drivers) {
       for (const d of race.drivers) {
-        drivers.set(d.driver_number, d);
+        drivers.set(d.name_acronym, d);
       }
     }
   }
@@ -445,17 +445,24 @@ function initDriverStats() {
  * Zero API calls — everything from already-compiled race results.
  */
 export function computeStandingsFromSeason(seasonData) {
-  const driverStats = new Map();
+  const driverStats = new Map(); // key: name_acronym
   const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
 
   // Find the first race date for each driver to handle mid-season replacements correctly
-  const driverFirstRaceDate = new Map();
+  const driverFirstRaceDate = new Map(); // key: name_acronym
   const sortedRaces = [...completedRaces].sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
   for (const race of sortedRaces) {
+    const raceDriversMap = new Map();
+    if (race.drivers) {
+      for (const d of race.drivers) {
+        raceDriversMap.set(d.driver_number, d.name_acronym);
+      }
+    }
     for (const r of race.results) {
-      if (!driverFirstRaceDate.has(r.driver_number)) {
-        driverFirstRaceDate.set(r.driver_number, new Date(race.date_end));
+      const acronym = raceDriversMap.get(r.driver_number) || `DRV_${r.driver_number}`;
+      if (!driverFirstRaceDate.has(acronym)) {
+        driverFirstRaceDate.set(acronym, new Date(race.date_end));
       }
     }
   }
@@ -463,14 +470,14 @@ export function computeStandingsFromSeason(seasonData) {
   // Snap-align regular drivers (whose first GP is within the first 30 days of the season start)
   const seasonStartDate = sortedRaces.length > 0 ? new Date(sortedRaces[0].date_end) : null;
   if (seasonStartDate) {
-    for (const [dn, firstDate] of driverFirstRaceDate.entries()) {
+    for (const [acronym, firstDate] of driverFirstRaceDate.entries()) {
       if (firstDate - seasonStartDate < 30 * 24 * 60 * 60 * 1000) { // 30 days
-        driverFirstRaceDate.set(dn, seasonStartDate);
+        driverFirstRaceDate.set(acronym, seasonStartDate);
       }
     }
   }
 
-  const activeDrivers = Array.from(seasonData.drivers.keys());
+  const activeDrivers = Array.from(seasonData.drivers.keys()); // Unique acronyms
 
   // Group completed sessions by meeting_key to treat Sprint + GP as one event on the timeline
   const meetingsMap = new Map();
@@ -498,13 +505,23 @@ export function computeStandingsFromSeason(seasonData) {
     for (const race of meeting.sessions) {
       const isSprint = race.session_name === 'Sprint';
       const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
-      const raceDrivers = new Set(race.results.map(r => r.driver_number));
+      
+      const raceDriversMap = new Map();
+      if (race.drivers) {
+        for (const d of race.drivers) {
+          raceDriversMap.set(d.driver_number, d.name_acronym);
+        }
+      }
+      const raceDrivers = new Set();
 
       for (const { driver_number, position, status, points } of race.results) {
-        if (!driverStats.has(driver_number)) {
-          driverStats.set(driver_number, initDriverStats());
+        const acronym = raceDriversMap.get(driver_number) || `DRV_${driver_number}`;
+        raceDrivers.add(acronym);
+
+        if (!driverStats.has(acronym)) {
+          driverStats.set(acronym, initDriverStats());
         }
-        const stats = driverStats.get(driver_number);
+        const stats = driverStats.get(acronym);
 
         // Use pre-computed official points if available, otherwise calculate dynamically
         let pts = (points !== undefined)
@@ -513,7 +530,8 @@ export function computeStandingsFromSeason(seasonData) {
 
         if (points === undefined) {
           // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
-          if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
+          const fastLapAcronym = fastestLapDriver ? raceDriversMap.get(fastestLapDriver) : null;
+          if (seasonData.year < 2025 && fastLapAcronym === acronym && position <= 10 && status === 'FINISHED') {
             pts += 1;
           }
         }
@@ -564,7 +582,7 @@ export function computeStandingsFromSeason(seasonData) {
           }
           const cStats = constructorStats.get(raceTeamName);
           cStats.points += pts;
-          cStats.driverPoints.set(driver_number, (cStats.driverPoints.get(driver_number) || 0) + pts);
+          cStats.driverPoints.set(acronym, (cStats.driverPoints.get(acronym) || 0) + pts);
           if (!isSprint && position === 1 && status === 'FINISHED') {
             cStats.wins++;
           }
@@ -573,14 +591,14 @@ export function computeStandingsFromSeason(seasonData) {
 
       // Process DNS / ABSENT active drivers who did not compete in this session
       const raceDate = new Date(race.date_end);
-      for (const driverNum of activeDrivers) {
-        if (!raceDrivers.has(driverNum)) {
-          const firstDate = driverFirstRaceDate.get(driverNum);
+      for (const acronym of activeDrivers) {
+        if (!raceDrivers.has(acronym)) {
+          const firstDate = driverFirstRaceDate.get(acronym);
 
-          if (!driverStats.has(driverNum)) {
-            driverStats.set(driverNum, initDriverStats());
+          if (!driverStats.has(acronym)) {
+            driverStats.set(acronym, initDriverStats());
           }
-          const stats = driverStats.get(driverNum);
+          const stats = driverStats.get(acronym);
 
           let status = 'ABSENT';
           if (firstDate && raceDate >= firstDate) {
@@ -606,11 +624,11 @@ export function computeStandingsFromSeason(seasonData) {
     }
     // Handle newly seen active drivers if they weren't initialized yet, padding their history with 0s
     const meetingIdx = sortedMeetings.indexOf(meeting);
-    for (const driverNum of activeDrivers) {
-      if (!driverStats.has(driverNum)) {
-        driverStats.set(driverNum, initDriverStats());
+    for (const acronym of activeDrivers) {
+      if (!driverStats.has(acronym)) {
+        driverStats.set(acronym, initDriverStats());
       }
-      const stats = driverStats.get(driverNum);
+      const stats = driverStats.get(acronym);
       while (stats.pointsHistory.length < meetingIdx + 1) {
         stats.pointsHistory.push(stats.points);
       }
@@ -621,11 +639,22 @@ export function computeStandingsFromSeason(seasonData) {
   const completedQualifying = seasonData.qualifying || [];
   for (const quali of completedQualifying) {
     const isSprintQ = quali.session_name.toLowerCase().includes('sprint') || quali.session_name.toLowerCase().includes('shootout');
-    for (const { driver_number, position } of quali.results) {
-      if (!driverStats.has(driver_number)) {
-        driverStats.set(driver_number, initDriverStats());
+    
+    // Find the race session on the same weekend to map driver_number -> name_acronym
+    const race = completedRaces.find(r => r.meeting_key === quali.meeting_key);
+    const raceDriversMap = new Map();
+    if (race && race.drivers) {
+      for (const d of race.drivers) {
+        raceDriversMap.set(d.driver_number, d.name_acronym);
       }
-      const stats = driverStats.get(driver_number);
+    }
+
+    for (const { driver_number, position } of quali.results) {
+      const acronym = raceDriversMap.get(driver_number) || `DRV_${driver_number}`;
+      if (!driverStats.has(acronym)) {
+        driverStats.set(acronym, initDriverStats());
+      }
+      const stats = driverStats.get(acronym);
       if (isSprintQ) {
         stats.sprintQualiResults.push(position);
         if (position <= 10) {
@@ -642,18 +671,17 @@ export function computeStandingsFromSeason(seasonData) {
 
   // Build driver standings
   const driverStandings = Array.from(driverStats.entries())
-    .map(([driverNum, stats]) => {
-      const info = seasonData.drivers.get(driverNum) || {
-        driver_number: driverNum,
-        full_name: `Driver #${driverNum}`,
-        name_acronym: `D${driverNum}`,
+    .map(([acronym, stats]) => {
+      const info = seasonData.drivers.get(acronym) || {
+        driver_number: 0,
+        full_name: `Driver ${acronym}`,
+        name_acronym: acronym,
         team_name: 'Unknown',
         team_colour: '666666',
         headshot_url: '',
       };
 
       return {
-        driver_number: driverNum,
         ...info,
         ...stats,
         headshot_url: info.headshot_url
@@ -685,8 +713,8 @@ export function computeStandingsFromSeason(seasonData) {
   const teamMap = new Map();
   for (const [teamName, cStats] of constructorStats.entries()) {
     const driversList = [];
-    for (const [driverNum, ptsScored] of cStats.driverPoints.entries()) {
-      const dInfo = seasonData.drivers.get(driverNum);
+    for (const [acronym, ptsScored] of cStats.driverPoints.entries()) {
+      const dInfo = seasonData.drivers.get(acronym);
       if (dInfo) {
         driversList.push({ name: dInfo.name_acronym, points: ptsScored });
       }
@@ -780,7 +808,7 @@ export function computeStandingsFromSeason(seasonData) {
   }
 
   // ── Track Championship Leadership History ──
-  const driverLeadRounds = {};      // driver_number -> array of round numbers
+  const driverLeadRounds = {};      // name_acronym -> array of round numbers
   const constructorLeadRounds = {}; // team_name -> array of round numbers
 
   for (let mIdx = 0; mIdx < sortedMeetings.length; mIdx++) {
@@ -797,6 +825,7 @@ export function computeStandingsFromSeason(seasonData) {
     // Check Driver Clinch at round mIdx
     if (!isPrelim && !driverClinchMeeting) {
       const roundDriverPoints = driverStandings.map(d => ({
+        name_acronym: d.name_acronym,
         driver_number: d.driver_number,
         points: d.pointsHistory[mIdx] || 0
       })).sort((a, b) => b.points - a.points);
@@ -807,6 +836,7 @@ export function computeStandingsFromSeason(seasonData) {
           driverClinchMeeting = {
             round: mIdx + 1,
             circuit_short_name: meeting.circuit_short_name,
+            name_acronym: roundDriverPoints[0].name_acronym,
             driver_number: roundDriverPoints[0].driver_number
           };
         }
@@ -834,13 +864,14 @@ export function computeStandingsFromSeason(seasonData) {
 
     // ── Track Championship Leaders at this round ──
     const roundDriverPoints = driverStandings.map(d => ({
+      name_acronym: d.name_acronym,
       driver_number: d.driver_number,
       points: d.pointsHistory[mIdx] || 0
     })).sort((a, b) => b.points - a.points);
     if (roundDriverPoints.length > 0 && roundDriverPoints[0].points > 0) {
-      const leaderNum = roundDriverPoints[0].driver_number;
-      if (!driverLeadRounds[leaderNum]) driverLeadRounds[leaderNum] = [];
-      driverLeadRounds[leaderNum].push(mIdx + 1);
+      const leaderAcronym = roundDriverPoints[0].name_acronym;
+      if (!driverLeadRounds[leaderAcronym]) driverLeadRounds[leaderAcronym] = [];
+      driverLeadRounds[leaderAcronym].push(mIdx + 1);
     }
 
     const roundConstructorPoints = Array.from(teamPointsHistories.entries()).map(([teamName, history]) => ({
@@ -861,6 +892,7 @@ export function computeStandingsFromSeason(seasonData) {
       driverClinchMeeting = {
         round: sortedMeetings.length,
         circuit_short_name: lastMeeting.circuit_short_name,
+        name_acronym: driverStandings[0].name_acronym,
         driver_number: driverStandings[0].driver_number
       };
     }

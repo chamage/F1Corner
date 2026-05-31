@@ -52,7 +52,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   const teamColor = getTeamColor(driver.team_colour);
 
   // ── World Champion GP Clinch Banner ──
-  const clinchInfo = standings.driverClinchMeeting && standings.driverClinchMeeting.driver_number === driver.driver_number
+  const clinchInfo = standings.driverClinchMeeting && (standings.driverClinchMeeting.name_acronym === driver.name_acronym || standings.driverClinchMeeting.driver_number === driver.driver_number)
     ? standings.driverClinchMeeting
     : null;
 
@@ -149,7 +149,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
 
   // ── Teammate comparison ──
   const teammate = standings.drivers.find(d =>
-    d.team_name === driver.team_name && d.driver_number !== driver.driver_number
+    d.team_name === driver.team_name && d.name_acronym !== driver.name_acronym
   );
 
   let teammateHtml = '';
@@ -230,7 +230,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   const milestones = [];
 
   // 0. Championship Leader History
-  const leadRounds = standings.driverLeadRounds && standings.driverLeadRounds[driver.driver_number];
+  const leadRounds = standings.driverLeadRounds && (standings.driverLeadRounds[driver.name_acronym] || standings.driverLeadRounds[driver.driver_number]);
   if (leadRounds && leadRounds.length > 0) {
     const roundList = formatRoundRanges(leadRounds);
     milestones.push({
@@ -250,7 +250,12 @@ export function showDriverProfile(driver, standings, raceSessions) {
   }
 
   // 2. Speed Demon (Fastest Laps)
-  const fastestLapsCount = (standings.raceSessions || []).filter(r => r.fastest_lap_driver === driver.driver_number).length;
+  const fastestLapsCount = (standings.raceSessions || []).filter(r => {
+    if (!r.fastest_lap_driver) return false;
+    const rd = r.drivers ? r.drivers.find(d => d.driver_number === r.fastest_lap_driver) : null;
+    const acronym = rd ? rd.name_acronym : null;
+    return acronym === driver.name_acronym || r.fastest_lap_driver === driver.driver_number;
+  }).length;
   if (fastestLapsCount > 0) {
     milestones.push({
       icon: '<i class="fa-solid fa-bolt" style="color: #ffd000;"></i>',
@@ -531,7 +536,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   }
 
   // ── Championship position ──
-  const champPos = standings.drivers.findIndex(d => d.driver_number === driver.driver_number) + 1;
+  const champPos = standings.drivers.findIndex(d => d.name_acronym === driver.name_acronym) + 1;
   const pointsGap = champPos > 1
     ? standings.drivers[0].points - driver.points
     : 0;

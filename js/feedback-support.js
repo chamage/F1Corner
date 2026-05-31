@@ -443,10 +443,38 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.1.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.1.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">May 31, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Zero-Corruption Historical Standings Engine: Fixed a critical bug in historical Formula 1 seasons standings where driver car numbers fluctuated race-by-race. Re-engineered the standings compiler to dynamically resolve same-season driver acronym conflicts (such as separating Emerson and Wilson Fittipaldi under unique 'FIT' and 'WFI' acronyms) and cleanly format composite surnames (e.g. 'DEA' for Andrea de Adamich), providing duplicate-free standings and correct world champions.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v2.0.1 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.0.1</div>
+              <div class="changelog-date">May 31, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Faded Background Flag Watermarks: Integrated driver nationality flag watermarks into the background headers of both the GP Telemetry and the Driver Profile detail modals.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.0.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.0.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.0.0</div>
               <div class="changelog-date">May 31, 2026</div>
             </div>
             <ul class="changelog-list">

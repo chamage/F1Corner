@@ -229,7 +229,7 @@ async function loadHistoricalSeason(year) {
     return historicalSeasons.get(year);
   }
 
-  const lsKey = `f1c_historical_v4_${year}`;
+  const lsKey = `f1c_historical_v5_${year}`;
   const cachedStr = localStorage.getItem(lsKey);
   if (cachedStr) {
     try {
@@ -336,6 +336,64 @@ async function loadHistoricalSeason(year) {
   }
   const sprintResultsList = Array.from(sResultsMap.values());
 
+  // Resolve same-season driver acronym collisions and formatting issues (e.g. spaces/short abbreviations)
+  const uniqueDriversInSeason = new Map();
+  const collectDrivers = (resultsList, resultsProp) => {
+    resultsList.forEach(r => {
+      if (r[resultsProp]) {
+        r[resultsProp].forEach(res => {
+          const d = res.Driver;
+          const c = res.Constructor;
+          if (d && d.driverId && !uniqueDriversInSeason.has(d.driverId)) {
+            uniqueDriversInSeason.set(d.driverId, {
+              driver: d,
+              constructor: c,
+              driverNumber: parseInt(res.number)
+            });
+          }
+        });
+      }
+    });
+  };
+
+  collectDrivers(raceResultsList, 'Results');
+  collectDrivers(qualiResultsList, 'QualifyingResults');
+  collectDrivers(sprintResultsList, 'SprintResults');
+
+  const acronymToDriverId = new Map();
+  const driverIdToAcronym = new Map();
+
+  for (const [driverId, info] of uniqueDriversInSeason.entries()) {
+    const d = info.driver;
+    let baseAcronym = (d.code || d.familyName.slice(0, 3).toUpperCase()).trim();
+
+    // Ensure acronym is exactly 3 letters and alphanumeric
+    if (baseAcronym.length < 3) {
+      baseAcronym = (baseAcronym + d.givenName.slice(0, 3 - baseAcronym.length).toUpperCase()).padEnd(3, 'X');
+    }
+    baseAcronym = baseAcronym.substring(0, 3).toUpperCase();
+
+    // Resolve collisions
+    let finalAcronym = baseAcronym;
+    if (acronymToDriverId.has(finalAcronym) && acronymToDriverId.get(finalAcronym) !== driverId) {
+      const alternate = (d.givenName.slice(0, 1) + d.familyName.slice(0, 2)).toUpperCase();
+      if (!acronymToDriverId.has(alternate)) {
+        finalAcronym = alternate;
+      } else {
+        for (let i = 1; i <= 9; i++) {
+          const alt2 = baseAcronym.slice(0, 2) + i;
+          if (!acronymToDriverId.has(alt2)) {
+            finalAcronym = alt2;
+            break;
+          }
+        }
+      }
+    }
+
+    acronymToDriverId.set(finalAcronym, driverId);
+    driverIdToAcronym.set(driverId, finalAcronym);
+  }
+
   const racesList = scheduleData.MRData.RaceTable.Races || [];
 
   racesList.forEach((r) => {
@@ -402,7 +460,7 @@ async function loadHistoricalSeason(year) {
   });
 
   const mapDriver = (d, constructor, driverNum) => {
-    const acronym = d.code || d.familyName.slice(0, 3).toUpperCase();
+    const acronym = driverIdToAcronym.get(d.driverId) || d.code || d.familyName.slice(0, 3).toUpperCase();
     const cId = constructor.constructorId;
     const cName = constructor.name;
     const teamColour = getConstructorColor(cId, cName);
