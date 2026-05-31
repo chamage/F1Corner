@@ -444,8 +444,19 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
         raceDataCache.overtakes = overtakes;
         raceDataCache.intervals = intervals;
         
-        // For non-race sessions, build results from lap data if we don't have results yet
-        if (!isRaceSession(raceDataCache.currentSessionType) && (!raceDataCache.order || raceDataCache.order.length === 0)) {
+        // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
+        if (isQualifyingSession(raceDataCache.currentSessionType)) {
+          const telemetryOrder = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
+          if (raceDataCache.order && raceDataCache.order.length > 0) {
+            const telemetryMap = new Map(telemetryOrder.map(r => [r.driver_number, r]));
+            raceDataCache.order = raceDataCache.order.map(entry => {
+              const tel = telemetryMap.get(entry.driver_number);
+              return tel ? { ...entry, q1: tel.q1, q2: tel.q2, q3: tel.q3, bestLap: tel.bestLap || entry.bestLap } : entry;
+            });
+          } else {
+            raceDataCache.order = telemetryOrder;
+          }
+        } else if (!isRaceSession(raceDataCache.currentSessionType) && (!raceDataCache.order || raceDataCache.order.length === 0)) {
           raceDataCache.order = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
         }
         
@@ -1431,9 +1442,7 @@ export async function showRaceDriverDetail(driverNumber) {
     const driverPits = pits.sort((a, b) => a.lap_number - b.lap_number);
     const driverLaps = laps.sort((a, b) => a.lap_number - b.lap_number);
 
-    const sessionType = raceDataCache.currentSessionType;
-    const isRace = isRaceSession(sessionType);
-    const isQuali = isQualifyingSession(sessionType);
+
 
     // Calculate grid starting position from chronological positions telemetry (only for races)
     let startPos = '—';
@@ -2044,8 +2053,19 @@ async function switchRaceDetailSession(sessionType) {
       raceDataCache.overtakes = overtakes;
       raceDataCache.intervals = intervals;
       
-      // For non-race sessions, build results from lap data
-      if (!isRace && (!raceDataCache.order || raceDataCache.order.length === 0)) {
+      // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
+      if (isQualifyingSession(sessionType)) {
+        const telemetryOrder = buildQualifyingOrder(laps, raceDataCache.driverMap, sessionType);
+        if (raceDataCache.order && raceDataCache.order.length > 0) {
+          const telemetryMap = new Map(telemetryOrder.map(r => [r.driver_number, r]));
+          raceDataCache.order = raceDataCache.order.map(entry => {
+            const tel = telemetryMap.get(entry.driver_number);
+            return tel ? { ...entry, q1: tel.q1, q2: tel.q2, q3: tel.q3, bestLap: tel.bestLap || entry.bestLap } : entry;
+          });
+        } else {
+          raceDataCache.order = telemetryOrder;
+        }
+      } else if (!isRace && (!raceDataCache.order || raceDataCache.order.length === 0)) {
         raceDataCache.order = buildQualifyingOrder(laps, raceDataCache.driverMap, sessionType);
       }
       

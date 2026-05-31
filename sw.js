@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v68'; // v68: fix latest winner and calendar winner displays to show names instead of numbers
+const CACHE_NAME = 'pitcorner-shell-v76'; // v76: enrich qualifying results with Q1/Q2/Q3 telemetry segment times
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -28,7 +28,8 @@ const STATIC_ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(STATIC_ASSETS);
+      const requests = STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' }));
+      return cache.addAll(requests);
     }).then(() => self.skipWaiting())
   );
 });
