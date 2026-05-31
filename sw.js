@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v63'; // v63: increase driver number watermark opacity to 0.4 for better visibility
+const CACHE_NAME = 'pitcorner-shell-v64'; // v64: fix dropdown season switching fails by adding rate limiting & caching to bulk Ergast calls
 const STATIC_ASSETS = [
   './',
   './index.html',

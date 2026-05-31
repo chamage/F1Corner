@@ -202,11 +202,7 @@ function parseTimeStringToSeconds(timeStr) {
 }
 
 async function fetchAPI_Direct(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch direct: ${response.status} for ${url}`);
-  }
-  return response.json();
+  return fetchAPI(url);
 }
 
 async function fetchHistoricalPaginated(baseEndpoint) {
@@ -684,6 +680,17 @@ function clearOldCache() {
  * Everything else → fresh (10 min)
  */
 function getTTL(url) {
+  // Jolpi Ergast historical bulk data is immutable for past years
+  if (url.includes('api.jolpi.ca')) {
+    const yearMatch = url.match(/\/f1\/(\d+)/);
+    if (yearMatch) {
+      const urlYear = parseInt(yearMatch[1]);
+      if (urlYear < new Date().getFullYear()) {
+        return TTL_IMMUTABLE;
+      }
+    }
+  }
+
   // Past race laps/positions/stints/pit/overtakes (session_key is a number)
   // These are immutable once the session is over
   if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather|session_result)\?/.test(url) &&
@@ -734,7 +741,7 @@ async function waitForMinuteSlot() {
 // ── Core fetch ──
 
 async function fetchAPI(endpoint, params = {}) {
-  const url = new URL(`${API_BASE}${endpoint}`);
+  const url = endpoint.startsWith('http') ? new URL(endpoint) : new URL(`${API_BASE}${endpoint}`);
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
   });
