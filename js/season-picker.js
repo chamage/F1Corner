@@ -14,7 +14,7 @@ export function openSeasonPickerModal(currentYear, availableYears, onYearSelect)
         <button class="season-modal-close" id="season-picker-close" aria-label="Close">✕</button>
         <div class="season-modal-header">
           <h2>SELECT CHAMPIONSHIP SEASON</h2>
-          <p>Explore Formula 1 seasons from 2023 to 2026</p>
+          <p>Explore Formula 1 seasons from 1950 to 2026</p>
         </div>
         <div class="season-modal-body">
           <div class="season-decades-column" id="season-decades-list"></div>

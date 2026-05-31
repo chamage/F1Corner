@@ -442,7 +442,9 @@ function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
 
           const countSelect = document.getElementById('chart-drivers-count');
           const count = countSelect ? parseInt(countSelect.value, 10) : 5;
-          drawChampionshipBattle(seasonData, count, false);
+          if (currentSeasonData) {
+            drawChampionshipBattle(currentSeasonData, count, false);
+          }
         });
       });
 
@@ -478,7 +480,9 @@ function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
             // Re-draw chart with new toggle state
             const countSelect = document.getElementById('chart-drivers-count');
             const count = countSelect ? parseInt(countSelect.value, 10) : 5;
-            drawChampionshipBattle(seasonData, count, false);
+            if (currentSeasonData) {
+              drawChampionshipBattle(currentSeasonData, count, false);
+            }
           });
 
           // Hover effects on toggle button

@@ -367,7 +367,7 @@ export function showPrivacyModal() {
         <i class="fa-solid fa-shield-halved" style="color: var(--f1-red);"></i> Privacy Policy
       </h2>
       <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px;">
-        Last updated: May 29, 2026 • We respect your privacy and never sell your personal data.
+        Last updated: May 31, 2026 • We respect your privacy and never sell your personal data.
       </p>
 
       <div style="flex: 1; overflow-y: auto; padding-right: 8px; font-size: 0.84rem; color: var(--text-secondary); line-height: 1.6;" class="custom-scrollbar">
@@ -380,7 +380,7 @@ export function showPrivacyModal() {
 
           <div>
             <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">2. Telemetry and F1 Data</strong>
-            <span>All championship standings, practice/qualifying/race results, strategy statistics, and lap timeline visualizations are compiled directly in your browser. This data is pulled from the official public <a href="https://openf1.org" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">OpenF1 API</a> and cached locally on your device (using LocalStorage) to keep startup times high and API server loads low. We do not store or track your viewing history.</span>
+            <span>All championship standings, practice/qualifying/race results, strategy statistics, and lap timeline visualizations are compiled directly in your browser. This data is pulled from the official public <a href="https://openf1.org" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">OpenF1 API</a> (for modern seasons 2023+) and the community-maintained <a href="https://api.jolpi.ca/ergast/" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">Jolpi Ergast F1 API mirror</a> (for historical seasons 1950–2022), and cached locally on your device (using LocalStorage) to keep startup times high and API server loads low. We do not store or track your viewing history.</span>
           </div>
 
           <div>
@@ -443,10 +443,36 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.0.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.0.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">May 31, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Historical Seasons Integration (1950–2022): Integrated the complete community-maintained Jolpi Ergast mirror API, unlocking 73 premium retro Formula 1 seasons. All inaugural to modern years (1950 to 2026) are now fully accessible!</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Exact Historical Points Scoring Rules: Programmed the standings, deep-dive tables, performance sparklines, and head-to-head metrics to respect the exact historical points systems of all 77 F1 seasons (1950–2026), utilizing Ergast's pre-computed verified results to flawlessly handle retro dropped scores, half-points for shortened races, and double-points experiments.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Bulk Historical Loading & Caching: Programmed a highly optimized historical parser that retrieves whole season calendars, qualifiers, races, and sprints in parallel bulk requests, caching compiled data in LocalStorage for lightning-fast, offline-capable loadings under 1s.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Retro-Compatible Standings Engines: Designed retroactive driver number parsers, standard country flags mapping, and robust constructor color generators (curated lists + deterministic HSL hashing) to represent all historical data in our premium cockpit styles with zero frontend visual breaks.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v1.5.2 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v1.5.2 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v1.5.2</div>
               <div class="changelog-date">May 29, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -1026,10 +1052,11 @@ export function showRoadmapModal() {
           
           <div class="changelog-timeline::before" style="display: none;"></div>
           
+          <!-- Section 1: In Progress & Planned -->
           <div class="changelog-card" style="border-left: 3px solid var(--f1-red);">
             <div class="changelog-header" style="margin-bottom: 14px;">
-              <div class="changelog-version"><i class="fa-solid fa-list-check" style="color: var(--f1-red); margin-right: 6px;"></i> Things I'm Considering</div>
-              <div class="changelog-date">Feature Backlog</div>
+              <div class="changelog-version"><i class="fa-solid fa-list-check" style="color: var(--f1-red); margin-right: 6px;"></i> Active &amp; Planned Features</div>
+              <div class="changelog-date">Future Roadmap</div>
             </div>
             <ul class="changelog-list" style="gap: 16px;">
               <li class="changelog-item">
@@ -1067,13 +1094,33 @@ export function showRoadmapModal() {
                   <span>Detailed telemetry dashboards for circuits showing historical stats, overtakes index, and lap records.</span>
                 </div>
               </li>
+            </ul>
+          </div>
+
+          <!-- Section 2: Completed / Released -->
+          <div class="changelog-card" style="border-left: 3px solid #2ecc71; margin-top: 20px;">
+            <div class="changelog-header" style="margin-bottom: 14px;">
+              <div class="changelog-version" style="color: #2ecc71;"><i class="fa-solid fa-circle-check" style="color: #2ecc71; margin-right: 6px;"></i> Completed &amp; Released</div>
+              <div class="changelog-date" style="color: #2ecc71;">Done</div>
+            </div>
+            <ul class="changelog-list" style="gap: 16px;">
               <li class="changelog-item">
-                <span class="roadmap-tag backlog">Backlog Idea</span>
+                <span class="roadmap-tag completed">Released</span>
                 <div>
                   <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Historical F1 Data (Back to 1950s)</strong>
-                  <span>Integrating historical seasonal data calendars and standings records dating back to F1's inaugural 1950 season.</span>
+                  <span>Fully integrated historical seasonal calendars, standings, points scoring rules, H2H era-crossing metrics, and offline caching dating back to 1950!</span>
                 </div>
               </li>
+            </ul>
+          </div>
+
+          <!-- Section 3: Ideas & Backlog -->
+          <div class="changelog-card" style="border-left: 3px solid #9b59b6; margin-top: 20px;">
+            <div class="changelog-header" style="margin-bottom: 14px;">
+              <div class="changelog-version" style="color: #9b59b6;"><i class="fa-solid fa-lightbulb" style="color: #9b59b6; margin-right: 6px;"></i> Ideas &amp; Backlog</div>
+              <div class="changelog-date" style="color: #9b59b6;">Future Backlog</div>
+            </div>
+            <ul class="changelog-list" style="gap: 16px;">
               <li class="changelog-item">
                 <span class="roadmap-tag backlog">Backlog Idea</span>
                 <div>

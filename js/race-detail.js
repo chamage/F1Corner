@@ -342,14 +342,18 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     // Build sessions map for quick lookup
     const sessions = {};
     for (const s of completedSessions) {
-      // Enrich race/sprint sessions with compiled results from season data
+      // Enrich sessions with compiled results from season data (check both races and qualifying)
       const compiledRace = seasonData.races.find(r => r.session_key === s.session_key);
+      const compiledQuali = !compiledRace && seasonData.qualifying
+        ? seasonData.qualifying.find(q => q.session_key === s.session_key)
+        : null;
+      const compiled = compiledRace || compiledQuali;
       sessions[s.session_name] = {
         session_key: s.session_key,
         session_name: s.session_name,
         date_start: s.date_start,
         date_end: s.date_end,
-        results: compiledRace ? compiledRace.results : [],
+        results: compiled ? compiled.results : [],
       };
     }
 
@@ -617,7 +621,7 @@ function renderRaceResults(container) {
     }
   }
 
-  for (const { driver_number, position, status } of order) {
+  for (const { driver_number, position, status, points } of order) {
     const d = driverMap.get(driver_number) || { name_acronym: `#${driver_number}`, team_name: '?', team_colour: '666', full_name: `Driver #${driver_number}`, headshot_url: '' };
     const teamColor = getTeamColor(d.team_colour);
     
@@ -633,10 +637,12 @@ function renderRaceResults(container) {
     const isFastest = laps ? driver_number === fastestLapDriver : false;
     const driverLapCount = laps ? (computedLapCounts.get(driver_number) ?? 0) : '…';
     const driverPits = pits ? pits.filter(p => p.driver_number === driver_number) : null;
-    let pts = isDSQ ? 0 : getPointsForPosition(position);
     const awardFastestLap = raceDataCache.meetingInfo.year < 2025;
-    if (awardFastestLap && isFastest && position <= 10 && status === 'FINISHED') {
-      pts += 1;
+    let pts = points !== undefined ? points : (isDSQ ? 0 : getPointsForPosition(position));
+    if (points === undefined) {
+      if (awardFastestLap && isFastest && position <= 10 && status === 'FINISHED') {
+        pts += 1;
+      }
     }
 
     let statusText = '—';

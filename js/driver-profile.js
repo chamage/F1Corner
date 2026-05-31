@@ -769,16 +769,20 @@ export function showDriverProfile(driver, standings, raceSessions) {
   });
 
   // Draw points progression sparkline
-  if (rr.length > 1) {
+  if (rr.length > 1 || (driver.pointsHistory && driver.pointsHistory.length > 1)) {
     requestAnimationFrame(() => {
       const canvas = document.getElementById('dm-points-chart');
       if (canvas) {
         // Cumulative points
         let cumulative = [];
-        let sum = 0;
-        for (const pos of rr) {
-          sum += getPointsForPosition(pos);
-          cumulative.push(sum);
+        if (driver.pointsHistory && driver.pointsHistory.length > 0) {
+          cumulative = driver.pointsHistory;
+        } else {
+          let sum = 0;
+          for (const pos of rr) {
+            sum += getPointsForPosition(pos);
+            cumulative.push(sum);
+          }
         }
         drawSparkline(canvas, cumulative, teamColor, true);
       }

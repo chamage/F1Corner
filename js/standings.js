@@ -79,7 +79,9 @@ function renderDriverStandings(standings, container) {
   requestAnimationFrame(() => {
     standings.drivers.forEach(d => {
       const canvas = document.getElementById(`sparkline-driver-${d.driver_number}`);
-      if (canvas && d.raceResults.length > 1) {
+      if (canvas && (d.pointsHistory && d.pointsHistory.length > 1)) {
+        drawSparkline(canvas, d.pointsHistory, getTeamColor(d.team_colour));
+      } else if (canvas && d.raceResults.length > 1) {
         let cumulative = [];
         let sum = 0;
         for (const res of d.raceResults) {

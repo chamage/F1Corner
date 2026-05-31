@@ -28,6 +28,21 @@ function loadRaceFromStorage(sessionKey, isQuali = false) {
     const raw = localStorage.getItem(lsRaceKey(sessionKey, isQuali));
     if (!raw) return null;
     const compiled = JSON.parse(raw);
+
+    // Invalidation check for retro seasons to ensure they have the new 'points' field:
+    // If the session is a retro season race/sprint, and the results do not have 'points' mapped,
+    // invalidate it (return null) to force a fast offline re-compile from bulk Ergast data.
+    if (compiled && !isQuali && !compiled.is_incomplete) {
+      const [year] = sessionKey.split('_');
+      if (parseInt(year) <= 2022) {
+        const hasPoints = compiled.results && compiled.results.length > 0 && compiled.results[0].points !== undefined;
+        if (!hasPoints) {
+          localStorage.removeItem(lsRaceKey(sessionKey, isQuali));
+          return null;
+        }
+      }
+    }
+
     if (compiled && compiled.is_incomplete) {
       // Expire incomplete placeholders after 30 minutes to check for new data
       if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
@@ -332,7 +347,7 @@ async function fetchRaceData(session) {
       // Respect the official classified status (DSQ / DNS / DNF) from session result if present
       let status = r.status || 'FINISHED';
 
-      if (status === 'FINISHED') {
+      if (stints && stints.length > 0 && status === 'FINISHED') {
         if (lapsCompleted <= 1) { // Laps <= 1 is a DNS
           status = 'DNS';
         } else if (lapsCompleted <= maxLaps - 5) {
@@ -343,7 +358,8 @@ async function fetchRaceData(session) {
       return {
         driver_number: dn,
         position: r.position,
-        status: status
+        status: status,
+        points: r.points
       };
     });
 
@@ -354,14 +370,15 @@ async function fetchRaceData(session) {
       if (!resultsDrivers.has(dn)) {
         const lapsCompleted = lapsByDriver.get(dn) || 0;
         let status = 'DNS';
-        if (lapsCompleted > 1) {
+        if (stints && stints.length > 0 && lapsCompleted > 1) {
           status = 'DSQ'; // Has stints/laps but missing from final position results = DSQ
         }
 
         updatedResults.push({
           driver_number: dn,
           position: nextPos++,
-          status: status
+          status: status,
+          points: 0
         });
       }
     }
@@ -388,7 +405,13 @@ async function fetchRaceData(session) {
  */
 export function getResultsForSession(seasonData, sessionKey) {
   const race = seasonData.races.find(r => r.session_key === sessionKey);
-  return race ? race.results : [];
+  if (race) return race.results;
+  // Also check qualifying sessions
+  if (seasonData.qualifying) {
+    const quali = seasonData.qualifying.find(q => q.session_key === sessionKey);
+    if (quali) return quali.results;
+  }
+  return [];
 }
 
 /**
@@ -477,18 +500,22 @@ export function computeStandingsFromSeason(seasonData) {
       const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
       const raceDrivers = new Set(race.results.map(r => r.driver_number));
 
-      for (const { driver_number, position, status } of race.results) {
+      for (const { driver_number, position, status, points } of race.results) {
         if (!driverStats.has(driver_number)) {
           driverStats.set(driver_number, initDriverStats());
         }
         const stats = driverStats.get(driver_number);
 
-        // Points only if not disqualified (DSQ), DNS or absent
-        let pts = (status === 'DSQ' || status === 'DNS' || status === 'ABSENT') ? 0 : getPointsForPosition(position, isSprint);
+        // Use pre-computed official points if available, otherwise calculate dynamically
+        let pts = (points !== undefined)
+          ? points
+          : ((status === 'DSQ' || status === 'DNS' || status === 'ABSENT') ? 0 : getPointsForPosition(position, isSprint));
 
-        // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
-        if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
-          pts += 1;
+        if (points === undefined) {
+          // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
+          if (seasonData.year < 2025 && fastestLapDriver === driver_number && position <= 10 && status === 'FINISHED') {
+            pts += 1;
+          }
         }
 
         stats.points += pts;

@@ -13,8 +13,11 @@ import { setupRevealAnimations, $ } from './utils.js';
 import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
 import { openSeasonPickerModal } from './season-picker.js';
 
-// Available years (OpenF1 data from 2023+)
-const AVAILABLE_YEARS = [2026, 2025, 2024, 2023];
+// Available years (1950-2022 Jolpi Ergast mirror, 2023+ OpenF1)
+const AVAILABLE_YEARS = [];
+for (let y = 2026; y >= 1950; y--) {
+  AVAILABLE_YEARS.push(y);
+}
 let currentYear = 2026;
 
 // Generation counter — prevents stale loads when switching years rapidly
@@ -138,9 +141,11 @@ async function loadAll(year) {
     // Restore default text
     const textEl = loadingBanner.querySelector('.api-loading-text');
     if (textEl) {
+      const isHistorical = parseInt(year) <= 2022;
+      const apiName = isHistorical ? 'Historical Ergast F1 Data' : 'Live OpenF1 Data';
       textEl.innerHTML = `
-        <strong>Streaming Live OpenF1 Data...</strong>
-        <span>PitCorner is 100% free &amp; fetches real-time data. This may take a moment — thank you for your patience! 🏁</span>
+        <strong>Streaming ${apiName}...</strong>
+        <span>PitCorner is 100% free &amp; fetches real-time telemetry. This may take a moment — thank you for your patience! 🏁</span>
       `;
     }
   }

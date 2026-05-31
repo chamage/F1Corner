@@ -8,7 +8,583 @@
 //  - In-flight request deduplication
 // =============================================
 
+import { getDriverHeadshot, DRIVER_NATIONALITY } from './utils.js';
+
+const NATIONALITY_TO_COUNTRY = {
+  'british': { country: 'United Kingdom', code: 'gb' },
+  'german': { country: 'Germany', code: 'de' },
+  'french': { country: 'France', code: 'fr' },
+  'italian': { country: 'Italy', code: 'it' },
+  'brazilian': { country: 'Brazil', code: 'br' },
+  'american': { country: 'United States', code: 'us' },
+  'finnish': { country: 'Finland', code: 'fi' },
+  'australian': { country: 'Australia', code: 'au' },
+  'spanish': { country: 'Spain', code: 'es' },
+  'japanese': { country: 'Japan', code: 'jp' },
+  'austrian': { country: 'Austria', code: 'at' },
+  'canadian': { country: 'Canada', code: 'ca' },
+  'new zealander': { country: 'New Zealand', code: 'nz' },
+  'kiwi': { country: 'New Zealand', code: 'nz' },
+  'swedish': { country: 'Sweden', code: 'se' },
+  'belgian': { country: 'Belgium', code: 'be' },
+  'swiss': { country: 'Switzerland', code: 'ch' },
+  'argentine': { country: 'Argentina', code: 'ar' },
+  'dutch': { country: 'Netherlands', code: 'nl' },
+  'south african': { country: 'South Africa', code: 'za' },
+  'colombian': { country: 'Colombia', code: 'co' },
+  'mexican': { country: 'Mexico', code: 'mx' },
+  'russian': { country: 'Russia', code: 'ru' },
+  'danish': { country: 'Denmark', code: 'dk' },
+  'polish': { country: 'Poland', code: 'pl' },
+  'monegasque': { country: 'Monaco', code: 'mc' },
+  'venezuelan': { country: 'Venezuela', code: 've' },
+  'indian': { country: 'India', code: 'in' },
+  'thai': { country: 'Thailand', code: 'th' },
+  'chinese': { country: 'China', code: 'cn' },
+  'irish': { country: 'Ireland', code: 'ie' },
+  'portuguese': { country: 'Portugal', code: 'pt' },
+  'hungarian': { country: 'Hungary', code: 'hu' },
+  'chilean': { country: 'Chile', code: 'cl' },
+  'uruguayan': { country: 'Uruguay', code: 'uy' },
+  'rhodesian': { country: 'Zimbabwe', code: 'zw' },
+  'east german': { country: 'Germany', code: 'de' },
+  'czechoslovakian': { country: 'Czechia', code: 'cz' },
+  'liechtenstein': { country: 'Liechtenstein', code: 'li' },
+  'indonesian': { country: 'Indonesia', code: 'id' },
+  'malaysian': { country: 'Malaysia', code: 'my' },
+  'moroccan': { country: 'Morocco', code: 'ma' }
+};
+
+function translateNationalityToCountry(nationality) {
+  if (!nationality) return null;
+  const clean = nationality.trim().toLowerCase();
+  return NATIONALITY_TO_COUNTRY[clean] || null;
+}
+
 const API_BASE = 'https://api.openf1.org/v1';
+
+// ── Jolpi Ergast Historical mirror Integration ──
+const historicalSeasons = new Map();
+
+const HISTORICAL_COUNTRY_CODES = {
+  'australia': 'au',
+  'austria': 'at',
+  'bahrain': 'bh',
+  'belgium': 'be',
+  'brazil': 'br',
+  'canada': 'ca',
+  'china': 'cn',
+  'france': 'fr',
+  'germany': 'de',
+  'great britain': 'gb',
+  'uk': 'gb',
+  'united kingdom': 'gb',
+  'hungary': 'hu',
+  'italy': 'it',
+  'japan': 'jp',
+  'malaysia': 'my',
+  'mexico': 'mx',
+  'monaco': 'mc',
+  'morocco': 'ma',
+  'netherlands': 'nl',
+  'portugal': 'pt',
+  'russia': 'ru',
+  'singapore': 'sg',
+  'south africa': 'za',
+  'spain': 'es',
+  'sweden': 'se',
+  'switzerland': 'ch',
+  'turkey': 'tr',
+  'uae': 'ae',
+  'united arab emirates': 'ae',
+  'usa': 'us',
+  'united states': 'us',
+  'azerbaijan': 'az',
+  'qatar': 'qa',
+  'saudi arabia': 'sa',
+  'india': 'in',
+  'korea': 'kr',
+  'argentina': 'ar',
+  'imola': 'it',
+  'san marino': 'sm'
+};
+
+const CONSTRUCTOR_COLORS = {
+  'ferrari': 'EF1A2D',
+  'mclaren': 'FF8000',
+  'red_bull': '3671C6',
+  'mercedes': '27F4D2',
+  'alpine': '2293D1',
+  'aston_martin': '229971',
+  'williams': '37BEDD',
+  'haas': 'B6BABD',
+  'sauber': '52E252',
+  'rb': '6692FF',
+  'alpha_tauri': '5E8FAA',
+  'toro_rosso': '469BFF',
+  'renault': 'FFF500',
+  'force_india': 'FF8700',
+  'racing_point': 'F596C8',
+  'alfa_romeo': 'C00000',
+  'lotus': 'FFB300',
+  'lotus_f1': 'FFB300',
+  'benetton': '00A650',
+  'tyrrell': '002FA7',
+  'brabham': '003366',
+  'jordan': 'FFF200',
+  'bar': 'E60000',
+  'honda': 'E60000',
+  'toyota': 'E60000',
+  'jaguar': '006644',
+  'minardi': 'FFF200',
+  'ligier': '2643B9',
+  'arrows': 'FF6600',
+  'bmw_sauber': '0000FF',
+  'brawn': 'E2FF00',
+  'stewart': '005A36',
+  'prost': '0000FF',
+  'march': '30C8D6',
+  'cooper': '004225',
+  'brm': '004225',
+  'matra': '0055A5'
+};
+
+function getConstructorColor(constructorId, name) {
+  const cleanId = (constructorId || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (CONSTRUCTOR_COLORS[cleanId]) return CONSTRUCTOR_COLORS[cleanId];
+  
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  const h = Math.abs(hash % 360);
+  const s = 70 + (Math.abs(hash >> 8) % 20);
+  const l = 45 + (Math.abs(hash >> 16) % 15);
+  
+  const hDecimal = h / 360;
+  const sDecimal = s / 100;
+  const lDecimal = l / 100;
+  
+  let r, g, b;
+  if (sDecimal === 0) {
+    r = g = b = lDecimal;
+  } else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = lDecimal < 0.5 ? lDecimal * (1 + sDecimal) : lDecimal + sDecimal - lDecimal * sDecimal;
+    const p = 2 * lDecimal - q;
+    r = hue2rgb(p, q, hDecimal + 1/3);
+    g = hue2rgb(p, q, hDecimal);
+    b = hue2rgb(p, q, hDecimal - 1/3);
+  }
+  
+  const toHex = x => {
+    const hex = Math.round(x * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+  return (toHex(r) + toHex(g) + toHex(b)).toUpperCase();
+}
+
+function parseTimeStringToSeconds(timeStr) {
+  if (!timeStr) return null;
+  const parts = timeStr.split(':');
+  if (parts.length === 2) {
+    return parseInt(parts[0]) * 60 + parseFloat(parts[1]);
+  }
+  return parseFloat(parts[0]);
+}
+
+async function fetchAPI_Direct(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch direct: ${response.status} for ${url}`);
+  }
+  return response.json();
+}
+
+async function fetchHistoricalPaginated(baseEndpoint) {
+  const firstPage = await fetchAPI_Direct(`${baseEndpoint}?limit=100&offset=0`);
+  const total = parseInt(firstPage.MRData.total || 0);
+  let allRaces = firstPage.MRData.RaceTable.Races || [];
+  
+  if (total > 100) {
+    const promises = [];
+    for (let offset = 100; offset < total; offset += 100) {
+      promises.push(fetchAPI_Direct(`${baseEndpoint}?limit=100&offset=${offset}`));
+    }
+    const pages = await Promise.all(promises);
+    pages.forEach(page => {
+      const races = page.MRData.RaceTable.Races || [];
+      allRaces = allRaces.concat(races);
+    });
+  }
+  return allRaces;
+}
+
+async function loadHistoricalSeason(year) {
+  if (historicalSeasons.has(year)) {
+    return historicalSeasons.get(year);
+  }
+
+  const lsKey = `f1c_historical_v4_${year}`;
+  const cachedStr = localStorage.getItem(lsKey);
+  if (cachedStr) {
+    try {
+      const parsed = JSON.parse(cachedStr);
+      if (parsed && parsed.meetings) {
+        parsed.driversBySession = new Map(parsed.driversBySession);
+        parsed.resultsBySession = new Map(parsed.resultsBySession);
+        parsed.lapsBySession = new Map(parsed.lapsBySession);
+
+        // Re-register cached historical driver nationalities into the global registry
+        for (const [sessionKey, drivers] of parsed.driversBySession.entries()) {
+          for (const d of drivers) {
+            if (d.nationality && d.name_acronym) {
+              const countryInfo = translateNationalityToCountry(d.nationality);
+              if (countryInfo && !DRIVER_NATIONALITY[d.name_acronym]) {
+                DRIVER_NATIONALITY[d.name_acronym] = countryInfo;
+              }
+            }
+          }
+        }
+
+        historicalSeasons.set(year, parsed);
+        return parsed;
+      }
+    } catch (e) {
+      console.warn(`[Historical] Failed to parse cached historical data for ${year}:`, e);
+    }
+  }
+
+  console.log(`[Historical] Fetching bulk data from Jolpi Ergast for season ${year}...`);
+
+  const fetches = [
+    fetchAPI_Direct(`https://api.jolpi.ca/ergast/f1/${year}.json?limit=100`),
+    fetchHistoricalPaginated(`https://api.jolpi.ca/ergast/f1/${year}/results.json`),
+    fetchHistoricalPaginated(`https://api.jolpi.ca/ergast/f1/${year}/qualifying.json`)
+  ];
+
+  if (year >= 2021) {
+    fetches.push(
+      fetchHistoricalPaginated(`https://api.jolpi.ca/ergast/f1/${year}/sprint.json`).catch(() => [])
+    );
+  }
+
+  const [scheduleData, allRaceResults, allQualiResults, allSprintResults] = await Promise.all(fetches);
+
+  if (!scheduleData || !allRaceResults || !allQualiResults) {
+    throw new Error(`Failed to load historical season data for ${year}`);
+  }
+
+  const meetings = [];
+  const sessions = [];
+  const driversBySession = new Map();
+  const resultsBySession = new Map();
+  const lapsBySession = new Map();
+
+  // Group and merge split rounds from paginated results
+  const raceResultsMap = new Map();
+  allRaceResults.forEach(r => {
+    const round = parseInt(r.round);
+    if (!raceResultsMap.has(round)) {
+      raceResultsMap.set(round, {
+        ...r,
+        Results: []
+      });
+    }
+    const accumulated = raceResultsMap.get(round);
+    if (r.Results) {
+      accumulated.Results = accumulated.Results.concat(r.Results);
+    }
+  });
+  const raceResultsList = Array.from(raceResultsMap.values());
+
+  const qResultsMap = new Map();
+  allQualiResults.forEach(r => {
+    const round = parseInt(r.round);
+    if (!qResultsMap.has(round)) {
+      qResultsMap.set(round, {
+        ...r,
+        QualifyingResults: []
+      });
+    }
+    const accumulated = qResultsMap.get(round);
+    if (r.QualifyingResults) {
+      accumulated.QualifyingResults = accumulated.QualifyingResults.concat(r.QualifyingResults);
+    }
+  });
+  const qualiResultsList = Array.from(qResultsMap.values());
+
+  const sResultsMap = new Map();
+  if (allSprintResults) {
+    allSprintResults.forEach(r => {
+      const round = parseInt(r.round);
+      if (!sResultsMap.has(round)) {
+        sResultsMap.set(round, {
+          ...r,
+          SprintResults: []
+        });
+      }
+      const accumulated = sResultsMap.get(round);
+      if (r.SprintResults) {
+        accumulated.SprintResults = accumulated.SprintResults.concat(r.SprintResults);
+      }
+    });
+  }
+  const sprintResultsList = Array.from(sResultsMap.values());
+
+  const racesList = scheduleData.MRData.RaceTable.Races || [];
+
+  racesList.forEach((r) => {
+    const round = parseInt(r.round);
+    const meetingKey = `${year}_${round}`;
+    
+    const country = r.Circuit.Location.country || 'Unknown';
+    const countryLower = country.toLowerCase();
+    const countryCode = HISTORICAL_COUNTRY_CODES[countryLower] || 'un';
+    const countryFlag = `https://flagcdn.com/w320/${countryCode}.png`;
+    
+    meetings.push({
+      meeting_key: meetingKey,
+      meeting_name: r.raceName,
+      meeting_official_name: r.raceName.toUpperCase(),
+      location: r.Circuit.Location.locality,
+      country_key: round,
+      country_code: countryCode.toUpperCase(),
+      country_name: country,
+      country_flag: countryFlag,
+      circuit_key: round,
+      circuit_short_name: r.Circuit.Location.locality,
+      circuit_type: 'Permanent',
+      circuit_info_url: r.url,
+      circuit_image: '',
+      gmt_offset: '02:00:00',
+      date_start: r.date + 'T10:00:00Z',
+      date_end: r.date + 'T18:00:00Z',
+      year: year,
+      is_cancelled: false
+    });
+
+    sessions.push({
+      session_key: `${meetingKey}_race`,
+      session_name: 'Race',
+      session_type: 'Race',
+      meeting_key: meetingKey,
+      circuit_short_name: r.Circuit.Location.locality,
+      date_end: r.date + 'T18:00:00Z'
+    });
+
+    const qualiDate = (r.Qualifying && r.Qualifying.date) || r.date;
+    sessions.push({
+      session_key: `${meetingKey}_quali`,
+      session_name: 'Qualifying',
+      session_type: 'Qualifying',
+      meeting_key: meetingKey,
+      circuit_short_name: r.Circuit.Location.locality,
+      date_end: qualiDate + 'T16:00:00Z'
+    });
+
+    const hasSprint = r.Sprint || (year >= 2021 && sprintResultsList.some(sr => parseInt(sr.round) === round));
+    if (hasSprint) {
+      const sprintDate = (r.Sprint && r.Sprint.date) || r.date;
+      sessions.push({
+        session_key: `${meetingKey}_sprint`,
+        session_name: 'Sprint',
+        session_type: 'Sprint',
+        meeting_key: meetingKey,
+        circuit_short_name: r.Circuit.Location.locality,
+        date_end: sprintDate + 'T17:00:00Z'
+      });
+    }
+  });
+
+  const mapDriver = (d, constructor, driverNum) => {
+    const acronym = d.code || d.familyName.slice(0, 3).toUpperCase();
+    const cId = constructor.constructorId;
+    const cName = constructor.name;
+    const teamColour = getConstructorColor(cId, cName);
+    
+    // Dynamically register the driver's nationality in DRIVER_NATIONALITY:
+    if (d.nationality) {
+      const countryInfo = translateNationalityToCountry(d.nationality);
+      if (countryInfo && !DRIVER_NATIONALITY[acronym]) {
+        DRIVER_NATIONALITY[acronym] = countryInfo;
+      }
+    }
+
+    return {
+      driver_number: driverNum,
+      name_acronym: acronym,
+      full_name: `${d.givenName} ${d.familyName}`,
+      team_name: cName,
+      team_colour: teamColour,
+      headshot_url: getDriverHeadshot(acronym, year <= 2022 ? 2023 : year) || null,
+      nationality: d.nationality
+    };
+  };
+
+  raceResultsList.forEach((r) => {
+    const round = parseInt(r.round);
+    const sessionKey = `${year}_${round}_race`;
+    const results = [];
+    const drivers = [];
+    const dummyLaps = [];
+
+    let fastestLapDriver = null;
+
+    if (r.Results) {
+      r.Results.forEach((res) => {
+        const dNum = parseInt(res.number);
+        const position = parseInt(res.position);
+        
+        const ergastStatus = res.status || 'Finished';
+        let status = 'FINISHED';
+        if (ergastStatus.includes('Did not start') || ergastStatus.includes('Withdrew') || ergastStatus.includes('Excluded')) {
+          status = 'DNS';
+        } else if (ergastStatus.includes('Disqualified')) {
+          status = 'DSQ';
+        } else if (!ergastStatus.includes('Finished') && !/^\+\d/.test(ergastStatus)) {
+          status = 'DNF';
+        }
+
+        results.push({
+          driver_number: dNum,
+          position: position,
+          status: status,
+          points: parseFloat(res.points || 0)
+        });
+
+        const driverObj = mapDriver(res.Driver, res.Constructor, dNum);
+        drivers.push(driverObj);
+
+        let fastLapDuration = null;
+        if (res.FastestLap && res.FastestLap.Time && res.FastestLap.Time.time) {
+          fastLapDuration = parseTimeStringToSeconds(res.FastestLap.Time.time);
+          if (res.FastestLap.rank === "1") {
+            fastestLapDriver = dNum;
+          }
+        }
+
+        dummyLaps.push({
+          driver_number: dNum,
+          lap_number: parseInt(res.laps) || 0,
+          lap_duration: fastLapDuration,
+          is_pit_out_lap: false
+        });
+      });
+    }
+
+    resultsBySession.set(sessionKey, results);
+    driversBySession.set(sessionKey, drivers);
+    lapsBySession.set(sessionKey, dummyLaps);
+  });
+
+  qualiResultsList.forEach((r) => {
+    const round = parseInt(r.round);
+    const sessionKey = `${year}_${round}_quali`;
+    const results = [];
+    const drivers = [];
+
+    if (r.QualifyingResults) {
+      r.QualifyingResults.forEach((res) => {
+        const dNum = parseInt(res.number);
+        const position = parseInt(res.position);
+        results.push({
+          driver_number: dNum,
+          position: position,
+          status: 'FINISHED'
+        });
+        
+        drivers.push(mapDriver(res.Driver, res.Constructor, dNum));
+      });
+    }
+
+    resultsBySession.set(sessionKey, results);
+    driversBySession.set(sessionKey, drivers);
+  });
+
+  sprintResultsList.forEach((r) => {
+    const round = parseInt(r.round);
+    const sessionKey = `${year}_${round}_sprint`;
+    const results = [];
+    const drivers = [];
+    const dummyLaps = [];
+
+    if (r.SprintResults) {
+      r.SprintResults.forEach((res) => {
+        const dNum = parseInt(res.number);
+        const position = parseInt(res.position);
+        
+        const ergastStatus = res.status || 'Finished';
+        let status = 'FINISHED';
+        if (ergastStatus.includes('Did not start') || ergastStatus.includes('Withdrew')) {
+          status = 'DNS';
+        } else if (ergastStatus.includes('Disqualified')) {
+          status = 'DSQ';
+        } else if (!ergastStatus.includes('Finished') && !/^\+\d/.test(ergastStatus)) {
+          status = 'DNF';
+        }
+
+        results.push({
+          driver_number: dNum,
+          position: position,
+          status: status,
+          points: parseFloat(res.points || 0)
+        });
+
+        drivers.push(mapDriver(res.Driver, res.Constructor, dNum));
+
+        let fastLapDuration = null;
+        if (res.FastestLap && res.FastestLap.Time && res.FastestLap.Time.time) {
+          fastLapDuration = parseTimeStringToSeconds(res.FastestLap.Time.time);
+        }
+
+        dummyLaps.push({
+          driver_number: dNum,
+          lap_number: parseInt(res.laps) || 0,
+          lap_duration: fastLapDuration,
+          is_pit_out_lap: false
+        });
+      });
+    }
+
+    resultsBySession.set(sessionKey, results);
+    driversBySession.set(sessionKey, drivers);
+    lapsBySession.set(sessionKey, dummyLaps);
+  });
+
+  const compiledData = {
+    meetings,
+    sessions,
+    driversBySession,
+    resultsBySession,
+    lapsBySession
+  };
+
+  historicalSeasons.set(year, compiledData);
+
+  try {
+    const serialized = {
+      meetings,
+      sessions,
+      driversBySession: Array.from(driversBySession.entries()),
+      resultsBySession: Array.from(resultsBySession.entries()),
+      lapsBySession: Array.from(lapsBySession.entries())
+    };
+    localStorage.setItem(lsKey, JSON.stringify(serialized));
+  } catch (e) {
+    console.warn(`[Historical] Failed to cache historical data in localStorage for ${year}:`, e);
+  }
+
+  return compiledData;
+}
 
 // ── Cache Config ──
 // Two-tier cache: fast in-memory Map + persistent localStorage
@@ -272,48 +848,119 @@ async function fetchAPI(endpoint, params = {}) {
 // ── Endpoint Functions ──
 
 export async function getMeetings(year) {
+  if (parseInt(year) <= 2022) {
+    const data = await loadHistoricalSeason(parseInt(year));
+    return data.meetings;
+  }
   return fetchAPI('/meetings', { year });
 }
 
 export async function getSessions(params = {}) {
+  const year = parseInt(params.year);
+  if (year && year <= 2022) {
+    const data = await loadHistoricalSeason(year);
+    if (params.session_name === 'Race') {
+      return data.sessions.filter(s => s.session_name === 'Race');
+    }
+    if (params.session_name === 'Sprint') {
+      return data.sessions.filter(s => s.session_name === 'Sprint');
+    }
+    if (params.session_type === 'Qualifying') {
+      return data.sessions.filter(s => s.session_name === 'Qualifying');
+    }
+    return data.sessions;
+  }
+  if (params.meeting_key && typeof params.meeting_key === 'string' && params.meeting_key.includes('_')) {
+    const [y] = params.meeting_key.split('_');
+    const yNum = parseInt(y);
+    if (yNum <= 2022) {
+      const data = await loadHistoricalSeason(yNum);
+      return data.sessions.filter(s => s.meeting_key === params.meeting_key);
+    }
+  }
   return fetchAPI('/sessions', params);
 }
 
 export async function getDrivers(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    const yNum = parseInt(y);
+    if (yNum <= 2022) {
+      const data = await loadHistoricalSeason(yNum);
+      return data.driversBySession.get(params.session_key) || [];
+    }
+  }
   return fetchAPI('/drivers', params);
 }
 
 export async function getLaps(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    const yNum = parseInt(y);
+    if (yNum <= 2022) {
+      const data = await loadHistoricalSeason(yNum);
+      return data.lapsBySession.get(params.session_key) || [];
+    }
+  }
   return fetchAPI('/laps', params);
 }
 
 export async function getStints(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/stints', params);
 }
 
 export async function getPits(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/pit', params);
 }
 
 export async function getOvertakes(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/overtakes', params);
 }
 
 export async function getPositions(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/position', params);
 }
 
 export async function getIntervals(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/intervals', params);
 }
 
 export async function getRaceControl(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/race_control', params);
 }
 
 export async function getWeather(params = {}) {
+  if (params.session_key && typeof params.session_key === 'string' && params.session_key.includes('_')) {
+    const [y] = params.session_key.split('_');
+    if (parseInt(y) <= 2022) return [];
+  }
   return fetchAPI('/weather', params);
 }
+
 export async function getSessionResult(params = {}) {
   return fetchAPI('/session_result', params);
 }
@@ -378,6 +1025,14 @@ export async function getFinishingOrderFromLaps(sessionKey) {
 }
 
 export async function getFinishingOrder(sessionKey) {
+  if (typeof sessionKey === 'string' && sessionKey.includes('_')) {
+    const [y] = sessionKey.split('_');
+    const yNum = parseInt(y);
+    if (yNum <= 2022) {
+      const data = await loadHistoricalSeason(yNum);
+      return data.resultsBySession.get(sessionKey) || [];
+    }
+  }
   try {
     const results = await getSessionResult({ session_key: sessionKey });
     if (!results || results.length === 0) {

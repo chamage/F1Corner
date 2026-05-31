@@ -3208,6 +3208,12 @@ body:has(.driver-modal-overlay.open) .back-to-top-btn {
   color: #9b59b6;
 }
 
+.roadmap-tag.completed {
+  background: rgba(46, 204, 113, 0.15);
+  border: 1px solid rgba(46, 204, 113, 0.3);
+  color: #2ecc71;
+}
+
 
 /* ── Custom Styled Session Dropdown Picker ── */
 /* ── Premium Season Select Button ── */

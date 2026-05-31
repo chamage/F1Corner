@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v58'; // v58: integrate comprehensive privacy policy modal and consent checks to comply with Google search console safe browsing
+const CACHE_NAME = 'pitcorner-shell-v61'; // v61: fix qualifying results not showing in race detail for historical seasons
 const STATIC_ASSETS = [
   './',
   './index.html',
