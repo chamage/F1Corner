@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v67'; // v67: add v2.0.1 and v2.1.0 to changelog
+const CACHE_NAME = 'pitcorner-shell-v68'; // v68: fix latest winner and calendar winner displays to show names instead of numbers
 const STATIC_ASSETS = [
   './',
   './index.html',

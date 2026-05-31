@@ -48,7 +48,9 @@ export async function initCalendar(year) {
     for (const race of (seasonData.races || [])) {
       if (race.session_name !== 'Race' || !race.results.length) continue;
       const winnerNum = race.results[0].driver_number;
-      const winnerInfo = seasonData.drivers.get(winnerNum);
+      const raceDriver = race.drivers ? race.drivers.find(d => d.driver_number === winnerNum) : null;
+      const winnerAcronym = raceDriver ? raceDriver.name_acronym : null;
+      const winnerInfo = winnerAcronym ? seasonData.drivers.get(winnerAcronym) : null;
       winners.set(race.meeting_key, {
         name: winnerInfo ? winnerInfo.name_acronym : `#${winnerNum}`,
         fullName: winnerInfo ? winnerInfo.full_name : `#${winnerNum}`,

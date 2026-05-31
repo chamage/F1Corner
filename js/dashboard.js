@@ -63,7 +63,9 @@ export async function initDashboard(year) {
     let lastRaceName = '';
     if (lastCompiledRace && lastCompiledRace.results.length > 0) {
       const winnerNum = lastCompiledRace.results[0].driver_number;
-      const winnerInfo = seasonData.drivers.get(winnerNum);
+      const raceDriver = lastCompiledRace.drivers ? lastCompiledRace.drivers.find(d => d.driver_number === winnerNum) : null;
+      const winnerAcronym = raceDriver ? raceDriver.name_acronym : null;
+      const winnerInfo = winnerAcronym ? seasonData.drivers.get(winnerAcronym) : null;
       lastWinner = winnerInfo ? winnerInfo.full_name : `#${winnerNum}`;
       const meeting = gps.find(m => m.meeting_key === lastCompiledRace.meeting_key);
       lastRaceName = meeting ? meeting.meeting_name : lastCompiledRace.circuit_short_name;
@@ -82,7 +84,9 @@ export async function initDashboard(year) {
     }
 
     if (overallFastestLap && overallFastestDriver) {
-      const driverInfo = seasonData.drivers.get(overallFastestDriver);
+      const raceDriver = overallFastestRace.drivers ? overallFastestRace.drivers.find(d => d.driver_number === overallFastestDriver) : null;
+      const driverAcronym = raceDriver ? raceDriver.name_acronym : null;
+      const driverInfo = driverAcronym ? seasonData.drivers.get(driverAcronym) : null;
       const driverName = driverInfo ? driverInfo.name_acronym : `#${overallFastestDriver}`;
       document.getElementById('stat-fastest').textContent = `${formatLapTime(overallFastestLap)} (${driverName})`;
       document.getElementById('stat-fastest').title = `${driverInfo?.full_name || driverName} at ${overallFastestRace.circuit_short_name}`;
