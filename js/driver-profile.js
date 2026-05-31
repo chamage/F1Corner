@@ -537,6 +537,8 @@ export function showDriverProfile(driver, standings, raceSessions) {
     : 0;
 
   const nat = DRIVER_NATIONALITY[driver.name_acronym] || { country: 'International' };
+  const flagInfo = DRIVER_NATIONALITY[driver.name_acronym?.toUpperCase()];
+  const flagBgUrl = flagInfo?.code ? `https://flagcdn.com/w320/${flagInfo.code}.png` : '';
   const flagHtml = getDriverFlagImg(driver.name_acronym, 'width:18px;margin-right:2px;');
 
   // ── Segmented Control tabs HTML ──
@@ -713,6 +715,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
   modal.innerHTML = `
     <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
     <div class="dm-header" style="color:${teamColor}">
+      ${flagBgUrl ? `<img class="dm-header-flag-bg" src="${flagBgUrl}" alt="" aria-hidden="true">` : ''}
       <img class="dm-headshot" src="${driver.headshot_url || ''}" alt="${driver.name_acronym}"
            onerror="this.style.display='none'" style="border-color:${teamColor}">
       <div class="dm-header-info">

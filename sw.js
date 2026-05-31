@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v61'; // v61: fix qualifying results not showing in race detail for historical seasons
+const CACHE_NAME = 'pitcorner-shell-v63'; // v63: increase driver number watermark opacity to 0.4 for better visibility
 const STATIC_ASSETS = [
   './',
   './index.html',

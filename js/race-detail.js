@@ -5,7 +5,7 @@
 
 import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
-import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, getPointsForPosition, isPast, buildDriverMap, $, $$ } from './utils.js';
+import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
@@ -1841,6 +1841,9 @@ export async function showRaceDriverDetail(driverNumber) {
       `;
     }
 
+    const flagInfo = DRIVER_NATIONALITY[d.name_acronym?.toUpperCase()];
+    const flagBgUrl = flagInfo?.code ? `https://flagcdn.com/w320/${flagInfo.code}.png` : '';
+
     // Compile beautiful UI with clean styled details
     modal.innerHTML = `
       <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
@@ -1848,12 +1851,13 @@ export async function showRaceDriverDetail(driverNumber) {
       <!-- Modal Header Banner -->
       <div class="dm-header-banner" style="--dm-team-color: ${teamColor}; --dm-team-color-alpha: ${teamColor}33;">
         <div class="dm-header-bar"></div>
+        ${flagBgUrl ? `<img class="dm-header-flag-bg" src="${flagBgUrl}" alt="" aria-hidden="true">` : ''}
         
         <div class="dm-header-avatar">
           <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/><text y=%2250%%22 x=%2250%%22 font-family=%22sans-serif%22 font-size=%2224%22 fill=%22%23777%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22>${d.name_acronym}</text></svg>'">
         </div>
         
-        <div style="flex: 1; min-width: 200px;">
+        <div style="flex: 1; min-width: 200px; z-index: 1; position: relative;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-family:'JetBrains Mono',monospace; font-size:0.9rem; font-weight:800; color:${teamColor}; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:4px;">#${driverNumber}</span>
             <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:var(--text-muted);">${d.team_name}</span>

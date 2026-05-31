@@ -1566,6 +1566,7 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   gap: var(--space-lg);
   border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
 }
 
 .dm-header::before {
@@ -1585,11 +1586,15 @@ h1, h2, h3, h4, h5, h6 {
   border: 3px solid currentColor;
   background: var(--bg-tertiary);
   flex-shrink: 0;
+  z-index: 1;
+  position: relative;
 }
 
 .dm-header-info {
   flex: 1;
   min-width: 0;
+  z-index: 1;
+  position: relative;
 }
 
 .dm-driver-name {
@@ -1609,10 +1614,11 @@ h1, h2, h3, h4, h5, h6 {
   font-family: 'Outfit', sans-serif;
   font-size: 2.5rem;
   font-weight: 900;
-  opacity: 0.12;
+  opacity: 0.4;
   position: absolute;
   right: var(--space-xl);
   bottom: var(--space-md);
+  z-index: 1;
 }
 
 /* Body */
@@ -2504,6 +2510,25 @@ h1, h2, h3, h4, h5, h6 {
   gap: 20px;
   align-items: center;
   position: relative;
+  overflow: hidden;
+}
+
+.dm-header-flag-bg {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 110%;
+  width: auto;
+  min-width: 180px;
+  max-width: 280px;
+  object-fit: cover;
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 40%, rgba(0,0,0,1) 100%);
+  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.4) 40%, rgba(0,0,0,1) 100%);
+  filter: saturate(1.3);
 }
 
 .dm-header-bar {
@@ -2513,6 +2538,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 4px;
   height: 100%;
   background: var(--dm-team-color);
+  z-index: 1;
 }
 
 .dm-header-avatar {
@@ -2526,6 +2552,7 @@ h1, h2, h3, h4, h5, h6 {
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 1;
 }
 
 .dm-header-avatar img {
