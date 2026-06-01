@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v76'; // v76: enrich qualifying results with Q1/Q2/Q3 telemetry segment times
+const CACHE_NAME = 'pitcorner-shell-v86'; // v86: dynamic race weekend schedule modal status header
 const STATIC_ASSETS = [
   './',
   './index.html',

@@ -443,10 +443,28 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.2.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.2.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 1, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Weekend Schedule Modal for Future Races: Click any future or incomplete GP card in the calendar or hero banner to open a Weekend Schedule Modal. View all weekend sessions (FP1, FP2, FP3, Qualifying, Sprint, Race) in both your local system timezone and track-local time, complete with a live ticking countdown to the next session! Snaps to estimated approximations with visual warning banners if official schedules aren't yet published.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Unified Completed GP Schedules: Integrated a clean 'View Weekend Schedule' button directly into the stats header for completed races. Open it instantly to inspect the exact historical local and track-local session dates and times of the concluded weekend</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.1.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.1.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.1.0</div>
               <div class="changelog-date">May 31, 2026</div>
             </div>
             <ul class="changelog-list">

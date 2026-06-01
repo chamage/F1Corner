@@ -5,7 +5,7 @@
 
 import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions } from './api.js';
 import { getSeasonData, getResultsForSession } from './season-data.js';
-import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, $, $$ } from './utils.js';
+import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
@@ -304,6 +304,7 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
   const pillsContainer = $('#race-session-pills');
 
   section.style.display = 'block';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
   header.innerHTML = `
     <div class="race-detail-title">${meetingInfo.meeting_name}</div>
     <div style="color:var(--text-muted);font-size:0.85rem;">${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</div>
@@ -338,6 +339,8 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       const orderB = SESSION_ORDER.indexOf(b.session_name);
       return (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB);
     });
+
+
 
     // Build sessions map for quick lookup
     const sessions = {};
@@ -388,11 +391,33 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     }
 
     header.innerHTML = `
-      <div class="race-detail-title">${meetingInfo.meeting_name}</div>
-      <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:6px;">
-        <span style="color:var(--text-muted);font-size:0.85rem;">${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</span>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; width:100%; flex-wrap:wrap; gap:16px;">
+        <div>
+          <div class="race-detail-title">${meetingInfo.meeting_name}</div>
+          <div style="color:var(--text-muted);font-size:0.85rem; display:flex; align-items:center; gap:8px; margin-top:2px;">
+            <span>${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</span>
+            <span id="race-schedule-divider" style="color:rgba(255,255,255,0.06); display:none;">|</span>
+            <button id="race-detail-schedule-btn" style="display:none; background:none; border:none; color:var(--f1-red); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
+              <i class="fa-regular fa-calendar-days"></i> View Weekend Schedule
+            </button>
+          </div>
+        </div>
       </div>
     `;
+
+    // Wire up completed weekend schedule modal
+    const scheduleBtn = document.getElementById('race-detail-schedule-btn');
+    const scheduleDivider = document.getElementById('race-schedule-divider');
+
+    if (scheduleBtn && completedSessions.length > 0) {
+      if (scheduleDivider) scheduleDivider.style.display = 'inline';
+      scheduleBtn.style.display = 'inline-flex';
+
+      scheduleBtn.addEventListener('click', () => {
+        showFutureRaceSchedule(meetingInfo);
+      });
+    }
+
 
     const order = defaultSession.results || [];
     const driverMap = buildDriverMap(drivers);
@@ -1346,6 +1371,10 @@ function closeModal() {
   if (overlay) {
     overlay.classList.remove('open');
     document.body.style.overflow = '';
+    if (scheduleInterval) {
+      clearInterval(scheduleInterval);
+      scheduleInterval = null;
+    }
   }
 }
 
@@ -2077,5 +2106,315 @@ async function switchRaceDetailSession(sessionType) {
     console.warn('[Race Detail] Switch session enrichment failed:', err);
   }
 }
+
+// ── Future Weekend Schedule Modal ──
+
+let scheduleInterval = null;
+
+function parseGmtOffset(offsetStr) {
+  if (!offsetStr) return 0;
+  const parts = offsetStr.split(':');
+  const hours = parseInt(parts[0], 10);
+  const minutes = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+  const seconds = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+  const sign = hours < 0 || offsetStr.startsWith('-') ? -1 : 1;
+  return sign * (Math.abs(hours) * 3600000 + minutes * 60000 + seconds * 1000);
+}
+
+function generateFallbackSessions(gp) {
+  const startDay = new Date(gp.date_start);
+  
+  // Clean startDay to midnight UTC of the start date
+  const baseTime = Date.UTC(startDay.getUTCFullYear(), startDay.getUTCMonth(), startDay.getUTCDate());
+  
+  // Standard track times (in hours since midnight of that day)
+  const scheduleDef = [
+    { name: 'Practice 1', dayOffset: 0, startHour: 13.5, durationHours: 1 },
+    { name: 'Practice 2', dayOffset: 0, startHour: 17.0, durationHours: 1 },
+    { name: 'Practice 3', dayOffset: 1, startHour: 12.5, durationHours: 1 },
+    { name: 'Qualifying', dayOffset: 1, startHour: 16.0, durationHours: 1 },
+    { name: 'Race', dayOffset: 2, startHour: 15.0, durationHours: 2 }
+  ];
+  
+  // Parse GMT offset in hours to shift UTC times
+  const tzHours = parseInt((gp.gmt_offset || '00:00:00').split(':')[0], 10);
+  
+  return scheduleDef.map(def => {
+    // start time in UTC = baseTime + dayOffset (in ms) + startHour (in ms) - tzHours (in ms)
+    const startMs = baseTime + (def.dayOffset * 24 * 3600000) + (def.startHour * 3600000) - (tzHours * 3600000);
+    const endMs = startMs + (def.durationHours * 3600000);
+    
+    return {
+      session_name: def.name,
+      session_type: def.name === 'Qualifying' ? 'Qualifying' : (def.name === 'Race' ? 'Race' : 'Practice'),
+      date_start: new Date(startMs).toISOString(),
+      date_end: new Date(endMs).toISOString(),
+      session_key: `mock_${def.name.toLowerCase().replace(' ', '_')}`
+    };
+  });
+}
+
+export async function showFutureRaceSchedule(gp) {
+  ensureOverlay();
+  const modal = document.getElementById('driver-modal');
+  const accentColor = 'var(--f1-red)';
+  const accentColorAlpha = 'rgba(225, 6, 0, 0.15)';
+
+  const now = new Date();
+  const startDate = new Date(gp.date_start);
+  const endDate = new Date(gp.date_end);
+
+  let statusText = 'Upcoming Event';
+  let statusBg = 'rgba(225,6,0,0.1)';
+  let statusColor = 'var(--f1-red)';
+
+  if (now > endDate) {
+    statusText = 'Concluded Event';
+    statusBg = 'rgba(255,255,255,0.06)';
+    statusColor = 'var(--text-muted)';
+  } else if (now >= startDate && now <= endDate) {
+    statusText = 'Active Event';
+    statusBg = 'rgba(46,204,113,0.15)';
+    statusColor = '#2ecc71';
+  }
+
+  // Build header with circuit image fallback
+  const circuitAvatar = gp.circuit_image
+    ? `<div class="dm-header-avatar" style="border-radius:var(--radius-md); background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.1); width: 100px; height: 75px; padding: 4px;"><img src="${gp.circuit_image}" alt="${gp.circuit_short_name}" style="width: 100%; height: 100%; object-fit: contain; filter: invert(1);"></div>`
+    : '';
+
+  modal.innerHTML = `
+    <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
+    
+    <!-- Modal Header Banner -->
+    <div class="dm-header-banner" style="--dm-team-color: var(--f1-red); --dm-team-color-alpha: rgba(225, 6, 0, 0.15);">
+      <div class="dm-header-bar"></div>
+      ${gp.country_flag ? `<img class="dm-header-flag-bg" src="${gp.country_flag}" alt="" aria-hidden="true">` : ''}
+      
+      ${circuitAvatar}
+      
+      <div style="flex: 1; min-width: 200px; z-index: 1; position: relative;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-family:'Outfit',sans-serif; font-size:0.75rem; font-weight:800; color:${statusColor}; background:${statusBg}; padding:2px 8px; border-radius:4px; text-transform:uppercase; letter-spacing:0.05em;">${statusText}</span>
+          <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:var(--text-secondary);">${gp.circuit_short_name}, ${gp.country_name}</span>
+        </div>
+        <h2 style="font-family:'Outfit',sans-serif; font-size:1.5rem; font-weight:800; margin: 6px 0 2px 0; color:var(--text-primary);">
+          ${gp.meeting_name}
+        </h2>
+        <div style="font-size:0.85rem; color:var(--text-muted); display:flex; align-items:center; gap:6px; font-weight:500;">
+          <i class="fa-regular fa-calendar-days" style="color:var(--text-muted);"></i>
+          <span>${formatDateRange(gp.date_start, gp.date_end)}</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Countdown Banner -->
+    <div id="schedule-countdown-banner" style="padding: 12px 24px; background: rgba(0,0,0,0.12); border-bottom: 1px solid var(--border-subtle); font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+      <span id="countdown-text" style="font-family:'Outfit',sans-serif; font-weight:600;">Loading weekend sessions...</span>
+    </div>
+    
+    <!-- Sessions Schedule Body -->
+    <div style="padding: 24px; display: flex; flex-direction: column; gap: 16px;" id="schedule-sessions-list">
+      <div style="display:flex; flex-direction:column; gap:12px; margin-top:8px;">
+        <div class="skeleton skeleton-row" style="height:56px; width:100%;"></div>
+        <div class="skeleton skeleton-row" style="height:56px; width:100%;"></div>
+        <div class="skeleton skeleton-row" style="height:56px; width:100%;"></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('dm-close').addEventListener('click', closeModal);
+  overlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  try {
+    let sessions = await getMeetingSessions(gp.meeting_key);
+    let isFallback = false;
+
+    // Filter out cancelled and sort chronologically
+    sessions = (sessions || []).filter(s => !s.is_cancelled);
+
+    if (sessions.length === 0) {
+      sessions = generateFallbackSessions(gp);
+      isFallback = true;
+    } else {
+      sessions.sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
+    }
+
+    const sessionsListEl = document.getElementById('schedule-sessions-list');
+    const countdownTextEl = document.getElementById('countdown-text');
+    const trackOffsetMs = parseGmtOffset(gp.gmt_offset || '00:00:00');
+
+    // Build timezone offset label (e.g. GMT+2)
+    const sign = (gp.gmt_offset || '00:00:00').startsWith('-') ? '' : '+';
+    const tzHours = (gp.gmt_offset || '00:00:00').split(':')[0];
+    const gmtLabel = `GMT${sign}${parseInt(tzHours, 10)}`;
+
+    let sessionsHtml = '';
+
+    // If fallback is shown, display the warning banner/disclaimer
+    if (isFallback) {
+      sessionsHtml += `
+        <div style="padding: 10px 14px; background: rgba(225, 6, 0, 0.05); border: 1px solid var(--border-accent); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px;">
+          <i class="fa-solid fa-circle-exclamation" style="color: var(--f1-red); font-size: 1.1rem; margin-top: 2px;"></i>
+          <div style="font-size: 0.76rem; color: var(--text-secondary); line-height: 1.45;">
+            <strong style="color: var(--text-primary); display: block; margin-bottom: 2px;">Estimated Schedule Displayed</strong>
+            Official session times are not yet published for this GP weekend. Displaying standard timeline approximations. Official sessions may vary depending on local promoter schedule changes.
+          </div>
+        </div>
+      `;
+    }
+
+    sessionsHtml += `<div style="display:flex; flex-direction:column; gap:12px;">`;
+
+    sessions.forEach(s => {
+      const now = new Date();
+      const start = new Date(s.date_start);
+      const end = new Date(s.date_end);
+
+      let statusBadge = '';
+      let isLive = false;
+      let opacityStyle = '';
+
+      if (now > end) {
+        statusBadge = `<span style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:100px; border:1px solid var(--border-subtle);"><i class="fa-solid fa-check" style="margin-right:3px;"></i> Concluded</span>`;
+        opacityStyle = 'opacity: 0.55;';
+      } else if (now >= start && now <= end) {
+        statusBadge = `<span style="font-size:0.65rem; font-weight:800; color:white; text-transform:uppercase; background:var(--f1-red); padding:2px 8px; border-radius:100px; animation:pulse 2s infinite; display:inline-flex; align-items:center; gap:4px;"><span style="width:5px; height:5px; background:white; border-radius:50%; display:inline-block;"></span> LIVE</span>`;
+        isLive = true;
+      } else {
+        statusBadge = `<span style="font-size:0.65rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:100px; border:1px solid var(--border-subtle);">Upcoming</span>`;
+      }
+
+      // Determine session icon
+      let icon = '<i class="fa-solid fa-gauge-high" style="color: var(--text-secondary);"></i>';
+      if (s.session_name.includes('Qualifying')) {
+        icon = '<i class="fa-solid fa-stopwatch" style="color: #ffd000;"></i>';
+      } else if (s.session_name.includes('Sprint')) {
+        icon = '<i class="fa-solid fa-bolt" style="color: #a855f7;"></i>';
+      } else if (s.session_name === 'Race') {
+        icon = '<i class="fa-solid fa-flag-checkered" style="color: var(--f1-red);"></i>';
+      }
+
+      // 1. User Local Time
+      const dateOptions = { weekday: 'short', month: 'short', day: 'numeric' };
+      const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
+      const localDate = start.toLocaleDateString(undefined, dateOptions);
+      const localStart = start.toLocaleTimeString(undefined, timeOptions);
+      const localEnd = end.toLocaleTimeString(undefined, timeOptions);
+      const tz = start.toLocaleTimeString(undefined, { timeZoneName: 'short' }).split(' ').pop();
+
+      // 2. Track Local Time
+      const trackStart = new Date(start.getTime() + trackOffsetMs);
+      const trackEnd = new Date(end.getTime() + trackOffsetMs);
+      const trackDate = trackStart.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+      const trackStartStr = trackStart.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+      const trackEndStr = trackEnd.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+
+      sessionsHtml += `
+        <div style="background:var(--bg-card); border:1px solid ${isLive ? 'var(--border-accent)' : 'var(--border-subtle)'}; border-radius:var(--radius-md); padding:14px 18px; display:flex; flex-direction:column; gap:8px; ${opacityStyle}">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:10px; font-family:'Outfit',sans-serif; font-weight:700; font-size:0.95rem; color:var(--text-primary);">
+              <span style="width:28px; height:28px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">
+                ${icon}
+              </span>
+              <span>${s.session_name}</span>
+            </div>
+            ${statusBadge}
+          </div>
+          
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:8px; border-top: 1px solid rgba(255,255,255,0.03); padding-top:8px; margin-top:2px;">
+            <div>
+              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Your Local Time</div>
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text-primary); margin-top:2px;">
+                ${localDate} • ${localStart} – ${localEnd} <span style="font-size:0.65rem; color:var(--text-secondary); font-weight:600; padding:1px 5px; background:rgba(255,255,255,0.05); border-radius:3px; margin-left:3px;">${tz}</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Track Local Time</div>
+              <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); margin-top:2px;">
+                ${trackDate} • ${trackStartStr} – ${trackEndStr} <span style="font-size:0.65rem; color:var(--text-muted); font-weight:500; margin-left:3px;">(${gmtLabel})</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    sessionsHtml += `</div>`;
+    sessionsListEl.innerHTML = sessionsHtml;
+
+    // Start ticking countdown timer
+    if (scheduleInterval) clearInterval(scheduleInterval);
+
+    function tickCountdown() {
+      const now = new Date();
+      
+      // Find the next upcoming session, or currently live session
+      let nextSession = null;
+      let liveSession = null;
+
+      for (const s of sessions) {
+        const start = new Date(s.date_start);
+        const end = new Date(s.date_end);
+        if (now >= start && now <= end) {
+          liveSession = s;
+          break;
+        }
+        if (start > now) {
+          nextSession = s;
+          break;
+        }
+      }
+
+      if (liveSession) {
+        countdownTextEl.innerHTML = `
+          <span style="color:var(--f1-red); font-weight:800; display:flex; align-items:center; gap:6px;">
+            <span style="width:8px; height:8px; background:var(--f1-red); border-radius:50%; animation:pulse 2s infinite; display:inline-block;"></span>
+            ${liveSession.session_name} IS LIVE NOW!
+          </span>
+        `;
+      } else if (nextSession) {
+        const diffMs = new Date(nextSession.date_start).getTime() - now.getTime();
+        const days = Math.floor(diffMs / (24 * 3600000));
+        const hours = Math.floor((diffMs % (24 * 3600000)) / 3600000);
+        const minutes = Math.floor((diffMs % 3600000) / 60000);
+        const seconds = Math.floor((diffMs % 60000) / 1000);
+
+        let timeStr = '';
+        if (days > 0) timeStr += `${days}d `;
+        timeStr += `${hours}h ${minutes}m ${seconds}s`;
+
+        countdownTextEl.innerHTML = `
+          <span style="color:var(--text-secondary); font-weight:600; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-stopwatch animate-pulse" style="color: var(--f1-red);"></i>
+            <span>${nextSession.session_name} starts in:</span>
+          </span>
+          <span style="font-family:'JetBrains Mono',monospace; font-weight:800; color:var(--text-primary); font-size:0.9rem;">${timeStr}</span>
+        `;
+      } else {
+        countdownTextEl.innerHTML = `
+          <span style="color:var(--text-muted); font-weight:600; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-flag-checkered"></i>
+            <span>This GP weekend has concluded. Results are compiling.</span>
+          </span>
+        `;
+      }
+    }
+
+    tickCountdown();
+    scheduleInterval = setInterval(tickCountdown, 1000);
+
+  } catch (err) {
+    console.error('[Race Schedule] Failed to load schedule:', err);
+    sessionsListEl.innerHTML = `
+      <div class="no-data">
+        <div class="no-data-text">Failed to fetch race schedule. Please try clearing your cache or reloading.</div>
+      </div>
+    `;
+    countdownTextEl.innerHTML = `<span style="color:var(--f1-red);">Offline / Error loading schedule</span>`;
+  }
+}
+
 
 

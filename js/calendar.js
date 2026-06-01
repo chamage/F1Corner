@@ -6,6 +6,7 @@
 import { getMeetings } from './api.js';
 import { getSeasonData } from './season-data.js';
 import { isPast, isThisWeek, formatDateRange, $ } from './utils.js';
+import { showFutureRaceSchedule } from './race-detail.js';
 
 let onRaceSelect = null;
 
@@ -98,15 +99,17 @@ export async function initCalendar(year) {
         </div>
       `;
 
-      if (completed && raceSession) {
-        card.addEventListener('click', () => {
-          container.querySelectorAll('.race-card').forEach(c => c.classList.remove('active'));
-          card.classList.add('active');
+      card.addEventListener('click', () => {
+        container.querySelectorAll('.race-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        if (completed && raceSession) {
           if (onRaceSelect) {
             onRaceSelect(raceSession.session_key, gp);
           }
-        });
-      }
+        } else {
+          showFutureRaceSchedule(gp);
+        }
+      });
 
       container.appendChild(card);
     });

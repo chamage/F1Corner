@@ -7,6 +7,7 @@ import { getMeetings, getOvertakes } from './api.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
 import { isPast, isThisWeek, formatDateRange, formatLapTime, getTeamColor, getPointsForPosition, $ } from './utils.js';
 import { drawLineChart } from './charts.js';
+import { showFutureRaceSchedule, loadRaceDetail } from './race-detail.js';
 
 export async function initDashboard(year) {
   const heroBadge = $('#hero-badge-text');
@@ -132,6 +133,34 @@ export async function initDashboard(year) {
         <div style="color:var(--text-muted);font-size:0.85rem;">${formatDateRange(nextRace.date_start, nextRace.date_end)}</div>
       `;
     }
+
+    // Make latestRaceEl visually interactive if clickable
+    if (currentWeekend || nextRace || lastCompiledRace) {
+      latestRaceEl.style.cursor = 'pointer';
+      latestRaceEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+      
+      latestRaceEl.onmouseenter = () => { latestRaceEl.style.transform = 'scale(1.02)'; };
+      latestRaceEl.onmouseleave = () => { latestRaceEl.style.transform = 'scale(1.0)'; };
+      
+      latestRaceEl.onclick = () => {
+        if (currentWeekend) {
+          showFutureRaceSchedule(currentWeekend);
+        } else if (nextRace) {
+          showFutureRaceSchedule(nextRace);
+        } else if (lastCompiledRace) {
+          const meeting = gps.find(m => m.meeting_key === lastCompiledRace.meeting_key);
+          if (meeting) {
+            loadRaceDetail(lastCompiledRace.session_key, meeting);
+          }
+        }
+      };
+    } else {
+      latestRaceEl.style.cursor = '';
+      latestRaceEl.onclick = null;
+      latestRaceEl.onmouseenter = null;
+      latestRaceEl.onmouseleave = null;
+    }
+
 
     // ── Championship Battle Points Tracker ──
     currentSeasonData = seasonData;
