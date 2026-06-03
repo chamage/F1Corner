@@ -75,17 +75,17 @@ async function init() {
       showClearCacheModal(
         currentYear,
         // Option 1: Clear current season only
-        () => {
-          clearSingleSeasonAPICache(currentYear);
-          clearSingleSeasonCache(currentYear);
-          updateCacheStatus();
+        async () => {
+          await clearSingleSeasonAPICache(currentYear);
+          await clearSingleSeasonCache(currentYear);
+          await updateCacheStatus();
           loadAll(currentYear);
         },
         // Option 2: Clear entire cache
-        () => {
-          clearCache();
-          clearSeasonCache();
-          updateCacheStatus();
+        async () => {
+          await clearCache();
+          await clearSeasonCache();
+          await updateCacheStatus();
           loadAll(currentYear);
         }
       );
@@ -100,7 +100,8 @@ async function init() {
     if (e.detail.year === currentYear) {
       console.log('[App] 🔄 Background season update received. Silently re-rendering...');
       try {
-        await initDashboard(currentYear);
+        const forceResetChart = !e.detail.seasonData.is_fetching_background;
+        await initDashboard(currentYear, forceResetChart);
         await initStandings(currentYear);
         await initCalendar(currentYear);
         await initH2H(currentYear);
@@ -110,7 +111,17 @@ async function init() {
       
       const loadingBanner = $('#api-loading-banner');
       if (loadingBanner) {
-        if (e.detail.seasonData.is_preliminary) {
+        if (e.detail.seasonData.is_fetching_background) {
+          const textEl = loadingBanner.querySelector('.api-loading-text');
+          if (textEl) {
+            const racesCount = e.detail.seasonData.races.length;
+            const totalRaces = e.detail.seasonData.totalRaceSessions.filter(s => new Date(s.date_end) < new Date()).length;
+            textEl.innerHTML = `
+              <strong>Syncing Telemetry (${racesCount}/${totalRaces} sessions compiled)... 🏁</strong>
+              <span>PitCorner is fetching real-time telemetry. Standings are fully interactive and update instantly in the background!</span>
+            `;
+          }
+        } else if (e.detail.seasonData.is_preliminary) {
           const textEl = loadingBanner.querySelector('.api-loading-text');
           if (textEl) {
             textEl.innerHTML = `
@@ -125,7 +136,7 @@ async function init() {
           loadingBanner.classList.remove('show');
         }
       }
-      updateCacheStatus();
+      await updateCacheStatus();
     }
   });
 }
@@ -183,7 +194,7 @@ async function loadAll(year) {
   setTimeout(() => setupRevealAnimations(), 500);
 
   // Update cache stats in footer
-  updateCacheStatus();
+  await updateCacheStatus();
 
   // Hide loading banner when loaded successfully, or update text if preliminary
   const isPrelim = isSeasonPreliminary(year);
@@ -227,8 +238,8 @@ function showLoadingStates() {
   }
 }
 
-function updateCacheStatus() {
-  const stats = getCacheStats();
+async function updateCacheStatus() {
+  const stats = await getCacheStats();
   const infoEl = document.getElementById('cache-info');
   if (infoEl) {
     infoEl.textContent = `💾 ${stats.localStorage} entries cached (${stats.localStorageKB} KB)`;

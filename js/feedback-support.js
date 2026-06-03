@@ -367,7 +367,7 @@ export function showPrivacyModal() {
         <i class="fa-solid fa-shield-halved" style="color: var(--f1-red);"></i> Privacy Policy
       </h2>
       <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px;">
-        Last updated: May 31, 2026 • We respect your privacy and never sell your personal data.
+        Last updated: June 2, 2026 • We respect your privacy and never sell your personal data.
       </p>
 
       <div style="flex: 1; overflow-y: auto; padding-right: 8px; font-size: 0.84rem; color: var(--text-secondary); line-height: 1.6;" class="custom-scrollbar">
@@ -380,7 +380,7 @@ export function showPrivacyModal() {
 
           <div>
             <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">2. Telemetry and F1 Data</strong>
-            <span>All championship standings, practice/qualifying/race results, strategy statistics, and lap timeline visualizations are compiled directly in your browser. This data is pulled from the official public <a href="https://openf1.org" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">OpenF1 API</a> (for modern seasons 2023+) and the community-maintained <a href="https://api.jolpi.ca/ergast/" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">Jolpi Ergast F1 API mirror</a> (for historical seasons 1950–2022), and cached locally on your device (using LocalStorage) to keep startup times high and API server loads low. We do not store or track your viewing history.</span>
+            <span>All championship standings, practice/qualifying/race results, strategy statistics, and lap timeline visualizations are compiled directly in your browser. This data is pulled from the official public <a href="https://openf1.org" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">OpenF1 API</a> (for modern seasons 2023+) and the community-maintained <a href="https://api.jolpi.ca/ergast/" target="_blank" rel="noopener" style="color: var(--f1-red); text-decoration: none; font-weight:600;">Jolpi Ergast F1 API mirror</a> (for historical seasons 1950–2022), and cached locally on your device (using IndexedDB) to keep startup times high and API server loads low. We do not store or track your viewing history.</span>
           </div>
 
           <div>
@@ -401,7 +401,7 @@ export function showPrivacyModal() {
 
           <div>
             <strong style="color: var(--text-primary); display:block; font-size: 0.95rem; margin-bottom: 4px;">5. Local Device Storage</strong>
-            <span>We use standard browser local storage to save your selected active season year and cache telemetry compiles. No persistent marketing cookies or third-party advertising cookies are stored on your device.</span>
+            <span>We use standard browser IndexedDB storage to cache telemetry compiles and API responses, and standard local storage (localStorage) to save your selected active season year. No persistent marketing cookies or third-party advertising cookies are stored on your device.</span>
           </div>
 
           <div>
@@ -443,10 +443,60 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.3.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.3.2 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 3, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Optimized</span>
+                <span>Single-Key Compiled Caching: Combined all race and qualifying compiles for a season into a single serialized IndexedDB object, reducing the startup overhead from 48 database queries to a single fast lookup. Eagerly opens database connections in parallel with page loading.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>UI Freeze &amp; Memory Leaks: Refactored cache statistics calculation to use lightweight item counts and browser disk estimation APIs, preventing browser thread lockups and memory crashes caused by JSON-serializing massive telemetry datasets.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v2.3.1 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.3.1</div>
+              <div class="changelog-date">June 3, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Parallelized IndexedDB Batch Loading: Implemented a custom 'dbGetMultiple' query helper that fetches all season qualifying and race telemetry in a single batch read transaction. Parallelizing the database lookup eliminates the sequential async/await waterfall latency, restoring the near-instant load speeds of LocalStorage while retaining high capacity limits.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v2.3.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.3.0</div>
+              <div class="changelog-date">June 2, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>IndexedDB Storage Cache: Migrated bulk telemetry, standings, and API response caching from LocalStorage to a fully asynchronous IndexedDB storage engine. This resolves browser storage limits (10MB) and enables smooth storing of massive Formula 1 session telemetry.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Championship Points Tracker &amp; Loading Banner: Fixed cold-start database versioning checks to prevent unhandled transaction rejections. The Championship Battle line graph now auto-resets when background data completes compiling, and the live satellite load banner dismisses cleanly.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.2.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.2.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.2.0</div>
               <div class="changelog-date">June 1, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -1264,7 +1314,7 @@ export function showClearCacheModal(year, onClearSeason, onClearAll) {
         <i class="fa-solid fa-trash-can" style="color: var(--f1-red);"></i> Clear Data Cache
       </h2>
       <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;">
-        Select an option below to clear your local database cache. Clearing helps resolve data glitches or force live updates.
+        Select an option below to clear your browser's IndexedDB cache. Clearing helps resolve data glitches or force live updates.
       </p>
 
       <div style="display:flex; flex-direction:column; gap:16px;">
@@ -1277,7 +1327,7 @@ export function showClearCacheModal(year, onClearSeason, onClearAll) {
             <span class="changelog-tag improved" style="margin: 0; padding: 2px 6px; font-size: 0.65rem;">Recommended</span>
           </div>
           <p style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
-            Wipes cached telemetry, race results, and standings only for the selected viewed year. Other seasons will remain cached.
+            Wipes cached telemetry, race results, and standings only for the selected viewed year from IndexedDB. Other seasons will remain cached.
           </p>
         </div>
 
@@ -1289,7 +1339,7 @@ export function showClearCacheModal(year, onClearSeason, onClearAll) {
             </strong>
           </div>
           <p style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
-            Performs a full wipe of all F1 seasons, driver profiles, lap telemetry, and system caches. Highly thorough reset.
+            Performs a full wipe of all F1 seasons, driver profiles, lap telemetry, and system caches from browser IndexedDB. Highly thorough reset.
           </p>
         </div>
       </div>

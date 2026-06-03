@@ -308,31 +308,38 @@ async function runComparison() {
     let pitTotal1 = 0, pitCount1 = 0, pitTotal2 = 0, pitCount2 = 0;
 
     const recentRaces = h2hCompletedRaces.slice(-5);
-    for (const race of recentRaces) {
+    const recentDataPromises = recentRaces.map(async (race) => {
       try {
         const [overtakes, pits] = await Promise.all([
-          getOvertakes({ session_key: race.session_key }),
-          getPits({ session_key: race.session_key }),
+          getOvertakes({ session_key: race.session_key }).catch(() => []),
+          getPits({ session_key: race.session_key }).catch(() => []),
         ]);
+        return { race, overtakes, pits };
+      } catch {
+        return { race, overtakes: [], pits: [] };
+      }
+    });
 
-        const rd1 = race.drivers ? race.drivers.find(d => d.name_acronym === dn1) : null;
-        const rd2 = race.drivers ? race.drivers.find(d => d.name_acronym === dn2) : null;
-        const num1 = rd1 ? rd1.driver_number : null;
-        const num2 = rd2 ? rd2.driver_number : null;
+    const recentResults = await Promise.all(recentDataPromises);
 
-        if (num1) {
-          overtakesMade1 += overtakes.filter(o => o.overtaking_driver_number === num1).length;
-          for (const p of pits.filter(p => p.driver_number === num1)) {
-            if (p.pit_duration) { pitTotal1 += p.pit_duration; pitCount1++; }
-          }
+    for (const { race, overtakes, pits } of recentResults) {
+      const rd1 = race.drivers ? race.drivers.find(d => d.name_acronym === dn1) : null;
+      const rd2 = race.drivers ? race.drivers.find(d => d.name_acronym === dn2) : null;
+      const num1 = rd1 ? rd1.driver_number : null;
+      const num2 = rd2 ? rd2.driver_number : null;
+
+      if (num1) {
+        overtakesMade1 += overtakes.filter(o => o.overtaking_driver_number === num1).length;
+        for (const p of pits.filter(p => p.driver_number === num1)) {
+          if (p.pit_duration) { pitTotal1 += p.pit_duration; pitCount1++; }
         }
-        if (num2) {
-          overtakesMade2 += overtakes.filter(o => o.overtaking_driver_number === num2).length;
-          for (const p of pits.filter(p => p.driver_number === num2)) {
-            if (p.pit_duration) { pitTotal2 += p.pit_duration; pitCount2++; }
-          }
+      }
+      if (num2) {
+        overtakesMade2 += overtakes.filter(o => o.overtaking_driver_number === num2).length;
+        for (const p of pits.filter(p => p.driver_number === num2)) {
+          if (p.pit_duration) { pitTotal2 += p.pit_duration; pitCount2++; }
         }
-      } catch { /* ignore */ }
+      }
     }
 
     const avgPit1 = pitCount1 > 0 ? (pitTotal1 / pitCount1).toFixed(1) + 's' : '—';

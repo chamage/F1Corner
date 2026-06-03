@@ -9,7 +9,7 @@ import { isPast, isThisWeek, formatDateRange, formatLapTime, getTeamColor, getPo
 import { drawLineChart } from './charts.js';
 import { showFutureRaceSchedule, loadRaceDetail } from './race-detail.js';
 
-export async function initDashboard(year) {
+export async function initDashboard(year, forceResetChart = false) {
   const heroBadge = $('#hero-badge-text');
   const latestRaceEl = $('#latest-race-info');
   const progressFill = $('#progress-fill');
@@ -166,7 +166,7 @@ export async function initDashboard(year) {
     currentSeasonData = seasonData;
     const selectEl = document.getElementById('chart-drivers-count');
     const defaultCount = selectEl ? parseInt(selectEl.value, 10) : 5;
-    drawChampionshipBattle(seasonData, defaultCount, false);
+    drawChampionshipBattle(seasonData, defaultCount, forceResetChart);
 
     if (selectEl && !changeListenerAdded) {
       selectEl.addEventListener('change', (e) => {
@@ -213,7 +213,12 @@ function resetChartSelections(standings, count) {
 function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
   const standings = computeStandingsFromSeason(seasonData);
 
-  if (lastLoadedSeasonYear !== seasonData.year || forceReset) {
+  const needsReset = lastLoadedSeasonYear !== seasonData.year || 
+                     forceReset || 
+                     (chartSelectedDrivers.size === 0 && standings.drivers.length > 0) || 
+                     (chartSelectedConstructors.size === 0 && standings.constructors.length > 0);
+
+  if (needsReset) {
     lastLoadedSeasonYear = seasonData.year;
     resetChartSelections(standings, presetCount);
   }

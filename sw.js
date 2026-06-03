@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v86'; // v86: dynamic race weekend schedule modal status header
+const CACHE_NAME = 'pitcorner-shell-v98'; // v98: eager single-key season caching and lightweight statistics counting
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const STATIC_ASSETS = [
   './js/api.js',
   './js/utils.js',
   './js/season-data.js',
+  './js/db.js',
   './js/dashboard.js',
   './js/standings.js',
   './js/calendar.js',

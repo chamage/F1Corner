@@ -9,6 +9,7 @@
 // =============================================
 
 import { getDriverHeadshot, DRIVER_NATIONALITY } from './utils.js';
+import { dbGet, dbSet, dbClear, dbGetAllKeys, dbGetAllEntries, dbDelete, dbGetCount } from './db.js';
 
 const NATIONALITY_TO_COUNTRY = {
   'british': { country: 'United Kingdom', code: 'gb' },
@@ -229,34 +230,30 @@ async function loadHistoricalSeason(year) {
     return historicalSeasons.get(year);
   }
 
-  const lsKey = `f1c_historical_v5_${year}`;
-  const cachedStr = localStorage.getItem(lsKey);
-  if (cachedStr) {
-    try {
-      const parsed = JSON.parse(cachedStr);
-      if (parsed && parsed.meetings) {
-        parsed.driversBySession = new Map(parsed.driversBySession);
-        parsed.resultsBySession = new Map(parsed.resultsBySession);
-        parsed.lapsBySession = new Map(parsed.lapsBySession);
+  try {
+    const cached = await dbGet('historical_seasons', year);
+    if (cached && cached.meetings) {
+      cached.driversBySession = new Map(cached.driversBySession);
+      cached.resultsBySession = new Map(cached.resultsBySession);
+      cached.lapsBySession = new Map(cached.lapsBySession);
 
-        // Re-register cached historical driver nationalities into the global registry
-        for (const [sessionKey, drivers] of parsed.driversBySession.entries()) {
-          for (const d of drivers) {
-            if (d.nationality && d.name_acronym) {
-              const countryInfo = translateNationalityToCountry(d.nationality);
-              if (countryInfo && !DRIVER_NATIONALITY[d.name_acronym]) {
-                DRIVER_NATIONALITY[d.name_acronym] = countryInfo;
-              }
+      // Re-register cached historical driver nationalities into the global registry
+      for (const [sessionKey, drivers] of cached.driversBySession.entries()) {
+        for (const d of drivers) {
+          if (d.nationality && d.name_acronym) {
+            const countryInfo = translateNationalityToCountry(d.nationality);
+            if (countryInfo && !DRIVER_NATIONALITY[d.name_acronym]) {
+              DRIVER_NATIONALITY[d.name_acronym] = countryInfo;
             }
           }
         }
-
-        historicalSeasons.set(year, parsed);
-        return parsed;
       }
-    } catch (e) {
-      console.warn(`[Historical] Failed to parse cached historical data for ${year}:`, e);
+
+      historicalSeasons.set(year, cached);
+      return cached;
     }
+  } catch (e) {
+    console.warn(`[Historical] Failed to parse cached historical data for ${year}:`, e);
   }
 
   console.log(`[Historical] Fetching bulk data from Jolpi Ergast for season ${year}...`);
@@ -632,9 +629,9 @@ async function loadHistoricalSeason(year) {
       resultsBySession: Array.from(resultsBySession.entries()),
       lapsBySession: Array.from(lapsBySession.entries())
     };
-    localStorage.setItem(lsKey, JSON.stringify(serialized));
+    await dbSet('historical_seasons', year, serialized);
   } catch (e) {
-    console.warn(`[Historical] Failed to cache historical data in localStorage for ${year}:`, e);
+    console.warn(`[Historical] Failed to cache historical data in IndexedDB for ${year}:`, e);
   }
 
   return compiledData;
@@ -668,20 +665,14 @@ function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// ── localStorage helpers ──
+// ── IndexedDB helpers ──
 
-function lsKey(url) {
-  return LS_PREFIX + 'v' + LS_VERSION + '_' + url;
-}
-
-function lsGet(url) {
+async function lsGet(url) {
   try {
-    const raw = localStorage.getItem(lsKey(url));
-    if (!raw) return null;
-    const entry = JSON.parse(raw);
+    const entry = await dbGet('api_cache', url);
     if (!entry || !entry.data) return null;
     if (Date.now() - entry.time > entry.ttl) {
-      localStorage.removeItem(lsKey(url));
+      await dbDelete('api_cache', url);
       return null;
     }
     return entry.data;
@@ -690,44 +681,12 @@ function lsGet(url) {
   }
 }
 
-function lsSet(url, data, ttl) {
+async function lsSet(url, data, ttl) {
   try {
     const entry = { data, time: Date.now(), ttl };
-    localStorage.setItem(lsKey(url), JSON.stringify(entry));
+    await dbSet('api_cache', url, entry);
   } catch (e) {
-    // Quota exceeded — clear old entries and retry
-    if (e.name === 'QuotaExceededError') {
-      clearOldCache();
-      try {
-        localStorage.setItem(lsKey(url), JSON.stringify({ data, time: Date.now(), ttl }));
-      } catch { /* give up */ }
-    }
-  }
-}
-
-function clearOldCache() {
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    // Only evict API-layer cache entries, NOT compiled race data
-    if (key && key.startsWith(LS_PREFIX) && !key.startsWith('f1c_compiled_race_')) {
-      keys.push(key);
-    }
-  }
-  // Remove entries with the oldest timestamps first
-  const entries = keys.map(k => {
-    try {
-      const v = JSON.parse(localStorage.getItem(k));
-      return { key: k, time: v?.time || 0 };
-    } catch {
-      return { key: k, time: 0 };
-    }
-  }).sort((a, b) => a.time - b.time);
-
-  // Remove oldest half
-  const removeCount = Math.max(1, Math.floor(entries.length / 2));
-  for (let i = 0; i < removeCount; i++) {
-    localStorage.removeItem(entries[i].key);
+    console.warn(`[API] Failed to cache data in IndexedDB for url ${url}:`, e);
   }
 }
 
@@ -810,8 +769,8 @@ async function fetchAPI(endpoint, params = {}) {
   const memCached = memCache.get(cacheKey);
   if (memCached) return memCached;
 
-  // Tier 2: localStorage cache (fast, survives reload)
-  const lsCached = lsGet(cacheKey);
+  // Tier 2: IndexedDB cache (fast, survives reload)
+  const lsCached = await lsGet(cacheKey);
   if (lsCached) {
     memCache.set(cacheKey, lsCached); // promote to memory
     return lsCached;
@@ -830,7 +789,7 @@ async function fetchAPI(endpoint, params = {}) {
         // Re-check caches (another queued request may have filled them)
         const memNow = memCache.get(cacheKey);
         if (memNow) { resolve(memNow); inFlight.delete(cacheKey); return; }
-        const lsNow = lsGet(cacheKey);
+        const lsNow = await lsGet(cacheKey);
         if (lsNow) {
           memCache.set(cacheKey, lsNow);
           resolve(lsNow);
@@ -1143,50 +1102,65 @@ export async function preloadYear(year) {
 }
 
 /**
- * Clear all caches (memory + localStorage)
+ * Clear all caches (memory + IndexedDB)
  */
-export function clearCache() {
+export async function clearCache() {
   memCache.clear();
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(LS_PREFIX)) keys.push(key);
+  try {
+    await dbClear('api_cache');
+    await dbClear('historical_seasons');
+    console.log('[API] Cleared IndexedDB API caches');
+  } catch (e) {
+    console.error('[API] Failed to clear IndexedDB caches:', e);
   }
-  keys.forEach(k => localStorage.removeItem(k));
-  console.log(`[API] Cleared ${keys.length} cached entries`);
 }
 
 /**
  * Clear cached entries for a single season only
  */
-export function clearSingleSeasonAPICache(year) {
+export async function clearSingleSeasonAPICache(year) {
   memCache.clear();
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(LS_PREFIX) && (key.includes(`year=${year}`) || key.includes(`year%3D${year}`))) {
-      keys.push(key);
+  try {
+    const keys = await dbGetAllKeys('api_cache');
+    let clearedCount = 0;
+    const deletePromises = [];
+    for (const key of keys) {
+      if (typeof key === 'string' && (key.includes(`year=${year}`) || key.includes(`year%3D${year}`) || key.includes(`/${year}/`))) {
+        deletePromises.push(dbDelete('api_cache', key));
+        clearedCount++;
+      }
     }
+    deletePromises.push(dbDelete('historical_seasons', year));
+    await Promise.all(deletePromises);
+    console.log(`[API] Cleared ${clearedCount} cached entries for year ${year}`);
+  } catch (e) {
+    console.error(`[API] Failed to clear single season API cache for ${year}:`, e);
   }
-  keys.forEach(k => localStorage.removeItem(k));
-  console.log(`[API] Cleared ${keys.length} cached entries for year ${year}`);
 }
 
 /**
  * Get cache stats for debugging
  */
-export function getCacheStats() {
-  let lsCount = 0, lsBytes = 0;
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(LS_PREFIX)) {
-      lsCount++;
-      lsBytes += (localStorage.getItem(key) || '').length * 2; // UTF-16
-    }
+export async function getCacheStats() {
+  try {
+    const [apiCount, histCount, compiledCount, estimate] = await Promise.all([
+      dbGetCount('api_cache'),
+      dbGetCount('historical_seasons'),
+      dbGetCount('compiled_races'),
+      navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve({ usage: 0 })
+    ]);
+
+    return {
+      memory: memCache.size,
+      localStorage: apiCount + histCount + compiledCount,
+      localStorageKB: Math.round((estimate.usage || 0) / 1024),
+    };
+  } catch (err) {
+    console.warn('[API] Failed to calculate cache stats:', err);
+    return {
+      memory: memCache.size,
+      localStorage: 0,
+      localStorageKB: 0,
+    };
   }
-  return {
-    memory: memCache.size,
-    localStorage: lsCount,
-    localStorageKB: Math.round(lsBytes / 1024),
-  };
 }
