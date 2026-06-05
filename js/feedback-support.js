@@ -443,10 +443,28 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.4.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.4.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 5, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Ongoing Weekend Deep-Dives: Allowed clicking ongoing/live race weekends in the calendar and dashboard as soon as the first session starts, rather than waiting for Sunday's final Grand Prix to conclude. Defaults details view automatically to the latest completed practice/qualifying session results.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>In-flight Driver Fallbacks: Added automatic driver list recovery. When loading details for an upcoming GP session, the app recovers driver lists from earlier completed sessions (like FP1) on the same weekend, preventing crash errors and blank profiles.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.3.2 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.3.2 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.3.2</div>
               <div class="changelog-date">June 3, 2026</div>
             </div>
             <ul class="changelog-list">
