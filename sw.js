@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v98'; // v98: eager single-key season caching and lightweight statistics counting
+const CACHE_NAME = 'pitcorner-shell-v99'; // v99: allow clicking ongoing race weekends for live session details
 const STATIC_ASSETS = [
   './',
   './index.html',

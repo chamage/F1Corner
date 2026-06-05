@@ -144,7 +144,13 @@ export async function initDashboard(year, forceResetChart = false) {
       
       latestRaceEl.onclick = () => {
         if (currentWeekend) {
-          showFutureRaceSchedule(currentWeekend);
+          const hasStarted = isPast(currentWeekend.date_start);
+          const raceSession = fullRaces.find(s => s.meeting_key === currentWeekend.meeting_key);
+          if (hasStarted && raceSession) {
+            loadRaceDetail(raceSession.session_key, currentWeekend);
+          } else {
+            showFutureRaceSchedule(currentWeekend);
+          }
         } else if (nextRace) {
           showFutureRaceSchedule(nextRace);
         } else if (lastCompiledRace) {

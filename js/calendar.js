@@ -63,11 +63,12 @@ export async function initCalendar(year) {
     gps.forEach((gp, i) => {
       const raceSession = fullRaces.find(s => s.meeting_key === gp.meeting_key);
       const completed = raceSession ? isPast(raceSession.date_end) : isPast(gp.date_end);
+      const hasStarted = isPast(gp.date_start);
       const current = isThisWeek(gp.date_start, gp.date_end);
       const winner = winners.get(gp.meeting_key);
 
       const card = document.createElement('div');
-      card.className = `race-card${completed ? '' : ' upcoming'}${current ? ' current' : ''}`;
+      card.className = `race-card${(completed || hasStarted) ? '' : ' upcoming'}${current ? ' current' : ''}`;
       card.dataset.meetingKey = gp.meeting_key;
       if (raceSession) card.dataset.sessionKey = raceSession.session_key;
 
@@ -102,7 +103,7 @@ export async function initCalendar(year) {
       card.addEventListener('click', () => {
         container.querySelectorAll('.race-card').forEach(c => c.classList.remove('active'));
         card.classList.add('active');
-        if (completed && raceSession) {
+        if ((completed || hasStarted) && raceSession) {
           if (onRaceSelect) {
             onRaceSelect(raceSession.session_key, gp);
           }

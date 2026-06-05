@@ -326,11 +326,28 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     loadAndRenderWeather(sessionKey, weatherBar);
 
     // 1. Fetch season data, drivers list, and ALL meeting sessions in parallel
-    const [seasonData, drivers, allMeetingSessions] = await Promise.all([
+    let [seasonData, drivers, allMeetingSessions] = await Promise.all([
       getSeasonData(year),
-      getSessionDrivers(sessionKey),
+      getSessionDrivers(sessionKey).catch(() => []),
       getMeetingSessions(meetingInfo.meeting_key),
     ]);
+
+    // If main drivers fetch returned empty (common for ongoing weekends/future sessions), try to get drivers from other sessions of this weekend
+    if (!drivers || drivers.length === 0) {
+      const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
+      const otherSessions = allMeetingSessions.filter(s => !s.is_cancelled);
+      const candidates = [...completedSessions, ...otherSessions];
+      for (const s of candidates) {
+        if (s.session_key === sessionKey) continue;
+        try {
+          const tempDrivers = await getSessionDrivers(s.session_key);
+          if (tempDrivers && tempDrivers.length > 0) {
+            drivers = tempDrivers;
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+    }
 
     // Filter to completed sessions and sort by weekend chronological order
     const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
