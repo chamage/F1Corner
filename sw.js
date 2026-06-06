@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v99'; // v99: allow clicking ongoing race weekends for live session details
+const CACHE_NAME = 'pitcorner-shell-v100'; // v100: fix duplicate driver fallback rows during live/started weekends
 const STATIC_ASSETS = [
   './',
   './index.html',

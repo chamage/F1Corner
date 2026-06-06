@@ -11,7 +11,7 @@ import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
 const LS_RACE_VERSION = 25; // Bump race cache to v25 to force acronym-grouped compilation with unique collision resolving
-const LS_QUALI_VERSION = 22; // Bump quali cache to v22 to force re-compiling of qualifying results with DNS drivers
+const LS_QUALI_VERSION = 23; // Bump quali cache to v23 to store driver mapping list in qualifying cache
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -297,6 +297,15 @@ export function getSeasonData(year) {
           }
         }
       }
+      for (const quali of qualifying) {
+        if (quali.drivers) {
+          for (const d of quali.drivers) {
+            if (!drivers.has(d.name_acronym)) {
+              drivers.set(d.name_acronym, d);
+            }
+          }
+        }
+      }
 
       const finalSeason = {
         year,
@@ -382,7 +391,8 @@ async function fetchQualiData(session) {
       meeting_key: session.meeting_key,
       circuit_short_name: session.circuit_short_name,
       date_end: session.date_end,
-      results: updatedResults
+      results: updatedResults,
+      drivers: sessionDrivers
     };
   } catch (e) {
     console.warn(`[Season] Failed to fetch qualifying ${session.session_key}:`, e.message);
@@ -531,6 +541,28 @@ export function computeStandingsFromSeason(seasonData) {
   const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
 
+  // Build a master registry of driver_number -> name_acronym across all sessions to prevent duplicate DRV_ fallback rows
+  const masterDriverAcronyms = new Map();
+  for (const race of completedRaces) {
+    if (race.drivers) {
+      for (const d of race.drivers) {
+        if (d.driver_number && d.name_acronym) {
+          masterDriverAcronyms.set(d.driver_number, d.name_acronym);
+        }
+      }
+    }
+  }
+  const completedQualifying = seasonData.qualifying || [];
+  for (const quali of completedQualifying) {
+    if (quali.drivers) {
+      for (const d of quali.drivers) {
+        if (d.driver_number && d.name_acronym) {
+          masterDriverAcronyms.set(d.driver_number, d.name_acronym);
+        }
+      }
+    }
+  }
+
   // Find the first race date for each driver to handle mid-season replacements correctly
   const driverFirstRaceDate = new Map(); // key: name_acronym
   const sortedRaces = [...completedRaces].sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
@@ -542,7 +574,7 @@ export function computeStandingsFromSeason(seasonData) {
       }
     }
     for (const r of race.results) {
-      const acronym = raceDriversMap.get(r.driver_number) || `DRV_${r.driver_number}`;
+      const acronym = raceDriversMap.get(r.driver_number) || masterDriverAcronyms.get(r.driver_number) || `DRV_${r.driver_number}`;
       if (!driverFirstRaceDate.has(acronym)) {
         driverFirstRaceDate.set(acronym, new Date(race.date_end));
       }
@@ -597,7 +629,7 @@ export function computeStandingsFromSeason(seasonData) {
       const raceDrivers = new Set();
 
       for (const { driver_number, position, status, points } of race.results) {
-        const acronym = raceDriversMap.get(driver_number) || `DRV_${driver_number}`;
+        const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
         raceDrivers.add(acronym);
 
         if (!driverStats.has(acronym)) {
@@ -718,21 +750,19 @@ export function computeStandingsFromSeason(seasonData) {
   }
 
   // Process qualifying sessions to extract GP and Sprint Quali stats
-  const completedQualifying = seasonData.qualifying || [];
   for (const quali of completedQualifying) {
     const isSprintQ = quali.session_name.toLowerCase().includes('sprint') || quali.session_name.toLowerCase().includes('shootout');
     
     // Find the race session on the same weekend to map driver_number -> name_acronym
     const race = completedRaces.find(r => r.meeting_key === quali.meeting_key);
     const raceDriversMap = new Map();
-    if (race && race.drivers) {
-      for (const d of race.drivers) {
-        raceDriversMap.set(d.driver_number, d.name_acronym);
-      }
+    const driverSrc = (race && race.drivers) ? race.drivers : (quali.drivers || []);
+    for (const d of driverSrc) {
+      raceDriversMap.set(d.driver_number, d.name_acronym);
     }
 
     for (const { driver_number, position } of quali.results) {
-      const acronym = raceDriversMap.get(driver_number) || `DRV_${driver_number}`;
+      const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
       if (!driverStats.has(acronym)) {
         driverStats.set(acronym, initDriverStats());
       }
@@ -1181,6 +1211,15 @@ async function triggerSeasonUpdate(year, allRaceSessions, completedSessions, com
     if (race.drivers) {
       for (const d of race.drivers) {
         drivers.set(d.name_acronym, d);
+      }
+    }
+  }
+  for (const quali of qualifying) {
+    if (quali.drivers) {
+      for (const d of quali.drivers) {
+        if (!drivers.has(d.name_acronym)) {
+          drivers.set(d.name_acronym, d);
+        }
       }
     }
   }

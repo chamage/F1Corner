@@ -443,10 +443,24 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.4.1 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.4.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 6, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Duplicate Driver Standings: Implemented a season-wide master driver registry that resolves acronyms (e.g. 'HAM') across all GP and Qualifying sessions. This prevents duplicate placeholder rows (like 'Driver DRV_44') in the standings table during ongoing weekends when qualifying has completed but the main GP has not.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.4.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.4.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.4.0</div>
               <div class="changelog-date">June 5, 2026</div>
             </div>
             <ul class="changelog-list">
