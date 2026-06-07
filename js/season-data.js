@@ -46,6 +46,21 @@ async function loadRaceFromStorage(sessionKey, isQuali = false) {
       }
     }
 
+    // Auto-expiration for recent races:
+    // If the session ended less than 24 hours ago, expire it after 15 minutes to allow post-race penalty/disqualification updates.
+    if (compiled && compiled.date_end) {
+      const timeSinceEnd = Date.now() - new Date(compiled.date_end).getTime();
+      const oneDay = 24 * 60 * 60 * 1000;
+      if (timeSinceEnd > 0 && timeSinceEnd < oneDay) {
+        const timeSinceCompiled = Date.now() - (compiled.compiledAt || 0);
+        if (timeSinceCompiled > 15 * 60 * 1000) {
+          console.log(`[Season] 🔄 Expiring cache for recent session ${sessionKey} (compiled ${Math.round(timeSinceCompiled / 60000)} mins ago) to check for penalty updates`);
+          await dbDelete('compiled_races', key);
+          return null;
+        }
+      }
+    }
+
     if (compiled && compiled.is_incomplete) {
       // Expire incomplete placeholders after 30 minutes to check for new data
       if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
@@ -62,6 +77,10 @@ async function loadRaceFromStorage(sessionKey, isQuali = false) {
 async function saveRaceToStorage(sessionKey, raceData, isQuali = false) {
   try {
     const key = lsRaceKey(sessionKey, isQuali);
+    // Ensure compiledAt is set to track expiration
+    if (raceData) {
+      raceData.compiledAt = raceData.compiledAt || Date.now();
+    }
     await dbSet('compiled_races', key, raceData);
   } catch (e) {
     console.warn(`[Season] Failed to save compiled race ${sessionKey} to IndexedDB:`, e);
@@ -163,7 +182,20 @@ export function getSeasonData(year) {
 
         if (cachedSeason.version === LS_RACE_VERSION && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
           const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete) || cachedSeason.qualifying.some(q => q.is_incomplete);
-          if (!hasIncomplete) {
+          
+          let hasRecentSession = false;
+          const oneDay = 24 * 60 * 60 * 1000;
+          for (const s of [...cachedSeason.races, ...cachedSeason.qualifying]) {
+            if (s.date_end) {
+              const timeSinceEnd = Date.now() - new Date(s.date_end).getTime();
+              if (timeSinceEnd > 0 && timeSinceEnd < oneDay) {
+                hasRecentSession = true;
+                break;
+              }
+            }
+          }
+
+          if (!hasIncomplete && !hasRecentSession) {
             // Re-construct drivers Map
             const driversMap = new Map();
             if (cachedSeason.drivers) {
@@ -1134,6 +1166,27 @@ export async function clearSingleSeasonCache(year) {
     }
   }
 }
+
+/**
+ * Clear compiler cache (IndexedDB + memory) for a specific meeting/sessions
+ */
+export async function clearMeetingCompilerCache(year, sessions) {
+  const deletePromises = [dbDelete('compiled_races', `season_compiled_${year}`)];
+  seasonCache.delete(year);
+
+  for (const s of sessions) {
+    const sessionKey = s.session_key;
+    // Clear both possible compile versions to be thorough
+    deletePromises.push(dbDelete('compiled_races', lsRaceKey(sessionKey, false)));
+    deletePromises.push(dbDelete('compiled_races', lsRaceKey(sessionKey, true)));
+    
+    raceCache.delete(sessionKey);
+  }
+  
+  await Promise.all(deletePromises);
+  console.log(`[Season] Cleared compiled cache for meeting sessions in season ${year}`);
+}
+
 
 // ── Background loader & compiler helpers ──
 

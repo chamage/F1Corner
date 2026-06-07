@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v119'; // v119: rollback selector default, fix calendar scroll centering on tab switch
+const CACHE_NAME = 'pitcorner-shell-v121'; // v121: auto-expire recent races cache for steward decisions/penalties
 const STATIC_ASSETS = [
   './',
   './index.html',

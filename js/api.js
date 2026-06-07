@@ -640,6 +640,7 @@ async function loadHistoricalSeason(year) {
 // ── Cache Config ──
 // Two-tier cache: fast in-memory Map + persistent localStorage
 const memCache = new Map();
+const sessionEndTimes = new Map();
 const LS_PREFIX = 'f1c_'; // localStorage key prefix
 const LS_VERSION = 3;     // v3: invalidate stale data missing sprints
 
@@ -709,9 +710,21 @@ function getTTL(url) {
   }
 
   // Past race laps/positions/stints/pit/overtakes (session_key is a number)
-  // These are immutable once the session is over
+  // These are immutable once the session is over, EXCEPT if they ended less than 24 hours ago
   if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather|session_result)\?/.test(url) &&
-      /session_key=\d+/.test(url)) {
+      /session_key=(\d+)/.test(url)) {
+    const keyMatch = url.match(/session_key=(\d+)/);
+    if (keyMatch) {
+      const sessionKey = keyMatch[1];
+      const endDateStr = sessionEndTimes.get(sessionKey);
+      if (endDateStr) {
+        const timeSinceEnd = Date.now() - new Date(endDateStr).getTime();
+        const oneDay = 24 * 60 * 60 * 1000;
+        if (timeSinceEnd > 0 && timeSinceEnd < oneDay) {
+          return TTL_FRESH; // Short TTL (10 mins) to pick up late penalty changes
+        }
+      }
+    }
     return TTL_IMMUTABLE;
   }
 
@@ -881,28 +894,46 @@ export async function getMeetings(year) {
 
 export async function getSessions(params = {}) {
   const year = parseInt(params.year);
+  let sessionsData = [];
   if (year && year <= 2022) {
     const data = await loadHistoricalSeason(year);
-    if (params.session_name === 'Race') {
-      return data.sessions.filter(s => s.session_name === 'Race');
-    }
-    if (params.session_name === 'Sprint') {
-      return data.sessions.filter(s => s.session_name === 'Sprint');
-    }
-    if (params.session_type === 'Qualifying') {
-      return data.sessions.filter(s => s.session_name === 'Qualifying');
-    }
-    return data.sessions;
-  }
-  if (params.meeting_key && typeof params.meeting_key === 'string' && params.meeting_key.includes('_')) {
+    sessionsData = data.sessions || [];
+  } else if (params.meeting_key && typeof params.meeting_key === 'string' && params.meeting_key.includes('_')) {
     const [y] = params.meeting_key.split('_');
     const yNum = parseInt(y);
     if (yNum <= 2022) {
       const data = await loadHistoricalSeason(yNum);
-      return data.sessions.filter(s => s.meeting_key === params.meeting_key);
+      sessionsData = data.sessions.filter(s => s.meeting_key === params.meeting_key);
+    } else {
+      sessionsData = await fetchAPI('/sessions', params);
+    }
+  } else {
+    sessionsData = await fetchAPI('/sessions', params);
+  }
+
+  // Populate session end times
+  if (Array.isArray(sessionsData)) {
+    for (const s of sessionsData) {
+      if (s.session_key && s.date_end) {
+        sessionEndTimes.set(s.session_key.toString(), s.date_end);
+      }
     }
   }
-  return fetchAPI('/sessions', params);
+
+  // Apply filters if historical and filter params are present
+  if (year && year <= 2022) {
+    if (params.session_name === 'Race') {
+      return sessionsData.filter(s => s.session_name === 'Race');
+    }
+    if (params.session_name === 'Sprint') {
+      return sessionsData.filter(s => s.session_name === 'Sprint');
+    }
+    if (params.session_type === 'Qualifying') {
+      return sessionsData.filter(s => s.session_name === 'Qualifying');
+    }
+  }
+
+  return sessionsData;
 }
 
 export async function getDrivers(params = {}) {
@@ -1137,6 +1168,40 @@ export async function clearSingleSeasonAPICache(year) {
     console.error(`[API] Failed to clear single season API cache for ${year}:`, e);
   }
 }
+
+/**
+ * Clear cached entries (IndexedDB + memory) for specific session keys
+ */
+export async function clearSessionsAPICache(sessionKeys) {
+  // Clear from in-memory cache
+  for (const key of memCache.keys()) {
+    const match = sessionKeys.some(s => key.includes(`session_key=${s}`));
+    if (match) {
+      memCache.delete(key);
+    }
+  }
+
+  // Clear from IndexedDB api_cache
+  try {
+    const keys = await dbGetAllKeys('api_cache');
+    let clearedCount = 0;
+    const deletePromises = [];
+    for (const key of keys) {
+      if (typeof key === 'string') {
+        const match = sessionKeys.some(s => key.includes(`session_key=${s}`));
+        if (match) {
+          deletePromises.push(dbDelete('api_cache', key));
+          clearedCount++;
+        }
+      }
+    }
+    await Promise.all(deletePromises);
+    console.log(`[API] Cleared ${clearedCount} cached entries for sessions: ${sessionKeys.join(', ')}`);
+  } catch (e) {
+    console.error(`[API] Failed to clear sessions API cache:`, e);
+  }
+}
+
 
 /**
  * Get cache stats for debugging

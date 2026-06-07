@@ -3,8 +3,8 @@
 // Lazy-loads heavy charts and feeds to avoid API timeouts
 // =============================================
 
-import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions } from './api.js';
-import { getSeasonData, getResultsForSession } from './season-data.js';
+import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions, clearSessionsAPICache, getCacheStats } from './api.js';
+import { getSeasonData, getResultsForSession, clearMeetingCompilerCache } from './season-data.js';
 import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
@@ -425,6 +425,10 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
             <button id="race-detail-schedule-btn" style="display:none; background:none; border:none; color:var(--f1-red); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
               <i class="fa-regular fa-calendar-days"></i> View Weekend Schedule
             </button>
+            <span id="race-clear-cache-divider" style="color:rgba(255,255,255,0.06); display:none;">|</span>
+            <button id="race-detail-clear-cache-btn" style="display:none; background:none; border:none; color:var(--text-muted); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
+              <i class="fa-solid fa-arrows-rotate"></i> Clear Cache
+            </button>
           </div>
         </div>
       </div>
@@ -440,6 +444,51 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
 
       scheduleBtn.addEventListener('click', () => {
         showFutureRaceSchedule(meetingInfo);
+      });
+    }
+
+    // Wire up clear cache button
+    const clearCacheBtn = document.getElementById('race-detail-clear-cache-btn');
+    const clearCacheDivider = document.getElementById('race-clear-cache-divider');
+
+    if (clearCacheBtn) {
+      if (clearCacheDivider && completedSessions.length > 0) {
+        clearCacheDivider.style.display = 'inline';
+      }
+      clearCacheBtn.style.display = 'inline-flex';
+
+      clearCacheBtn.addEventListener('click', async () => {
+        if (!confirm(`Are you sure you want to clear the cached data for the ${meetingInfo.meeting_name} weekend? This will force PitCorner to re-fetch the raw telemetry, laptimes, pit stops, and results directly from the live API.`)) {
+          return;
+        }
+
+        clearCacheBtn.disabled = true;
+        clearCacheBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Clearing...';
+
+        try {
+          const sessionKeys = allMeetingSessions.map(s => s.session_key);
+          
+          // Clear API responses from IndexedDB and memory
+          await clearSessionsAPICache(sessionKeys);
+          
+          // Clear compiler results from IndexedDB and memory
+          await clearMeetingCompilerCache(year, allMeetingSessions);
+
+          // Update footer cache count
+          const cacheInfo = document.getElementById('cache-info');
+          if (cacheInfo) {
+            const stats = await getCacheStats();
+            cacheInfo.textContent = `💾 ${stats.localStorage} entries cached (${stats.localStorageKB} KB)`;
+          }
+
+          // Reload current race detail view with fresh network fetch
+          await loadRaceDetail(sessionKey, meetingInfo);
+        } catch (err) {
+          console.error('[Race Detail] Clear cache failed:', err);
+          alert('Failed to clear cache: ' + err.message);
+          clearCacheBtn.disabled = false;
+          clearCacheBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Clear Cache';
+        }
       });
     }
 
