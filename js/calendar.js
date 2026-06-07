@@ -124,6 +124,9 @@ export async function initCalendar(year) {
         const scrollOffset = scrollTarget.offsetLeft - container.offsetWidth / 2 + scrollTarget.offsetWidth / 2;
         container.scrollLeft = scrollOffset;
       }, 150);
+      
+      // Auto-click to default open the newest/current race weekend session details
+      scrollTarget.click();
     }
 
 

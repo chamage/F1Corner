@@ -65,6 +65,7 @@
         <li><a href="#standings">Standings</a></li>
         <li><a href="#calendar">Calendar</a></li>
         <li><a href="#h2h">Head-to-Head</a></li>
+        <li><a href="#althistory">Alt History</a></li>
       </ul>
 
       <div class="nav-right">
@@ -94,6 +95,7 @@
     <a href="#standings">Standings</a>
     <a href="#calendar">Calendar</a>
     <a href="#h2h">Head-to-Head</a>
+    <a href="#althistory">Alt History</a>
   </div>
 
   <!-- ── App Container ── -->
@@ -273,6 +275,227 @@
           <div class="skeleton skeleton-row"></div>
           <div class="skeleton skeleton-row"></div>
           <div class="skeleton skeleton-row"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ SECTION 6: Alternate History Sandbox ══ -->
+    <section class="section reveal" id="althistory">
+      <h2 class="section-title">Alternate History Sandbox</h2>
+      <p class="section-subtitle">Simulate "what if" scenarios by editing race results or completing upcoming weekends</p>
+
+      <div class="althistory-container">
+        <!-- Control Bar -->
+        <div class="althistory-controls glass-card">
+          <div class="althistory-status-info">
+            <span class="althistory-badge"><i class="fa-solid fa-flask"></i> Sandbox Active</span>
+            <span id="althistory-sync-status" class="althistory-text-muted">Status: Synced with official calendar</span>
+          </div>
+          <button id="althistory-reset-btn" class="alt-btn-danger"><i class="fa-solid fa-arrow-rotate-left"></i> Reset to Official</button>
+        </div>
+
+        <div class="althistory-workspace">
+          <!-- Left Panel: Calendar and Results Editor -->
+          <div class="althistory-editor-panel glass-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-list-ol"></i> Race Editor</h3>
+              <select id="althistory-race-select" class="alt-select">
+                <option value="">Choose a race to edit...</option>
+              </select>
+            </div>
+
+            <!-- Race info & Completion toggles -->
+            <div id="althistory-race-info-block" class="althistory-race-info" style="display:none; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; border-bottom:1px solid var(--border-subtle); padding-bottom:12px;">
+              <div class="althistory-info-meta" style="display:flex; align-items:center; gap:8px;">
+                <span id="althistory-editor-round-label" class="round-label">Round —</span>
+                <h4 id="althistory-editor-gp-name" style="margin:0; font-family:'Outfit',sans-serif;">Select GP</h4>
+              </div>
+              <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                <!-- Fastest Lap Selector -->
+                <div id="alt-fastest-lap-wrap" style="display:none; align-items:center; gap:6px;">
+                  <span style="font-size:0.75rem; font-weight:700; color:var(--text-secondary);"><i class="fa-solid fa-stopwatch" style="color:#ffd700;"></i> FL:</span>
+                  <select id="alt-fastest-lap-select" class="alt-select" style="font-size:0.72rem; padding:4px 8px; font-weight:600; border-radius:4px; max-width:130px;"></select>
+                </div>
+                <div class="althistory-complete-toggle-wrap" style="display:flex; align-items:center;">
+                  <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-right:8px;">Completed:</span>
+                  <label class="alt-switch">
+                    <input type="checkbox" id="althistory-complete-checkbox">
+                    <span class="alt-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Session Type Selector for Sprint Weekends -->
+            <div id="althistory-session-type-block" class="althistory-session-type-toggle" style="display:none; margin-bottom:16px; width:100%;">
+              <div class="chart-type-toggle" style="background:rgba(255,255,255,0.02);border:1px solid var(--border-subtle);border-radius:100px;padding:2px;display:flex;width:100%;">
+                <button id="alt-session-toggle-gp" class="active" style="flex:1;text-align:center;">Grand Prix</button>
+                <button id="alt-session-toggle-sprint" style="flex:1;text-align:center;">Sprint</button>
+              </div>
+            </div>
+
+            <!-- Editor results container -->
+            <div class="althistory-editor-body">
+              <div id="althistory-editor-placeholder" class="editor-placeholder">
+                <i class="fa-solid fa-circle-info fa-2x" style="color:var(--text-muted);margin-bottom:var(--space-xs);"></i>
+                <p>Select a race above to edit results</p>
+              </div>
+
+              <!-- List of drivers -->
+              <div id="althistory-results-list" class="althistory-results-list" style="display:none;"></div>
+            </div>
+            
+            <div id="althistory-editor-footer" class="althistory-editor-footer" style="display:none;">
+              <button id="althistory-save-btn" class="alt-btn-success"><i class="fa-solid fa-floppy-disk"></i> Apply & Save results</button>
+            </div>
+          </div>
+
+          <!-- Right Panel: Visual Stats Dashboard -->
+          <div class="althistory-stats-panel glass-card">
+            <div class="panel-header">
+              <h3><i class="fa-solid fa-chart-line"></i> Sandbox Analytics</h3>
+              <div class="althistory-tabs">
+                <button class="alt-tab-btn active" data-tab="alt-standings">Standings</button>
+                <button class="alt-tab-btn" data-tab="alt-chart">Chart</button>
+                <button class="alt-tab-btn" data-tab="alt-settings">Settings</button>
+              </div>
+            </div>
+
+            <div class="althistory-stats-body">
+              <!-- Standings Tab -->
+              <div id="alt-tab-content-standings" class="alt-tab-content active">
+                <div class="standings-toggle" style="margin-bottom: 12px; margin-top: 0;">
+                  <button class="active" id="alt-standings-drivers-btn">Drivers</button>
+                  <button id="alt-standings-constructors-btn">Constructors</button>
+                </div>
+                <div id="althistory-standings-container">
+                  <!-- Rendered dynamically -->
+                </div>
+              </div>
+
+              <!-- Championship Chart Tab -->
+              <div id="alt-tab-content-chart" class="alt-tab-content" style="display:none;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:12px;">
+                  <div class="chart-type-toggle" style="background:rgba(255,255,255,0.02);border:1px solid var(--border-subtle);border-radius:100px;padding:2px;">
+                    <button id="alt-chart-toggle-drivers" class="active">Drivers</button>
+                    <button id="alt-chart-toggle-constructors">Constructors</button>
+                  </div>
+                  <select id="alt-chart-drivers-count" style="font-family:inherit;font-size:0.75rem;padding:6px 12px;border-radius:100px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);color:var(--text-primary);cursor:pointer;outline:none;font-weight:600;">
+                    <option value="5" style="background:#1a1a2e;">Top 5 Display</option>
+                    <option value="3" style="background:#1a1a2e;">Top 3 Display</option>
+                    <option value="10" style="background:#1a1a2e;">Top 10 Display</option>
+                  </select>
+                </div>
+                <div class="points-tracker-chart-container" style="height:320px; position:relative;">
+                  <canvas id="althistory-championship-chart" style="width:100%;height:100%;"></canvas>
+                </div>
+                <!-- Dynamic Legend filter -->
+                <div style="margin-top:16px; border-top:1px solid var(--border-subtle); padding-top:12px; text-align:left;">
+                  <div id="althistory-chart-legend" style="display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding-top:4px;"></div>
+                </div>
+              </div>
+
+              <!-- Settings Tab -->
+              <div id="alt-tab-content-settings" class="alt-tab-content" style="display:none; padding-top: 10px;">
+                <div style="display:flex; flex-direction:column; gap:16px;">
+                  
+                  <!-- Points System -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                    <div>
+                      <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">Points System Preset</div>
+                      <div style="font-size:0.75rem; color:var(--text-secondary);">Choose points scoring distribution for races</div>
+                    </div>
+                    <select id="alt-settings-points-system" class="alt-select">
+                      <option value="modern">Modern F1 (25, 18, 15, ...)</option>
+                      <option value="classic">Classic 2003-09 (10, 8, 6, ...)</option>
+                      <option value="retro">Retro 1991-02 (10, 6, 4, ...)</option>
+                      <option value="custom">Custom System...</option>
+                    </select>
+                  </div>
+
+                  <!-- Custom Points Inputs (shown conditionally) -->
+                  <div id="alt-settings-custom-points-block" style="display:none; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:12px;">
+                    <div style="font-weight:700; font-size:0.8rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:10px; letter-spacing:0.05em;">Custom Points (P1 to P10)</div>
+                    <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P1</span><input type="number" id="alt-custom-pts-1" value="25" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P2</span><input type="number" id="alt-custom-pts-2" value="18" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P3</span><input type="number" id="alt-custom-pts-3" value="15" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P4</span><input type="number" id="alt-custom-pts-4" value="12" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P5</span><input type="number" id="alt-custom-pts-5" value="10" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P6</span><input type="number" id="alt-custom-pts-6" value="8" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P7</span><input type="number" id="alt-custom-pts-7" value="6" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P8</span><input type="number" id="alt-custom-pts-8" value="4" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P9</span><input type="number" id="alt-custom-pts-9" value="2" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:4px; font-size:0.75rem; align-items:center;">
+                        <span>P10</span><input type="number" id="alt-custom-pts-10" value="1" min="0" max="100" style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); color:var(--text-primary); border-radius:4px; padding:4px; outline:none; text-align:center; width:45px;">
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Sprint Points -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                    <div>
+                      <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">Sprint Scoring Preset</div>
+                      <div style="font-size:0.75rem; color:var(--text-secondary);">Points system applied to Sprint sessions</div>
+                    </div>
+                    <select id="alt-settings-sprint-system" class="alt-select">
+                      <option value="modern">Modern 2022+ (8 to 1 pt)</option>
+                      <option value="original">Original 2021 (3 to 1 pt)</option>
+                      <option value="disabled">Disabled (0 pts)</option>
+                    </select>
+                  </div>
+
+                  <!-- Fastest Lap Point -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                    <div>
+                      <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">Fastest Lap Point</div>
+                      <div style="font-size:0.75rem; color:var(--text-secondary);">Enable 1 bonus point for fastest lap (top 10 finish)</div>
+                    </div>
+                    <select id="alt-settings-fastest-lap" class="alt-select">
+                      <option value="auto">Auto (Pre-2025 only)</option>
+                      <option value="on">Always On</option>
+                      <option value="off">Always Off</option>
+                    </select>
+                  </div>
+
+                  <!-- Double Points Final -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                    <div>
+                      <div style="font-weight:700; font-size:0.9rem; color:var(--text-primary);">Double Points Final Round</div>
+                      <div style="font-size:0.75rem; color:var(--text-secondary);">Award double points for the last race of the season</div>
+                    </div>
+                    <label class="alt-switch">
+                      <input type="checkbox" id="alt-settings-double-points">
+                      <span class="alt-slider"></span>
+                    </label>
+                  </div>
+                  
+                  <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                    <button id="alt-settings-save-btn" class="alt-btn-success"><i class="fa-solid fa-floppy-disk"></i> Save Sandbox Rules</button>
+                  </div>
+                  
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

@@ -11,10 +11,20 @@ import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
 
 let cachedStandings = null;
 
+function getPositionChangeHTML(change) {
+  if (change > 0) {
+    return `<span class="pos-change up" title="Gained ${change} position${change > 1 ? 's' : ''} since last race"><i class="fa-solid fa-caret-up"></i>${change}</span>`;
+  } else if (change < 0) {
+    const abs = Math.abs(change);
+    return `<span class="pos-change down" title="Lost ${abs} position${abs > 1 ? 's' : ''} since last race"><i class="fa-solid fa-caret-down"></i>${abs}</span>`;
+  }
+  return '';
+}
+
 /**
  * Render driver standings table
  */
-function renderDriverStandings(standings, container) {
+export function renderDriverStandings(standings, container) {
   const maxPoints = standings.drivers.length > 0 ? standings.drivers[0].points : 1;
 
   let html = `
@@ -45,7 +55,12 @@ function renderDriverStandings(standings, container) {
 
     html += `
       <tr data-driver="${d.name_acronym}" class="${champClass}">
-        <td><span class="position-badge ${posClass}">${pos}</span></td>
+        <td>
+          <div class="pos-cell-container">
+            <span class="position-badge ${posClass}">${pos}</span>
+            ${getPositionChangeHTML(d.positionChange)}
+          </div>
+        </td>
         <td>
           <div class="driver-cell">
             <div class="team-color-bar" style="background:${teamColor}"></div>
@@ -53,8 +68,9 @@ function renderDriverStandings(standings, container) {
             <div class="driver-info">
               <div class="driver-name" style="display:flex;align-items:center;gap:6px;">
                 ${getDriverFlagImg(d.name_acronym, 'width:15px;box-shadow:none;border-radius:1px;flex-shrink:0;')}
-                <span>${d.full_name || d.name_acronym}</span>
-                ${isChampion ? `<span class="champion-badge ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-crown"></i> ${standings.isFinished ? 'Champion' : 'Clinched'}</span>` : ''}
+                <span class="driver-name-full">${d.full_name || d.name_acronym}</span>
+                <span class="driver-name-acronym">${d.name_acronym}</span>
+                ${isChampion ? `<span class="champion-badge ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-crown"></i> <span class="badge-text">${standings.isFinished ? 'Champion' : 'Clinched'}</span></span>` : ''}
               </div>
               <div class="driver-team">${d.team_name}</div>
             </div>
@@ -76,21 +92,9 @@ function renderDriverStandings(standings, container) {
   html += '</tbody></table></div>';
   container.innerHTML = html;
 
+  // Draw sparklines after DOM is painted
   requestAnimationFrame(() => {
-    standings.drivers.forEach(d => {
-      const canvas = document.getElementById(`sparkline-driver-${d.name_acronym}`);
-      if (canvas && (d.pointsHistory && d.pointsHistory.length > 1)) {
-        drawSparkline(canvas, d.pointsHistory, getTeamColor(d.team_colour));
-      } else if (canvas && d.raceResults.length > 1) {
-        let cumulative = [];
-        let sum = 0;
-        for (const res of d.raceResults) {
-          sum += getPointsForPosition(res);
-          cumulative.push(sum);
-        }
-        drawSparkline(canvas, cumulative, getTeamColor(d.team_colour));
-      }
-    });
+    drawStandingsSparklines(standings, container);
   });
 
   // Click-to-open driver profile & Teammate hover visual connection
@@ -139,7 +143,7 @@ function renderDriverStandings(standings, container) {
 /**
  * Render constructor standings table
  */
-function renderConstructorStandings(standings, container) {
+export function renderConstructorStandings(standings, container) {
   const maxPoints = standings.constructors.length > 0 ? standings.constructors[0].points : 1;
 
   let html = `
@@ -173,14 +177,19 @@ function renderConstructorStandings(standings, container) {
 
     html += `
       <tr data-team="${t.team_name}" class="${champClass}">
-        <td><span class="position-badge ${posClass}">${pos}</span></td>
+        <td>
+          <div class="pos-cell-container">
+            <span class="position-badge ${posClass}">${pos}</span>
+            ${getPositionChangeHTML(t.positionChange)}
+          </div>
+        </td>
         <td>
           <div class="driver-cell">
             <div class="team-color-bar" style="background:${teamColor}"></div>
             <div class="driver-info">
               <div class="driver-name" style="display:flex;align-items:center;gap:8px;">
                 <span>${t.team_name}</span>
-                ${isChampion ? `<span class="champion-badge constructor ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Constructor Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-trophy"></i> ${standings.isFinished ? 'Champion' : 'Clinched'}</span>` : ''}
+                ${isChampion ? `<span class="champion-badge constructor ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Constructor Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-trophy"></i> <span class="badge-text">${standings.isFinished ? 'Champion' : 'Clinched'}</span></span>` : ''}
               </div>
             </div>
           </div>
@@ -276,4 +285,32 @@ export async function initStandings(year) {
 
 export function getStandingsData() {
   return cachedStandings;
+}
+
+/**
+ * Draw sparkline canvases for driver standings inside a given container.
+ * Uses container-scoped querySelector to avoid duplicate ID collisions
+ * between main standings and Alt History sandbox standings.
+ * Can be called on tab switch to redraw canvases that were zero-width when hidden.
+ */
+export function drawStandingsSparklines(standings, container) {
+  if (!standings || !standings.drivers || !container) return;
+  standings.drivers.forEach(d => {
+    const canvas = container.querySelector(`#sparkline-driver-${d.name_acronym}`);
+    if (!canvas) return;
+    // Skip if canvas has zero dimensions (still hidden)
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    if (d.pointsHistory && d.pointsHistory.length > 1) {
+      drawSparkline(canvas, d.pointsHistory, getTeamColor(d.team_colour));
+    } else if (d.raceResults && d.raceResults.length > 1) {
+      let cumulative = [];
+      let sum = 0;
+      for (const res of d.raceResults) {
+        sum += getPointsForPosition(res);
+        cumulative.push(sum);
+      }
+      drawSparkline(canvas, cumulative, getTeamColor(d.team_colour));
+    }
+  });
 }

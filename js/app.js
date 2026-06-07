@@ -3,7 +3,7 @@
 // =============================================
 
 import { initDashboard } from './dashboard.js';
-import { initStandings } from './standings.js';
+import { initStandings, getStandingsData, drawStandingsSparklines } from './standings.js';
 import { initCalendar, setRaceSelectHandler } from './calendar.js';
 import { loadRaceDetail } from './race-detail.js';
 import { initH2H } from './h2h.js';
@@ -12,6 +12,7 @@ import { clearSeasonCache, isSeasonPreliminary, clearSingleSeasonCache } from '.
 import { setupRevealAnimations, $ } from './utils.js';
 import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
 import { openSeasonPickerModal } from './season-picker.js';
+import { initAltHistory } from './alt-history.js';
 
 // Available years (1950-2022 Jolpi Ergast mirror, 2023+ OpenF1)
 const AVAILABLE_YEARS = [];
@@ -105,6 +106,7 @@ async function init() {
         await initStandings(currentYear);
         await initCalendar(currentYear);
         await initH2H(currentYear);
+        await initAltHistory(currentYear);
       } catch (err) {
         console.warn('[App] Silent background refresh failed:', err);
       }
@@ -164,6 +166,7 @@ async function loadAll(year) {
   // Reset race detail
   const raceDetail = $('#race-detail');
   raceDetail.style.display = 'none';
+  raceDetail.classList.remove('active-tab');
 
   // Show loading state immediately for all sections
   showLoadingStates();
@@ -188,6 +191,11 @@ async function loadAll(year) {
   try {
     await initH2H(year);
   } catch (e) { console.warn('H2H init error:', e); }
+  if (gen !== loadGeneration) return;
+
+  try {
+    await initAltHistory(year);
+  } catch (e) { console.warn('Alt History init error:', e); }
   if (gen !== loadGeneration) return;
 
   // Setup reveal animations
@@ -247,23 +255,6 @@ async function updateCacheStatus() {
 }
 
 function setupNav() {
-  // Active link tracking
-  const sections = document.querySelectorAll('.section[id]');
-  const navLinks = document.querySelectorAll('.nav-links a, .mobile-menu a');
-
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        const id = entry.target.id;
-        navLinks.forEach(link => {
-          link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
-        });
-      }
-    }
-  }, { rootMargin: '-30% 0px -70% 0px' });
-
-  sections.forEach(s => observer.observe(s));
-
   // Mobile menu toggle
   const toggle = $('#nav-toggle');
   const mobileMenu = $('#mobile-menu');
@@ -280,6 +271,95 @@ function setupNav() {
       });
     });
   }
+
+  // Hash-based SPA Router
+  window.addEventListener('hashchange', () => {
+    const tabId = window.location.hash.slice(1);
+    if (!tabId) {
+      window.location.hash = '#dashboard';
+    } else {
+      switchTab(tabId);
+    }
+  });
+
+  // Initial routing check
+  const initialTab = window.location.hash.slice(1);
+  if (!initialTab) {
+    window.location.hash = '#dashboard';
+  } else {
+    switchTab(initialTab);
+  }
+}
+
+function switchTab(tabId) {
+  const validTabs = ['dashboard', 'standings', 'calendar', 'h2h', 'althistory'];
+  if (!validTabs.includes(tabId)) {
+    tabId = 'dashboard';
+  }
+
+  // Update sections active status
+  document.querySelectorAll('.section').forEach(sec => {
+    if (sec.id === 'race-detail') {
+      if (tabId === 'calendar') {
+        const hasActiveCard = document.querySelector('#calendar-scroll .race-card.active');
+        if (hasActiveCard) {
+          sec.style.display = 'block';
+          sec.classList.add('active-tab');
+          sec.querySelectorAll('.reveal').forEach(el => el.classList.add('visible'));
+        } else {
+          sec.style.display = 'none';
+          sec.classList.remove('active-tab');
+        }
+      } else {
+        sec.classList.remove('active-tab');
+        sec.style.display = 'none'; // Explicitly hide when not on calendar tab
+      }
+    } else if (sec.id === tabId) {
+      sec.classList.add('active-tab');
+      // Trigger reveal animations inside the active tab immediately
+      sec.querySelectorAll('.reveal').forEach(el => el.classList.add('visible'));
+    } else {
+      sec.classList.remove('active-tab');
+    }
+  });
+
+  // Reset scroll position to top of the page
+  window.scrollTo({ top: 0, behavior: 'instant' });
+
+  // Redraw sparkline canvases when switching to Standings tab
+  // (canvases rendered in hidden tabs have zero dimensions)
+  if (tabId === 'standings') {
+    const standings = getStandingsData();
+    const container = $('#standings-content');
+    if (standings && container) {
+      requestAnimationFrame(() => drawStandingsSparklines(standings, container));
+    }
+  }
+
+  // Scroll calendar to the current or latest completed race card
+  if (tabId === 'calendar') {
+    const container = $('#calendar-scroll');
+    if (container) {
+      const currentCard = container.querySelector('.race-card.current');
+      const lastCompletedCards = container.querySelectorAll('.race-card:not(.upcoming)');
+      const scrollTarget = currentCard || (lastCompletedCards.length > 0 ? lastCompletedCards[lastCompletedCards.length - 1] : null);
+      if (scrollTarget) {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const scrollOffset = scrollTarget.offsetLeft - container.offsetWidth / 2 + scrollTarget.offsetWidth / 2;
+            container.scrollLeft = scrollOffset;
+          }, 100);
+        });
+      }
+    }
+  }
+
+  // Update active links on nav/mobile menu
+  const navLinks = document.querySelectorAll('.nav-links a, .mobile-menu a');
+  navLinks.forEach(link => {
+    const href = link.getAttribute('href');
+    link.classList.toggle('active', href === `#${tabId}`);
+  });
 }
 
 function setupBackToTop() {

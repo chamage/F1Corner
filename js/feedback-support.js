@@ -443,10 +443,38 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.5.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.5.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 7, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">New</span>
+                <span>Alternate History Sandbox: Introduced a separate Sandbox view allowing users to reorder finishing positions, edit driver status (Finished, DNF, DNS, DSQ), assign Fastest Lap, and complete future races. Standings, sparklines, and points progression charts are dynamically re-calculated in real-time.</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- v2.4.2 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.4.2</div>
+              <div class="changelog-date">June 6, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Position Indicators: Added green/red position change arrow indicators to standings tables showing how many places a driver or constructor gained or lost compared to the previous GP weekend.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.4.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.4.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.4.1</div>
               <div class="changelog-date">June 6, 2026</div>
             </div>
             <ul class="changelog-list">

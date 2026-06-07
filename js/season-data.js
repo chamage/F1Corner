@@ -5,12 +5,12 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions } from './api.js';
+import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './db.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_RACE_VERSION = 25; // Bump race cache to v25 to force acronym-grouped compilation with unique collision resolving
+const LS_RACE_VERSION = 26; // Bump race cache to v26 to compile fastest_lap_driver and fastest_lap_time
 const LS_QUALI_VERSION = 23; // Bump quali cache to v23 to store driver mapping list in qualifying cache
 
 // In-memory cache
@@ -161,7 +161,7 @@ export function getSeasonData(year) {
         const completedRaceCount = completedSessions.length;
         const completedQualiCount = completedQuali.length;
 
-        if (cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
+        if (cachedSeason.version === LS_RACE_VERSION && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
           const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete) || cachedSeason.qualifying.some(q => q.is_incomplete);
           if (!hasIncomplete) {
             // Re-construct drivers Map
@@ -326,6 +326,7 @@ export function getSeasonData(year) {
         try {
           const serialized = {
             ...finalSeason,
+            version: LS_RACE_VERSION,
             drivers: Array.from(finalSeason.drivers.entries())
           };
           await dbSet('compiled_races', `season_compiled_${year}`, serialized);
@@ -406,10 +407,11 @@ async function fetchQualiData(session) {
  */
 async function fetchRaceData(session) {
   try {
-    const [sessionDrivers, results, stints] = await Promise.all([
+    const [sessionDrivers, results, stints, laps] = await Promise.all([
       getSessionDrivers(session.session_key),
       getFinishingOrder(session.session_key),
       getStints({ session_key: session.session_key }),
+      getLaps({ session_key: session.session_key }).catch(() => [])
     ]);
 
     if (!sessionDrivers.length || !results.length) {
@@ -475,6 +477,19 @@ async function fetchRaceData(session) {
       }
     }
 
+    let fastestLapDriver = null;
+    let fastestLapTime = null;
+    let minLapTime = Infinity;
+    if (laps && laps.length > 0) {
+      for (const lap of laps) {
+        if (lap.lap_duration && lap.lap_duration > 0 && lap.lap_duration < minLapTime) {
+          minLapTime = lap.lap_duration;
+          fastestLapDriver = lap.driver_number;
+          fastestLapTime = lap.lap_duration;
+        }
+      }
+    }
+
     return {
       session_key: session.session_key,
       session_name: session.session_name,
@@ -482,8 +497,8 @@ async function fetchRaceData(session) {
       circuit_short_name: session.circuit_short_name,
       date_end: session.date_end,
       results: updatedResults,
-      fastest_lap_driver: null,
-      fastest_lap_time: null,
+      fastest_lap_driver: fastestLapDriver,
+      fastest_lap_time: fastestLapTime,
       drivers: sessionDrivers,
     };
   } catch (e) {
@@ -536,7 +551,7 @@ function initDriverStats() {
  * Build computed standings from compiled season data.
  * Zero API calls — everything from already-compiled race results.
  */
-export function computeStandingsFromSeason(seasonData) {
+export function computeStandingsFromSeason(seasonData, excludeLastMeeting = false) {
   const driverStats = new Map(); // key: name_acronym
   const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
@@ -612,8 +627,12 @@ export function computeStandingsFromSeason(seasonData) {
   }
 
   // Sort meetings chronologically by their end date
-  const sortedMeetings = Array.from(meetingsMap.values())
+  let sortedMeetings = Array.from(meetingsMap.values())
     .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+  if (excludeLastMeeting && sortedMeetings.length > 0) {
+    sortedMeetings.pop();
+  }
 
   for (const meeting of sortedMeetings) {
     for (const race of meeting.sessions) {
@@ -1018,6 +1037,41 @@ export function computeStandingsFromSeason(seasonData) {
     }
   }
 
+  // ── Calculate position changes compared to the previous GP weekend ──
+  let prevStandings = null;
+  if (!excludeLastMeeting && sortedMeetings.length > 1) {
+    try {
+      prevStandings = computeStandingsFromSeason(seasonData, true);
+    } catch (e) {
+      console.warn('[Season] Failed to compute previous standings for position changes:', e);
+    }
+  }
+
+  if (prevStandings) {
+    const prevDriverPos = new Map();
+    prevStandings.drivers.forEach((d, idx) => {
+      prevDriverPos.set(d.name_acronym, idx + 1);
+    });
+    driverStandings.forEach((d, idx) => {
+      const currentPos = idx + 1;
+      const prevPos = prevDriverPos.get(d.name_acronym);
+      d.positionChange = prevPos !== undefined ? prevPos - currentPos : 0;
+    });
+
+    const prevConstructorPos = new Map();
+    prevStandings.constructors.forEach((c, idx) => {
+      prevConstructorPos.set(c.team_name, idx + 1);
+    });
+    constructorStandings.forEach((c, idx) => {
+      const currentPos = idx + 1;
+      const prevPos = prevConstructorPos.get(c.team_name);
+      c.positionChange = prevPos !== undefined ? prevPos - currentPos : 0;
+    });
+  } else {
+    driverStandings.forEach(d => { d.positionChange = 0; });
+    constructorStandings.forEach(c => { c.positionChange = 0; });
+  }
+
   return {
     year: seasonData.year,
     drivers: driverStandings,
@@ -1242,6 +1296,7 @@ async function triggerSeasonUpdate(year, allRaceSessions, completedSessions, com
     try {
       const serialized = {
         ...finalSeason,
+        version: LS_RACE_VERSION,
         drivers: Array.from(finalSeason.drivers.entries())
       };
       await dbSet('compiled_races', `season_compiled_${year}`, serialized);

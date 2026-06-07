@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v100'; // v100: fix duplicate driver fallback rows during live/started weekends
+const CACHE_NAME = 'pitcorner-shell-v119'; // v119: rollback selector default, fix calendar scroll centering on tab switch
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -19,6 +19,7 @@ const STATIC_ASSETS = [
   './js/feedback-support.js',
   './js/charts.js',
   './js/season-picker.js',
+  './js/alt-history.js',
   './logo.svg',
   './icon-192.png',
   './icon-512.png',

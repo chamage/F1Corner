@@ -303,8 +303,16 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
   const sessionDropdownContainer = $('#race-session-selector-container');
   const pillsContainer = $('#race-session-pills');
 
-  section.style.display = 'block';
-  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const isCalendarActive = $('#calendar') && $('#calendar').classList.contains('active-tab');
+  if (isCalendarActive) {
+    section.style.display = 'block';
+    section.classList.add('active-tab');
+    section.querySelectorAll('.reveal').forEach(el => el.classList.add('visible'));
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+    section.style.display = 'none';
+    section.classList.remove('active-tab');
+  }
   header.innerHTML = `
     <div class="race-detail-title">${meetingInfo.meeting_name}</div>
     <div style="color:var(--text-muted);font-size:0.85rem;">${meetingInfo.circuit_short_name}, ${meetingInfo.country_name}</div>
