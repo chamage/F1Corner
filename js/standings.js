@@ -254,6 +254,11 @@ export async function initStandings(year) {
 
     renderDriverStandings(standings, container);
 
+    const heatmapContainer = $('#standings-heatmap-content');
+    if (heatmapContainer) {
+      renderFinishingHeatmap(standings, heatmapContainer, 'drivers');
+    }
+
     const driversBtn = $('#standings-drivers-btn');
     const constructorsBtn = $('#standings-constructors-btn');
 
@@ -269,12 +274,18 @@ export async function initStandings(year) {
       newDriversBtn.classList.add('active');
       newConstructorsBtn.classList.remove('active');
       renderDriverStandings(standings, container);
+      if (heatmapContainer) {
+        renderFinishingHeatmap(standings, heatmapContainer, 'drivers');
+      }
     });
 
     newConstructorsBtn.addEventListener('click', () => {
       newConstructorsBtn.classList.add('active');
       newDriversBtn.classList.remove('active');
       renderConstructorStandings(standings, container);
+      if (heatmapContainer) {
+        renderFinishingHeatmap(standings, heatmapContainer, 'constructors');
+      }
     });
 
   } catch (err) {
@@ -313,4 +324,239 @@ export function drawStandingsSparklines(standings, container) {
       drawSparkline(canvas, cumulative, getTeamColor(d.team_colour));
     }
   });
+}
+
+/**
+ * Render Finishing Position Heatmap Grid for Driver or Constructor Standings
+ */
+export function renderFinishingHeatmap(standings, container, type = 'drivers') {
+  if (!standings || !container) return;
+
+  const isDrivers = type === 'drivers';
+  
+  if (isDrivers && (!standings.drivers || standings.drivers.length === 0)) {
+    container.innerHTML = '<div class="no-data"><div class="no-data-text">No data available for heatmap</div></div>';
+    return;
+  }
+  if (!isDrivers && (!standings.constructors || standings.constructors.length === 0)) {
+    container.innerHTML = '<div class="no-data"><div class="no-data-text">No data available for heatmap</div></div>';
+    return;
+  }
+
+  let listData = [];
+  let maxCount = 1;
+
+  if (isDrivers) {
+    listData = standings.drivers.map((d, idx) => {
+      const counts = {
+        p1: 0, p2: 0, p3: 0, p4: 0, p5: 0,
+        p6: 0, p7: 0, p8: 0, p9: 0, p10: 0,
+        p11Plus: 0,
+        retired: 0
+      };
+
+      const gpResults = d.allResults ? d.allResults.filter(r => !r.isSprint) : [];
+      gpResults.forEach(r => {
+        const pos = r.position;
+        const status = r.status;
+        if (status === 'FINISHED') {
+          if (pos === 1) counts.p1++;
+          else if (pos === 2) counts.p2++;
+          else if (pos === 3) counts.p3++;
+          else if (pos === 4) counts.p4++;
+          else if (pos === 5) counts.p5++;
+          else if (pos === 6) counts.p6++;
+          else if (pos === 7) counts.p7++;
+          else if (pos === 8) counts.p8++;
+          else if (pos === 9) counts.p9++;
+          else if (pos === 10) counts.p10++;
+          else if (pos >= 11) counts.p11Plus++;
+        } else if (status === 'DNF' || status === 'DNS' || status === 'DSQ') {
+          counts.retired++;
+        }
+      });
+
+      return {
+        rank: idx + 1,
+        team_colour: d.team_colour,
+        team_name: d.team_name,
+        name: d.full_name || d.name_acronym,
+        name_acronym: d.name_acronym,
+        counts
+      };
+    });
+  } else {
+    // Constructors - Compile team results from all driver histories
+    const teamDataMap = new Map();
+    standings.constructors.forEach((team, idx) => {
+      teamDataMap.set(team.team_name, {
+        rank: idx + 1,
+        team_name: team.team_name,
+        team_colour: team.team_colour,
+        counts: {
+          p1: 0, p2: 0, p3: 0, p4: 0, p5: 0,
+          p6: 0, p7: 0, p8: 0, p9: 0, p10: 0,
+          p11Plus: 0,
+          retired: 0
+        }
+      });
+    });
+
+    standings.drivers.forEach(d => {
+      const gpResults = d.allResults ? d.allResults.filter(r => !r.isSprint) : [];
+      gpResults.forEach(r => {
+        const teamName = r.team_name || d.team_name;
+        if (!teamDataMap.has(teamName)) return;
+        const item = teamDataMap.get(teamName);
+        const pos = r.position;
+        const status = r.status;
+        if (status === 'FINISHED') {
+          if (pos === 1) item.counts.p1++;
+          else if (pos === 2) item.counts.p2++;
+          else if (pos === 3) item.counts.p3++;
+          else if (pos === 4) item.counts.p4++;
+          else if (pos === 5) item.counts.p5++;
+          else if (pos === 6) item.counts.p6++;
+          else if (pos === 7) item.counts.p7++;
+          else if (pos === 8) item.counts.p8++;
+          else if (pos === 9) item.counts.p9++;
+          else if (pos === 10) item.counts.p10++;
+          else if (pos >= 11) item.counts.p11Plus++;
+        } else if (status === 'DNF' || status === 'DNS' || status === 'DSQ') {
+          item.counts.retired++;
+        }
+      });
+    });
+
+    listData = Array.from(teamDataMap.values());
+  }
+
+  // Find max count to scale opacity
+  listData.forEach(item => {
+    Object.values(item.counts).forEach(val => {
+      if (val > maxCount) maxCount = val;
+    });
+  });
+
+  // Helper to parse hex colors
+  const hexToRgb = (hex) => {
+    const cleanHex = hex.replace('#', '');
+    const num = parseInt(cleanHex, 16);
+    return {
+      r: (num >> 16) & 255,
+      g: (num >> 8) & 255,
+      b: num & 255
+    };
+  };
+
+  // Generate Heatmap Table HTML
+  let html = `
+    <div style="overflow-x:auto; margin-top:4px;">
+    <table class="standings-table heatmap-table" id="${isDrivers ? 'drivers' : 'constructors'}-heatmap-table" style="border-collapse:collapse; min-width:650px;">
+      <thead>
+        <tr>
+          <th style="width:40px; text-align:center;">Pos</th>
+          <th>${isDrivers ? 'Driver' : 'Constructor'}</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P1</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P2</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P3</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P4</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P5</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P6</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P7</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P8</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P9</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">P10</th>
+          <th style="width:44px; text-align:center; padding: 10px 4px;">P11+</th>
+          <th style="width:40px; text-align:center; padding: 10px 4px;">Ret</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  listData.forEach(item => {
+    const teamColorHex = getTeamColor(item.team_colour);
+    const { r, g, b } = hexToRgb(teamColorHex);
+
+    const makeCell = (count) => {
+      if (count === 0) {
+        return `<td style="text-align:center; font-family:'JetBrains Mono',monospace; font-size:0.8rem; color:rgba(255,255,255,0.06); padding: 8px 4px; border:1px solid rgba(255,255,255,0.02);">-</td>`;
+      }
+      const opacity = (count / maxCount) * 0.7 + 0.18;
+      const bg = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+      const textCol = '#ffffff';
+
+      return `<td style="text-align:center; font-family:'JetBrains Mono',monospace; font-size:0.8rem; font-weight:800; color:${textCol}; background:${bg}; padding: 8px 4px; border:1px solid rgba(255,255,255,0.04);" class="heatmap-cell" data-count="${count}">
+        ${count}
+      </td>`;
+    };
+
+    html += `
+      <tr ${isDrivers ? `data-driver="${item.name_acronym}"` : `data-team="${item.team_name}"`}>
+        <td style="text-align:center;">
+          <span class="position-badge" style="width:22px; height:22px; font-size:0.7rem; border-radius:50%;">${item.rank}</span>
+        </td>
+        <td>
+          <div class="driver-cell" style="padding:0;">
+            <div class="team-color-bar" style="background:${teamColorHex}; height:16px;"></div>
+            <div class="driver-info">
+              <div class="driver-name" style="display:flex;align-items:center;gap:6px;font-size:0.85rem;font-weight:700;">
+                ${isDrivers ? `
+                  <span class="driver-name-full">${item.name}</span>
+                  <span class="driver-name-acronym">${item.name_acronym}</span>
+                ` : `
+                  <span>${item.team_name}</span>
+                `}
+              </div>
+              ${isDrivers ? `<div class="driver-team" style="font-size:0.68rem;opacity:0.75;">${item.team_name}</div>` : ''}
+            </div>
+          </div>
+        </td>
+        ${makeCell(item.counts.p1)}
+        ${makeCell(item.counts.p2)}
+        ${makeCell(item.counts.p3)}
+        ${makeCell(item.counts.p4)}
+        ${makeCell(item.counts.p5)}
+        ${makeCell(item.counts.p6)}
+        ${makeCell(item.counts.p7)}
+        ${makeCell(item.counts.p8)}
+        ${makeCell(item.counts.p9)}
+        ${makeCell(item.counts.p10)}
+        ${makeCell(item.counts.p11Plus)}
+        ${makeCell(item.counts.retired)}
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  // Click row handlers
+  if (isDrivers) {
+    container.querySelectorAll('tr[data-driver]').forEach(row => {
+      row.addEventListener('click', () => {
+        const acronym = row.dataset.driver;
+        const driver = standings.drivers.find(d => d.name_acronym === acronym);
+        if (driver) {
+          showDriverProfile(driver, standings, standings.raceSessions || []);
+        }
+      });
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255, 255, 255, 0.02)'; });
+      row.style.cursor = 'pointer';
+      row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    });
+  } else {
+    container.querySelectorAll('tr[data-team]').forEach(row => {
+      row.addEventListener('click', () => {
+        const teamName = row.dataset.team;
+        const team = standings.constructors.find(t => t.team_name === teamName);
+        if (team) {
+          showTeamProfile(team, standings);
+        }
+      });
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255, 255, 255, 0.02)'; });
+      row.style.cursor = 'pointer';
+      row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    });
+  }
 }

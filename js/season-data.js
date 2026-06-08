@@ -583,7 +583,7 @@ function initDriverStats() {
  * Build computed standings from compiled season data.
  * Zero API calls — everything from already-compiled race results.
  */
-export function computeStandingsFromSeason(seasonData, excludeLastMeeting = false) {
+export function computeStandingsFromSeason(seasonData, excludeLastMeeting = false, customSandboxSettings = null) {
   const driverStats = new Map(); // key: name_acronym
   const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
@@ -723,17 +723,19 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
             stats.raceResults.push(position);
           }
         }
-        stats.allResults.push({
-          position,
-          isSprint,
-          session_key: race.session_key,
-          status: status
-        });
-
         // Find driver's team for THIS specific race
         const raceDriverInfo = race.drivers ? race.drivers.find(rd => rd.driver_number === driver_number) : null;
         const raceTeamName = raceDriverInfo ? raceDriverInfo.team_name : 'Unknown';
         const raceTeamColour = raceDriverInfo ? raceDriverInfo.team_colour : '666666';
+
+        stats.allResults.push({
+          position,
+          isSprint,
+          session_key: race.session_key,
+          status: status,
+          team_name: raceTeamName,
+          team_colour: raceTeamColour
+        });
 
         if (raceTeamName !== 'Unknown') {
           if (!constructorStats.has(raceTeamName)) {
@@ -773,11 +775,17 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
             }
           }
 
+          const info = seasonData.drivers.get(acronym);
+          const defaultTeamName = info ? info.team_name : 'Unknown';
+          const defaultTeamColour = info ? info.team_colour : '666666';
+
           stats.allResults.push({
             position: 20,
             isSprint,
             session_key: race.session_key,
-            status: status
+            status: status,
+            team_name: defaultTeamName,
+            team_colour: defaultTeamColour
           });
         }
       }
@@ -919,20 +927,117 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     });
 
   const allRaceSessions = seasonData.totalRaceSessions || [];
+  const completedSessionKeys = new Set((seasonData.races || []).map(r => String(r.session_key)));
+
   const gpSessions = allRaceSessions.filter(s => s.session_name === 'Race');
   const sprintSessions = allRaceSessions.filter(s => s.session_name === 'Sprint');
-  const isFinished = gpSessions.length > 0 && gpSessions.every(s => new Date(s.date_end) < new Date());
+  const isFinished = gpSessions.length > 0 && gpSessions.every(s => completedSessionKeys.has(String(s.session_key)));
 
-  // Calculate remaining sessions for mathematical clinching
-  const remainingSessions = allRaceSessions.filter(s => new Date(s.date_end) >= new Date());
+  // Calculate remaining sessions for mathematical clinching (independent of real-world date for sandbox flexibility)
+  const remainingSessions = allRaceSessions.filter(s => !completedSessionKeys.has(String(s.session_key)));
   const remainingGPs = remainingSessions.filter(s => s.session_name === 'Race').length;
   const remainingSprints = remainingSessions.filter(s => s.session_name === 'Sprint').length;
 
-  const maxPointsPerGP = seasonData.year < 2025 ? 26 : 25;
-  const maxRemainingPoints = (remainingGPs * maxPointsPerGP) + (remainingSprints * 8);
+  let maxPointsPerGP = seasonData.year < 2025 ? 26 : 25;
+  let maxSprintPoints = 8;
+  let maxConstructorPointsPerGP = seasonData.year < 2025 ? 44 : 43;
+  let maxConstructorSprintPoints = 15;
 
-  const maxConstructorPointsPerGP = seasonData.year < 2025 ? 44 : 43;
-  const maxConstructorRemainingPoints = (remainingGPs * maxConstructorPointsPerGP) + (remainingSprints * 15);
+  let maxRemainingPoints = 0;
+  let maxConstructorRemainingPoints = 0;
+
+  if (customSandboxSettings) {
+    // Determine custom GP points limit
+    const sys = customSandboxSettings.pointsSystem || 'modern';
+    let maxGpPts = 25;
+    if (sys === 'modern') {
+      maxGpPts = 25;
+    } else if (sys === 'classic') {
+      maxGpPts = 10;
+    } else if (sys === 'retro') {
+      maxGpPts = 10;
+    } else if (sys === 'custom') {
+      const customPts = customSandboxSettings.customPoints || [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      maxGpPts = customPts.length > 0 ? customPts[0] : 25;
+    }
+
+    // Determine fastest lap point rule
+    const flRule = customSandboxSettings.fastestLapPoint || 'auto';
+    let awardFl = false;
+    if (flRule === 'on') {
+      awardFl = true;
+    } else if (flRule === 'off') {
+      awardFl = false;
+    } else {
+      awardFl = (seasonData.year < 2025);
+    }
+    if (awardFl) {
+      maxGpPts += 1;
+    }
+
+    maxPointsPerGP = maxGpPts;
+
+    // Determine Sprint points limit
+    const sprintSys = customSandboxSettings.sprintPointsSystem || 'modern';
+    if (sprintSys === 'modern') {
+      maxSprintPoints = 8;
+    } else if (sprintSys === 'original') {
+      maxSprintPoints = 3;
+    } else {
+      maxSprintPoints = 0;
+    }
+
+    // Constructor max points (assumes 1 constructor takes P1 + P2, plus optional fastest lap)
+    let maxGpPointsConstructor = 0;
+    if (sys === 'modern') {
+      maxGpPointsConstructor = 25 + 18;
+    } else if (sys === 'classic') {
+      maxGpPointsConstructor = 10 + 8;
+    } else if (sys === 'retro') {
+      maxGpPointsConstructor = 10 + 6;
+    } else if (sys === 'custom') {
+      const customPts = customSandboxSettings.customPoints || [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      const p1 = customPts.length > 0 ? customPts[0] : 25;
+      const p2 = customPts.length > 1 ? customPts[1] : 18;
+      maxGpPointsConstructor = p1 + p2;
+    }
+    if (awardFl) {
+      maxGpPointsConstructor += 1;
+    }
+
+    // Constructor Sprint max points (P1 + P2)
+    let maxSprintPointsConstructor = 15;
+    if (sprintSys === 'modern') {
+      maxSprintPointsConstructor = 8 + 7;
+    } else if (sprintSys === 'original') {
+      maxSprintPointsConstructor = 3 + 2;
+    } else {
+      maxSprintPointsConstructor = 0;
+    }
+
+    // Account for double points on final GP if final GP is remaining
+    let finalGpKey = '';
+    const gpSessionsSorted = gpSessions.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+    if (gpSessionsSorted.length > 0) {
+      finalGpKey = gpSessionsSorted[gpSessionsSorted.length - 1].session_key;
+    }
+    const finalGpIsRemaining = remainingSessions.some(s => s.session_key == finalGpKey && s.session_name === 'Race');
+
+    let remPts = (remainingGPs * maxPointsPerGP) + (remainingSprints * maxSprintPoints);
+    if (customSandboxSettings.doublePointsFinal && finalGpIsRemaining) {
+      remPts += maxPointsPerGP;
+    }
+    maxRemainingPoints = remPts;
+
+    let remConstPts = (remainingGPs * maxGpPointsConstructor) + (remainingSprints * maxSprintPointsConstructor);
+    if (customSandboxSettings.doublePointsFinal && finalGpIsRemaining) {
+      remConstPts += maxGpPointsConstructor;
+    }
+    maxConstructorRemainingPoints = remConstPts;
+  } else {
+    maxRemainingPoints = (remainingGPs * maxPointsPerGP) + (remainingSprints * 8);
+    maxConstructorRemainingPoints = (remainingGPs * maxConstructorPointsPerGP) + (remainingSprints * 15);
+  }
 
   const isPrelim = !!seasonData.is_preliminary;
 
@@ -1073,7 +1178,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
   let prevStandings = null;
   if (!excludeLastMeeting && sortedMeetings.length > 1) {
     try {
-      prevStandings = computeStandingsFromSeason(seasonData, true);
+      prevStandings = computeStandingsFromSeason(seasonData, true, customSandboxSettings);
     } catch (e) {
       console.warn('[Season] Failed to compute previous standings for position changes:', e);
     }

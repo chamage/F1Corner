@@ -443,10 +443,52 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.6.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.6.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 8, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Finishing Heatmap: Added a dedicated "Heatmap" card under the official standings and a standalone "Heatmap" tab in the Alternate History sandbox. Renders a color-coded grid heatmap of finishing positions (P1–P10, P11+, and DNF/DNS/DSQ) for either individual drivers or constructors, colored dynamically by team livery brand palettes with custom micro-animations on hover.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Sandbox Copy Latest Race Order: Added a "Copy Latest Race Order" button to both the upcoming race placeholder and active editor footer in Alternate History, allowing users to quickly initialize simulation inputs using results from the most recent completed session of the same type.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Interactive Chart Analysis: Added driver filtering checklist pills, zoom focus start/end lap dropdowns, and zoom reset buttons to both Lap Times and Position Changes charts in the race details view.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>High-Resolution Enlarge Modal: Added a fullscreen chart viewer modal complete with driver filters, zoom selectors, and keyboard escape closures.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Dynamic Floating Tooltips: Replaced container-absolute tooltips with a viewport-relative fixed global tooltip overlay that adjusts placement dynamically to avoid z-index or overflow clipping issues.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Smart Cache Expiration: Added manual cache clear option for individual race weekends, alongside automatic cache expiration (10-15 minute TTL) for sessions ending less than 24 hours ago.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Dynamic Championship Clinching: Updated mathematical clinching check to count remaining rounds relative to completed/simulated sessions in Sandbox instead of real-world dates. Clinch and Champion row badges now automatically recalculate and display as soon as a driver or constructor locks in the title.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Lifecycle Bugfixes: Resolved critical canvas parentNode replacement crashes when modifying zoom parameters on the active view.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.5.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.5.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.5.0</div>
               <div class="changelog-date">June 7, 2026</div>
             </div>
             <ul class="changelog-list">

@@ -7,7 +7,7 @@
 
 import { dbGet, dbSet, dbDelete } from './db.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
-import { renderDriverStandings, renderConstructorStandings } from './standings.js';
+import { renderDriverStandings, renderConstructorStandings, renderFinishingHeatmap } from './standings.js';
 import { drawLineChart } from './charts.js';
 import { getTeamColor, getPointsForPosition, isPast, $ } from './utils.js';
 import { getMeetings } from './api.js';
@@ -30,6 +30,7 @@ let sandboxSettings = {
 };
 
 let chartActiveType = 'drivers'; // 'drivers' or 'constructors'
+let heatmapActiveType = 'drivers'; // 'drivers' or 'constructors'
 let chartSelectedDrivers = new Set();
 let chartSelectedConstructors = new Set();
 let chartLegendExpanded = false;
@@ -41,6 +42,7 @@ let chartTogglesInitialized = false;
 export async function initAltHistory(year) {
   currentYear = year;
   activeSelectedSessionKey = '';
+  heatmapActiveType = 'drivers';
   
   // Setup tabs
   setupAltTabs();
@@ -74,6 +76,9 @@ function setupAltTabs() {
       
       if (tabId === 'alt-standings') {
         $('#alt-tab-content-standings').style.display = 'block';
+      } else if (tabId === 'alt-heatmap') {
+        $('#alt-tab-content-heatmap').style.display = 'block';
+        renderAltHeatmap();
       } else if (tabId === 'alt-chart') {
         $('#alt-tab-content-chart').style.display = 'block';
         // Redraw chart when visible to ensure canvas boundaries align
@@ -109,6 +114,35 @@ function setupAltTabs() {
       newConstructorsBtn.classList.add('active');
       newDriversBtn.classList.remove('active');
       renderAltStandingsTable('constructors');
+    });
+  }
+
+  // Heatmap type buttons
+  const heatmapDriversBtn = $('#alt-heatmap-drivers-btn');
+  const heatmapConstructorsBtn = $('#alt-heatmap-constructors-btn');
+
+  if (heatmapDriversBtn && heatmapConstructorsBtn) {
+    const newHeatmapDriversBtn = heatmapDriversBtn.cloneNode(true);
+    const newHeatmapConstructorsBtn = heatmapConstructorsBtn.cloneNode(true);
+    
+    newHeatmapDriversBtn.classList.add('active');
+    newHeatmapConstructorsBtn.classList.remove('active');
+    
+    heatmapDriversBtn.parentNode.replaceChild(newHeatmapDriversBtn, heatmapDriversBtn);
+    heatmapConstructorsBtn.parentNode.replaceChild(newHeatmapConstructorsBtn, heatmapConstructorsBtn);
+
+    newHeatmapDriversBtn.addEventListener('click', () => {
+      newHeatmapDriversBtn.classList.add('active');
+      newHeatmapConstructorsBtn.classList.remove('active');
+      heatmapActiveType = 'drivers';
+      renderAltHeatmap();
+    });
+
+    newHeatmapConstructorsBtn.addEventListener('click', () => {
+      newHeatmapConstructorsBtn.classList.add('active');
+      newHeatmapDriversBtn.classList.remove('active');
+      heatmapActiveType = 'constructors';
+      renderAltHeatmap();
     });
   }
 }
@@ -199,6 +233,16 @@ function setupActionListeners() {
       handleSimulationToggle(isChecked);
     });
   }
+
+  // Copy Latest button in footer
+  const copyLatestBtn = $('#alt-copy-latest-btn');
+  if (copyLatestBtn) {
+    const newCopyLatestBtn = copyLatestBtn.cloneNode(true);
+    copyLatestBtn.parentNode.replaceChild(newCopyLatestBtn, copyLatestBtn);
+    newCopyLatestBtn.addEventListener('click', () => {
+      copyLatestRaceOrder();
+    });
+  }
 }
 
 /**
@@ -255,7 +299,7 @@ async function loadAltData() {
     buildAltSeasonData();
 
     // 4. Compute standings
-    altStandings = computeStandingsFromSeason(altSeasonData);
+    altStandings = computeStandingsFromSeason(altSeasonData, false, sandboxSettings);
 
     // 5. Populate dropdown selector
     populateRaceSelector();
@@ -263,6 +307,7 @@ async function loadAltData() {
     // 6. Draw Dashboard / Standings / Charts
     const activeStandingsType = $('.standings-toggle button.active[id^="alt-standings-"]').id.includes('drivers') ? 'drivers' : 'constructors';
     renderAltStandingsTable(activeStandingsType);
+    renderAltHeatmap();
     drawAltChampionshipChart();
     renderRaceEditor();
 
@@ -535,6 +580,16 @@ function renderAltStandingsTable(type) {
 }
 
 /**
+ * Render Finishing Position Heatmap for Simulated standings
+ */
+function renderAltHeatmap() {
+  const container = $('#althistory-heatmap-container');
+  if (container && altStandings) {
+    renderFinishingHeatmap(altStandings, container, heatmapActiveType);
+  }
+}
+
+/**
  * Toggle simulated completion status for future sessions
  */
 function handleSimulationToggle(completed) {
@@ -641,6 +696,112 @@ function loadQualiOrderAsResults(qualiData, sessionKey) {
   if (placeholder) placeholder.style.display = 'none';
 
   renderResultsEditorList();
+}
+
+/**
+ * Copies finishing results from the chronologically closest completed race or sprint session of same type.
+ * Initializes/overwrites the active sandbox editor results with this order.
+ */
+function copyLatestRaceOrder() {
+  const currentSessionKey = getCurrentEditingSessionKey();
+  if (!currentSessionKey) return;
+
+  if (!officialSeasonData || !altSeasonData) return;
+
+  const isSprint = activeEditingSessionType === 'sprint';
+  const targetSessionName = isSprint ? 'Sprint' : 'Race';
+
+  // Sort matching sessions chronologically
+  const matchedSessions = officialSeasonData.totalRaceSessions
+    .filter(s => s.session_name === targetSessionName)
+    .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+
+  const currentIdx = matchedSessions.findIndex(s => s.session_key == currentSessionKey);
+
+  // Search chronologically backwards from current session for first completed results
+  let sourceRace = null;
+  if (currentIdx !== -1) {
+    for (let i = currentIdx - 1; i >= 0; i--) {
+      const sKey = matchedSessions[i].session_key;
+      const raceData = altSeasonData.races.find(r => r.session_key == sKey);
+      if (raceData && raceData.results && raceData.results.length > 0) {
+        sourceRace = raceData;
+        break;
+      }
+    }
+  }
+
+  // If no completed session preceding this round, fallback to the latest completed one overall
+  if (!sourceRace) {
+    for (let i = matchedSessions.length - 1; i >= 0; i--) {
+      const sKey = matchedSessions[i].session_key;
+      const raceData = altSeasonData.races.find(r => r.session_key == sKey);
+      if (raceData && raceData.results && raceData.results.length > 0) {
+        sourceRace = raceData;
+        break;
+      }
+    }
+  }
+
+  if (!sourceRace) {
+    alert(`No completed ${isSprint ? 'sprint' : 'race'} sessions found to copy results from.`);
+    return;
+  }
+
+  const newResults = sourceRace.results.map((res, i) => {
+    const pos = i + 1;
+    // Resolve acronym mapping from driverMap or registry
+    let acronym = res.name_acronym;
+    if (!acronym && officialSeasonData.drivers) {
+      for (const [acr, dInfo] of officialSeasonData.drivers) {
+        if (dInfo.driver_number === res.driver_number) { acronym = acr; break; }
+      }
+    }
+    if (!acronym) acronym = `DRV_${res.driver_number}`;
+
+    return {
+      driver_number: res.driver_number,
+      name_acronym: acronym,
+      position: pos,
+      status: 'FINISHED',
+      points: calculateDriverPoints(pos, 'FINISHED', i === 0, isSprint, currentSessionKey)
+    };
+  });
+
+  userModifications[currentSessionKey] = {
+    results: newResults,
+    fastest_lap_driver: newResults[0]?.driver_number || null,
+    is_completed: true
+  };
+
+  // Toggle UI state to show the editor
+  const checkbox = $('#althistory-complete-checkbox');
+  if (checkbox) { checkbox.checked = true; checkbox.disabled = false; }
+  const resultsList = $('#althistory-results-list');
+  const footer = $('#althistory-editor-footer');
+  const placeholder = $('#althistory-editor-placeholder');
+  if (resultsList) resultsList.style.display = 'flex';
+  if (footer) footer.style.display = 'flex';
+  if (placeholder) placeholder.style.display = 'none';
+
+  renderResultsEditorList();
+
+  // Flash visual feedback on copy buttons
+  const copyBtnPlaceholder = document.getElementById('alt-load-latest-race-btn-placeholder');
+  const copyBtnFooter = document.getElementById('alt-copy-latest-btn');
+  [copyBtnPlaceholder, copyBtnFooter].forEach(btn => {
+    if (btn) {
+      const oldHtml = btn.innerHTML;
+      btn.style.borderColor = '#2ecc71';
+      btn.style.color = '#2ecc71';
+      btn.innerHTML = `<i class="fa-solid fa-check"></i> Copied ${sourceRace.circuit_short_name}!`;
+      setTimeout(() => {
+        btn.style.borderColor = '';
+        btn.style.color = '';
+        btn.innerHTML = oldHtml;
+      }, 1500);
+    }
+  });
 }
 
 /**
@@ -777,9 +938,12 @@ function renderRaceEditor() {
         <i class="fa-solid fa-hourglass-start fa-2x" style="color:var(--text-muted);margin-bottom:var(--space-xs);"></i>
         <p style="font-weight:600;color:var(--text-secondary);">This session is in the future.</p>
         <p style="font-size:0.8rem;max-width:300px;margin-top:4px;">Toggle the "Completed" switch above to simulate this ${activeEditingSessionType === 'gp' ? 'race' : 'sprint'} and edit results.</p>
-        ${hasQuali 
-          ? `<button id="alt-load-quali-btn" class="alt-btn-success" style="margin-top:12px;"><i class="fa-solid fa-flag-checkered"></i> Load Quali Grid Order</button>` 
-          : `<p style="font-size:0.75rem;color:var(--text-muted);margin-top:10px;"><i class="fa-solid fa-triangle-exclamation"></i> Qualifying results not loaded or not yet available for this weekend.</p>`}
+        <div style="display:flex; flex-direction:column; gap:8px; align-items:center; margin-top:12px;">
+          ${hasQuali 
+            ? `<button id="alt-load-quali-btn" class="alt-btn-success"><i class="fa-solid fa-flag-checkered"></i> Load Quali Grid Order</button>` 
+            : `<p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0;"><i class="fa-solid fa-triangle-exclamation"></i> Qualifying results not loaded or not yet available for this weekend.</p>`}
+          <button id="alt-load-latest-race-btn-placeholder" class="alt-btn-secondary"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
+        </div>
       `;
 
       // Wire up the Load Quali button
@@ -790,6 +954,14 @@ function renderRaceEditor() {
             loadQualiOrderAsResults(qualiForMeeting, currentSessionKey);
           });
         }
+      }
+
+      // Wire up the Copy Latest Race button in placeholder
+      const copyLatestBtnPlaceholder = document.getElementById('alt-load-latest-race-btn-placeholder');
+      if (copyLatestBtnPlaceholder) {
+        copyLatestBtnPlaceholder.addEventListener('click', () => {
+          copyLatestRaceOrder();
+        });
       }
     }
   }

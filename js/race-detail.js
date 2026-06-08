@@ -1064,6 +1064,407 @@ async function loadAndRenderOvertakes(container) {
 
 // ── Tab Renderers ──
 
+function getOrCreateGlobalTooltip() {
+  let tooltip = document.getElementById('global-chart-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'global-chart-tooltip';
+    tooltip.style = `
+      display: none;
+      position: fixed;
+      z-index: 99999;
+      pointer-events: none;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(15, 15, 26, 0.96);
+      box-shadow: 0 10px 32px rgba(0,0,0,0.75);
+      font-family: inherit;
+      font-size: 0.75rem;
+      min-width: 140px;
+    `;
+    document.body.appendChild(tooltip);
+  }
+  return tooltip;
+}
+
+function initInteractiveChart(canvas, tooltip, chartType, isEnlarged = false) {
+  const { laps, order, driverMap } = raceDataCache;
+  const isLap = chartType === 'laptimes';
+
+  const selected = isLap 
+    ? raceDataCache.selectedLapDrivers 
+    : raceDataCache.selectedPositionDrivers;
+
+  const zoom = isLap 
+    ? (raceDataCache.lapTimesZoom || { start: 1, end: null })
+    : (raceDataCache.positionsZoom || { start: 1, end: null });
+
+  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 1);
+  const start = zoom.start || 1;
+  const end = zoom.end || maxLap;
+
+  // Build X-axis labels for the zoomed range
+  const xLabels = [];
+  for (let l = start; l <= end; l++) {
+    xLabels.push(l);
+  }
+  const maxLen = xLabels.length;
+
+  // Build cumulative position rankings if positions chart
+  let positionsByLap = null;
+  if (!isLap) {
+    const allDriversInSession = [...new Set(laps.map(l => l.driver_number))];
+    const driverCumTime = new Map();
+    for (const dn of allDriversInSession) {
+      const dLaps = laps.filter(l => l.driver_number === dn).sort((a, b) => a.lap_number - b.lap_number);
+      let cumTime = 0;
+      const cumArr = [];
+      for (const l of dLaps) {
+        cumTime += (l.lap_duration || 200);
+        cumArr.push({ lap: l.lap_number, cumTime });
+      }
+      driverCumTime.set(dn, cumArr);
+    }
+
+    positionsByLap = new Map();
+    for (const dn of allDriversInSession) {
+      positionsByLap.set(dn, new Array(maxLap).fill(null));
+    }
+
+    for (let lap = 1; lap <= maxLap; lap++) {
+      const rankings = [];
+      for (const dn of allDriversInSession) {
+        const cumArr = driverCumTime.get(dn);
+        const entry = cumArr.find(c => c.lap === lap);
+        if (entry) {
+          rankings.push({ dn, cumTime: entry.cumTime });
+        }
+      }
+      rankings.sort((a, b) => a.cumTime - b.cumTime);
+      rankings.forEach((r, idx) => {
+        const arr = positionsByLap.get(r.dn);
+        if (arr) arr[lap - 1] = idx + 1;
+      });
+    }
+  }
+
+  function getFilteredDatasets() {
+    return Array.from(selected).map(driver_number => {
+      const d = driverMap.get(driver_number) || {};
+      let rawData = [];
+      if (isLap) {
+        const driverLaps = laps.filter(l => l.driver_number === driver_number);
+        rawData = new Array(maxLap).fill(null);
+        for (const l of driverLaps) {
+          if (l.lap_duration && !l.is_pit_out_lap && l.lap_number > 1) {
+            rawData[l.lap_number - 1] = l.lap_duration;
+          }
+        }
+      } else {
+        rawData = positionsByLap.get(driver_number) || [];
+      }
+
+      // Slice the data to the zoomed range [start - 1, end - 1]
+      const slicedData = rawData.slice(start - 1, end);
+
+      return {
+        label: d.name_acronym || `#${driver_number}`,
+        driver_number,
+        data: slicedData,
+        color: getTeamColor(d.team_colour),
+        alpha: isLap ? 0.7 : 0.85,
+      };
+    });
+  }
+
+  function draw(hoveredIndex = undefined) {
+    const datasets = getFilteredDatasets();
+    const drawFunc = isLap ? drawLineChart : drawPositionChart;
+    drawFunc(canvas, datasets, { xLabel: 'Lap', hoveredIndex, xLabels });
+  }
+
+  // Bind mouse hover tooltip
+  if (canvas && tooltip) {
+    const onMouseMove = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const padLeft = 60;
+      const padRight = 20;
+      const plotW = rect.width - padLeft - padRight;
+
+      if (mouseX >= padLeft && mouseX <= rect.width - padRight) {
+        const plotX = mouseX - padLeft;
+        const ratio = plotX / plotW;
+        const hoveredIndex = Math.round(ratio * (maxLen - 1));
+
+        if (hoveredIndex >= 0 && hoveredIndex < maxLen) {
+          draw(hoveredIndex);
+
+          // Get actual lap number from xLabels
+          const lapNumber = xLabels[hoveredIndex];
+          const datasets = getFilteredDatasets();
+
+          const lapValues = datasets
+            .map(ds => {
+              const val = ds.data[hoveredIndex];
+              return {
+                label: ds.label,
+                color: ds.color,
+                val
+              };
+            })
+            .filter(item => item.val != null)
+            .sort((a, b) => a.val - b.val);
+
+          if (lapValues.length > 0) {
+            let tooltipHtml = `<div style="font-weight:700; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:4px; margin-bottom:6px; color:#fff;">Lap ${lapNumber}</div>`;
+            tooltipHtml += `<div style="display:flex; flex-direction:column; gap:4px;">`;
+            lapValues.forEach(item => {
+              const valStr = isLap ? formatLapTime(item.val) : `P${item.val}`;
+              tooltipHtml += `<div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <span style="display:inline-flex; align-items:center; gap:6px;">
+                  <span style="width:6px; height:6px; background:${item.color}; border-radius:50%; display:inline-block;"></span>
+                  <span style="color:var(--text-secondary);font-weight:600;">${item.label}</span>
+                </span>
+                <span style="font-family:\'JetBrains Mono\',monospace; color:#fff; font-weight:700;">${valStr}</span>
+              </div>`;
+            });
+            tooltipHtml += `</div>`;
+
+            tooltip.innerHTML = tooltipHtml;
+            tooltip.style.display = 'block';
+
+            // Position tooltip globally relative to viewport to avoid z-index & overflow clipping!
+            const tooltipRect = tooltip.getBoundingClientRect();
+            let tooltipX = e.clientX + 15;
+            let tooltipY = e.clientY + 15;
+
+            // Prevent tooltip from overflowing the viewport boundaries
+            if (tooltipX + tooltipRect.width > window.innerWidth) {
+              tooltipX = e.clientX - tooltipRect.width - 15;
+            }
+            if (tooltipY + tooltipRect.height > window.innerHeight) {
+              tooltipY = e.clientY - tooltipRect.height - 15;
+            }
+
+            tooltip.style.left = `${tooltipX}px`;
+            tooltip.style.top = `${tooltipY}px`;
+          } else {
+            tooltip.style.display = 'none';
+          }
+        } else {
+          tooltip.style.display = 'none';
+          draw(undefined);
+        }
+      } else {
+        tooltip.style.display = 'none';
+        draw(undefined);
+      }
+    };
+
+    const onMouseLeave = () => {
+      tooltip.style.display = 'none';
+      draw(undefined);
+    };
+
+    // Remove old listeners by replacing canvas
+    const newCanvas = canvas.cloneNode(true);
+    canvas.parentNode.replaceChild(newCanvas, canvas);
+    canvas = newCanvas;
+
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseleave', onMouseLeave);
+
+    // Initial draw
+    draw(undefined);
+  }
+}
+
+function openEnlargedChartModal(chartType) {
+  const isLap = chartType === 'laptimes';
+  const { laps, order, driverMap } = raceDataCache;
+
+  const selected = isLap 
+    ? raceDataCache.selectedLapDrivers 
+    : raceDataCache.selectedPositionDrivers;
+
+  const zoom = isLap 
+    ? raceDataCache.lapTimesZoom 
+    : raceDataCache.positionsZoom;
+
+  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 1);
+
+  // Create full screen overlay modal
+  const modal = document.createElement('div');
+  modal.id = 'enlarged-chart-modal';
+  modal.style = `
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(10, 10, 18, 0.98);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    box-sizing: border-box;
+    font-family: inherit;
+  `;
+
+  // Get unique drivers
+  const allDriversInSession = [...new Set(laps.map(l => l.driver_number))];
+  const sessionDriversSorted = order
+    .filter(o => allDriversInSession.includes(o.driver_number))
+    .map(o => o.driver_number);
+  for (const dn of allDriversInSession) {
+    if (!sessionDriversSorted.includes(dn)) {
+      sessionDriversSorted.push(dn);
+    }
+  }
+
+  // Generate selector pills HTML
+  const pillsHtml = sessionDriversSorted.map(dn => {
+    const d = driverMap.get(dn) || {};
+    const acronym = d.name_acronym || `#${dn}`;
+    const color = getTeamColor(d.team_colour);
+    const isChecked = selected.has(dn);
+    const activeStyle = isChecked 
+      ? `background:${color}22; border-color:${color}; color:#fff; font-weight:700;` 
+      : `background:rgba(255,255,255,0.01); border-color:rgba(255,255,255,0.06); color:var(--text-muted);`;
+
+    return `<button class="modal-driver-filter-pill" data-driver="${dn}" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.75rem; transition:all var(--transition-fast); ${activeStyle}">
+      <span style="width:8px; height:8px; background:${color}; border-radius:50%; display:inline-block;"></span>
+      ${acronym}
+    </button>`;
+  }).join('');
+
+  // Dropdown options
+  let startOptionsHtml = '';
+  let endOptionsHtml = '';
+  for (let l = 1; l <= maxLap; l++) {
+    startOptionsHtml += `<option value="${l}" ${zoom.start === l ? 'selected' : ''}>Lap ${l}</option>`;
+    endOptionsHtml += `<option value="${l}" ${zoom.end === l ? 'selected' : ''}>Lap ${l}</option>`;
+  }
+
+  modal.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px;">
+      <div style="font-family:'Outfit',sans-serif; font-size:1.5rem; font-weight:800; color:#fff;">
+        ${isLap ? 'Lap Times' : 'Position Changes'} — Enlarged Focus View
+      </div>
+      <button id="modal-close-btn" style="background:none; border:none; color:#fff; font-size:1.8rem; cursor:pointer; outline:none; transition:color 150ms ease;">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:20px; margin-bottom:16px; flex-wrap:wrap; font-size:0.8rem; border-bottom:1px dashed rgba(255,255,255,0.06); padding-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:var(--text-muted); font-weight:600;"><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom Focus Section:</span>
+        <select id="modal-zoom-start" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:4px 10px; font-family:inherit; outline:none; cursor:pointer;">
+          ${startOptionsHtml}
+        </select>
+        <span style="color:var(--text-muted);">to</span>
+        <select id="modal-zoom-end" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:4px 10px; font-family:inherit; outline:none; cursor:pointer;">
+          ${endOptionsHtml}
+        </select>
+      </div>
+      <button id="modal-zoom-reset" style="background:none; border:none; color:var(--f1-red); font-family:inherit; cursor:pointer; font-weight:700; padding:0; display:inline-flex; align-items:center; gap:4px; outline:none;">
+        <i class="fa-solid fa-rotate-left"></i> Reset Zoom Focus
+      </button>
+    </div>
+
+    <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px; font-weight:600;">Filter drivers on chart:</div>
+    <div class="modal-pills-container" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; overflow-y:auto; max-height:80px; padding:4px 0;">
+      ${pillsHtml}
+    </div>
+
+    <div style="flex:1; width:100%; min-height:0; position:relative; display:flex; justify-content:center;">
+      <canvas id="modal-chart-canvas" style="width:100%; height:100%; cursor:crosshair;"></canvas>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const canvas = document.getElementById('modal-chart-canvas');
+  const tooltip = getOrCreateGlobalTooltip();
+
+  const drawModal = () => {
+    initInteractiveChart(document.getElementById('modal-chart-canvas'), tooltip, chartType, true);
+  };
+
+  const close = () => {
+    document.removeEventListener('keydown', onEsc);
+    modal.remove();
+    tooltip.style.display = 'none';
+    
+    // Re-draw standard page view to refresh it
+    const pageContent = document.getElementById('race-detail-content');
+    if (isLap) renderLapTimes(pageContent);
+    else renderPositions(pageContent);
+  };
+
+  const onEsc = (e) => {
+    if (e.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', onEsc);
+
+  document.getElementById('modal-close-btn').addEventListener('click', close);
+
+  // Wire modal pills clicking
+  modal.querySelectorAll('.modal-driver-filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const dn = parseInt(pill.dataset.driver, 10);
+      if (selected.has(dn)) {
+        if (selected.size > 1) selected.delete(dn);
+      } else {
+        selected.add(dn);
+      }
+      
+      // Update pill classes styling
+      modal.querySelectorAll('.modal-driver-filter-pill').forEach(p => {
+        const pDn = parseInt(p.dataset.driver, 10);
+        const pColor = getTeamColor(driverMap.get(pDn).team_colour);
+        const isChecked = selected.has(pDn);
+        p.style.cssText = isChecked 
+          ? `cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.75rem; transition:all var(--transition-fast); background:${pColor}22; border-color:${pColor}; color:#fff; font-weight:700;` 
+          : `cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.75rem; transition:all var(--transition-fast); background:rgba(255,255,255,0.01); border-color:rgba(255,255,255,0.06); color:var(--text-muted);`;
+      });
+      drawModal();
+    });
+  });
+
+  // Wire modal zoom changes
+  const mStart = document.getElementById('modal-zoom-start');
+  const mEnd = document.getElementById('modal-zoom-end');
+  const mReset = document.getElementById('modal-zoom-reset');
+
+  const onModalZoomChange = () => {
+    let sVal = parseInt(mStart.value, 10);
+    let eVal = parseInt(mEnd.value, 10);
+    if (sVal > eVal) {
+      eVal = sVal;
+      mEnd.value = sVal;
+    }
+    zoom.start = sVal;
+    zoom.end = eVal;
+    drawModal();
+  };
+
+  mStart.addEventListener('change', onModalZoomChange);
+  mEnd.addEventListener('change', onModalZoomChange);
+
+  mReset.addEventListener('click', () => {
+    zoom.start = 1;
+    zoom.end = maxLap;
+    mStart.value = 1;
+    mEnd.value = maxLap;
+    drawModal();
+  });
+
+  // Trigger initial draw
+  drawModal();
+}
+
 function renderLapTimes(container) {
   const { laps, order, driverMap } = raceDataCache;
 
@@ -1072,47 +1473,139 @@ function renderLapTimes(container) {
     return;
   }
 
-  const topDrivers = order.slice(0, 10);
-  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 0);
-
-  const datasets = topDrivers.map(({ driver_number }) => {
-    const d = driverMap.get(driver_number) || {};
-    const driverLaps = laps.filter(l => l.driver_number === driver_number);
-
-    const data = new Array(maxLap).fill(null);
-    for (const l of driverLaps) {
-      if (l.lap_duration && !l.is_pit_out_lap && l.lap_number > 1) {
-        data[l.lap_number - 1] = l.lap_duration;
-      }
+  // Get all unique drivers in the laps data
+  const allDriversInSession = [...new Set(laps.map(l => l.driver_number))];
+  const sessionDriversSorted = order
+    .filter(o => allDriversInSession.includes(o.driver_number))
+    .map(o => o.driver_number);
+  for (const dn of allDriversInSession) {
+    if (!sessionDriversSorted.includes(dn)) {
+      sessionDriversSorted.push(dn);
     }
+  }
 
-    return {
-      label: d.name_acronym || `#${driver_number}`,
-      data,
-      color: getTeamColor(d.team_colour),
-      alpha: 0.7,
-    };
-  });
+  // By default, select the top 10 finishers
+  if (!raceDataCache.selectedLapDrivers) {
+    raceDataCache.selectedLapDrivers = new Set(sessionDriversSorted.slice(0, 10));
+  }
+  const selected = raceDataCache.selectedLapDrivers;
+  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 1);
+
+  // Initialize zoom
+  if (!raceDataCache.lapTimesZoom) {
+    raceDataCache.lapTimesZoom = { start: 1, end: maxLap };
+  }
+  const zoom = raceDataCache.lapTimesZoom;
+
+  // Generate HTML for driver selection pills
+  const pillsHtml = sessionDriversSorted.map(dn => {
+    const d = driverMap.get(dn) || {};
+    const acronym = d.name_acronym || `#${dn}`;
+    const color = getTeamColor(d.team_colour);
+    const isChecked = selected.has(dn);
+    const activeStyle = isChecked 
+      ? `background:${color}22; border-color:${color}; color:#fff; font-weight:700;` 
+      : `background:rgba(255,255,255,0.01); border-color:rgba(255,255,255,0.06); color:var(--text-muted);`;
+
+    return `<button class="driver-filter-pill" data-driver="${dn}" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.72rem; transition:all var(--transition-fast); ${activeStyle}">
+      <span style="width:8px; height:8px; background:${color}; border-radius:50%; display:inline-block;"></span>
+      ${acronym}
+    </button>`;
+  }).join('');
+
+  // Dropdown options
+  let startOptionsHtml = '';
+  let endOptionsHtml = '';
+  for (let l = 1; l <= maxLap; l++) {
+    startOptionsHtml += `<option value="${l}" ${zoom.start === l ? 'selected' : ''}>Lap ${l}</option>`;
+    endOptionsHtml += `<option value="${l}" ${zoom.end === l ? 'selected' : ''}>Lap ${l}</option>`;
+  }
 
   container.innerHTML = `
-    <div class="chart-container">
-      <div class="chart-title">Lap Times — Top 10 Finishers</div>
-      <canvas class="chart-canvas" id="laptimes-chart"></canvas>
-    </div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
-      ${datasets.map(ds => `
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:var(--text-muted);">
-          <span style="width:12px;height:3px;background:${ds.color};border-radius:2px;display:inline-block;"></span>
-          ${ds.label}
-        </span>
-      `).join('')}
+    <div class="chart-container" style="position: relative;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-xs); flex-wrap:wrap; gap:12px;">
+        <div class="chart-title" style="margin-bottom:0;">Lap Times</div>
+        <button id="laptimes-enlarge-btn" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); color:#fff; font-family:inherit; font-size:0.72rem; font-weight:700; cursor:pointer; padding:6px 12px; border-radius:100px; display:inline-flex; align-items:center; gap:6px; outline:none; transition:all var(--transition-fast);">
+          <i class="fa-solid fa-expand"></i> Enlarge Chart
+        </button>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; font-size:0.75rem; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="color:var(--text-muted); font-weight:600;"><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom Focus Section:</span>
+          <select id="laptimes-zoom-start" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:3px 8px; font-family:inherit; outline:none; cursor:pointer;">
+            ${startOptionsHtml}
+          </select>
+          <span style="color:var(--text-muted);">to</span>
+          <select id="laptimes-zoom-end" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:3px 8px; font-family:inherit; outline:none; cursor:pointer;">
+            ${endOptionsHtml}
+          </select>
+        </div>
+        <button id="laptimes-zoom-reset" style="background:none; border:none; color:var(--f1-red); font-family:inherit; cursor:pointer; font-weight:700; padding:0; display:inline-flex; align-items:center; gap:4px; outline:none; font-size:0.72rem;">
+          <i class="fa-solid fa-rotate-left"></i> Reset Zoom
+        </button>
+      </div>
+
+      <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px; font-weight:600;">Filter drivers to display on chart:</div>
+      <div class="driver-filter-pills-container" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:20px; max-height:80px; overflow-y:auto; padding:4px 0;">
+        ${pillsHtml}
+      </div>
+      <canvas class="chart-canvas" id="laptimes-chart" style="cursor: crosshair;"></canvas>
     </div>
   `;
 
-  requestAnimationFrame(() => {
-    const canvas = document.getElementById('laptimes-chart');
-    if (canvas) drawLineChart(canvas, datasets, { xLabel: 'Lap' });
+  const canvas = document.getElementById('laptimes-chart');
+  const tooltip = getOrCreateGlobalTooltip();
+
+  // Add click handlers for driver filter pills
+  container.querySelectorAll('.driver-filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const dn = parseInt(pill.dataset.driver, 10);
+      if (selected.has(dn)) {
+        if (selected.size > 1) selected.delete(dn);
+      } else {
+        selected.add(dn);
+      }
+      renderLapTimes(container);
+    });
   });
+
+  // Wire up zoom selectors
+  const zStart = document.getElementById('laptimes-zoom-start');
+  const zEnd = document.getElementById('laptimes-zoom-end');
+  const zReset = document.getElementById('laptimes-zoom-reset');
+
+  const onZoomChange = () => {
+    let sVal = parseInt(zStart.value, 10);
+    let eVal = parseInt(zEnd.value, 10);
+    if (sVal > eVal) {
+      eVal = sVal;
+      zEnd.value = sVal;
+    }
+    zoom.start = sVal;
+    zoom.end = eVal;
+    initInteractiveChart(document.getElementById('laptimes-chart'), tooltip, 'laptimes');
+  };
+
+  zStart.addEventListener('change', onZoomChange);
+  zEnd.addEventListener('change', onZoomChange);
+
+  zReset.addEventListener('click', () => {
+    zoom.start = 1;
+    zoom.end = maxLap;
+    zStart.value = 1;
+    zEnd.value = maxLap;
+    initInteractiveChart(document.getElementById('laptimes-chart'), tooltip, 'laptimes');
+  });
+
+  // Enlarge button click
+  const enlargeBtn = document.getElementById('laptimes-enlarge-btn');
+  enlargeBtn.addEventListener('click', () => {
+    openEnlargedChartModal('laptimes');
+  });
+
+  // Initial draw
+  initInteractiveChart(canvas, tooltip, 'laptimes');
 }
 
 function renderPositions(container) {
@@ -1123,74 +1616,137 @@ function renderPositions(container) {
     return;
   }
 
-  const topDrivers = order.slice(0, 10);
-  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 0);
-
-  // Build cumulative time per driver and rank
-  const allDriverNums = [...new Set(laps.map(l => l.driver_number))];
-  const driverCumTime = new Map();
-
-  for (const dn of allDriverNums) {
-    const dLaps = laps.filter(l => l.driver_number === dn).sort((a, b) => a.lap_number - b.lap_number);
-    let cumTime = 0;
-    const cumArr = [];
-    for (const l of dLaps) {
-      cumTime += (l.lap_duration || 200);
-      cumArr.push({ lap: l.lap_number, cumTime });
+  const allDriversInSession = [...new Set(laps.map(l => l.driver_number))];
+  const sessionDriversSorted = order
+    .filter(o => allDriversInSession.includes(o.driver_number))
+    .map(o => o.driver_number);
+  for (const dn of allDriversInSession) {
+    if (!sessionDriversSorted.includes(dn)) {
+      sessionDriversSorted.push(dn);
     }
-    driverCumTime.set(dn, cumArr);
   }
 
-  // For each lap, rank drivers by cumulative time
-  const positionsByLap = new Map();
-  for (const dn of allDriverNums) {
-    positionsByLap.set(dn, new Array(maxLap).fill(null));
+  // By default, select the top 10 finishers
+  if (!raceDataCache.selectedPositionDrivers) {
+    raceDataCache.selectedPositionDrivers = new Set(sessionDriversSorted.slice(0, 10));
   }
+  const selected = raceDataCache.selectedPositionDrivers;
+  const maxLap = Math.max(...laps.map(l => l.lap_number).filter(n => !isNaN(n)), 1);
 
-  for (let lap = 1; lap <= maxLap; lap++) {
-    const rankings = [];
-    for (const dn of allDriverNums) {
-      const cumArr = driverCumTime.get(dn);
-      const entry = cumArr.find(c => c.lap === lap);
-      if (entry) {
-        rankings.push({ dn, cumTime: entry.cumTime });
-      }
-    }
-    rankings.sort((a, b) => a.cumTime - b.cumTime);
-    rankings.forEach((r, idx) => {
-      const arr = positionsByLap.get(r.dn);
-      if (arr) arr[lap - 1] = idx + 1;
-    });
+  // Initialize zoom
+  if (!raceDataCache.positionsZoom) {
+    raceDataCache.positionsZoom = { start: 1, end: maxLap };
   }
+  const zoom = raceDataCache.positionsZoom;
 
-  const datasets = topDrivers.map(({ driver_number }) => {
-    const d = driverMap.get(driver_number) || {};
-    return {
-      label: d.name_acronym || `#${driver_number}`,
-      data: positionsByLap.get(driver_number) || [],
-      color: getTeamColor(d.team_colour),
-    };
-  });
+  const pillsHtml = sessionDriversSorted.map(dn => {
+    const d = driverMap.get(dn) || {};
+    const acronym = d.name_acronym || `#${dn}`;
+    const color = getTeamColor(d.team_colour);
+    const isChecked = selected.has(dn);
+    const activeStyle = isChecked 
+      ? `background:${color}22; border-color:${color}; color:#fff; font-weight:700;` 
+      : `background:rgba(255,255,255,0.01); border-color:rgba(255,255,255,0.06); color:var(--text-muted);`;
+
+    return `<button class="driver-pos-filter-pill" data-driver="${dn}" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.72rem; transition:all var(--transition-fast); ${activeStyle}">
+      <span style="width:8px; height:8px; background:${color}; border-radius:50%; display:inline-block;"></span>
+      ${acronym}
+    </button>`;
+  }).join('');
+
+  // Dropdown options
+  let startOptionsHtml = '';
+  let endOptionsHtml = '';
+  for (let l = 1; l <= maxLap; l++) {
+    startOptionsHtml += `<option value="${l}" ${zoom.start === l ? 'selected' : ''}>Lap ${l}</option>`;
+    endOptionsHtml += `<option value="${l}" ${zoom.end === l ? 'selected' : ''}>Lap ${l}</option>`;
+  }
 
   container.innerHTML = `
-    <div class="chart-container">
-      <div class="chart-title">Position Changes — Top 10</div>
-      <canvas class="chart-canvas" id="positions-chart"></canvas>
-    </div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
-      ${datasets.map(ds => `
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:var(--text-muted);">
-          <span style="width:12px;height:3px;background:${ds.color};border-radius:2px;display:inline-block;"></span>
-          ${ds.label}
-        </span>
-      `).join('')}
+    <div class="chart-container" style="position: relative;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-xs); flex-wrap:wrap; gap:12px;">
+        <div class="chart-title" style="margin-bottom:0;">Position Changes</div>
+        <button id="positions-enlarge-btn" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); color:#fff; font-family:inherit; font-size:0.72rem; font-weight:700; cursor:pointer; padding:6px 12px; border-radius:100px; display:inline-flex; align-items:center; gap:6px; outline:none; transition:all var(--transition-fast);">
+          <i class="fa-solid fa-expand"></i> Enlarge Chart
+        </button>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; font-size:0.75rem; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="color:var(--text-muted); font-weight:600;"><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom Focus Section:</span>
+          <select id="positions-zoom-start" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:3px 8px; font-family:inherit; outline:none; cursor:pointer;">
+            ${startOptionsHtml}
+          </select>
+          <span style="color:var(--text-muted);">to</span>
+          <select id="positions-zoom-end" style="background:var(--bg-secondary); border:1px solid var(--border-subtle); color:#fff; border-radius:4px; padding:3px 8px; font-family:inherit; outline:none; cursor:pointer;">
+            ${endOptionsHtml}
+          </select>
+        </div>
+        <button id="positions-zoom-reset" style="background:none; border:none; color:var(--f1-red); font-family:inherit; cursor:pointer; font-weight:700; padding:0; display:inline-flex; align-items:center; gap:4px; outline:none; font-size:0.72rem;">
+          <i class="fa-solid fa-rotate-left"></i> Reset Zoom
+        </button>
+      </div>
+
+      <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px; font-weight:600;">Filter drivers to display on chart:</div>
+      <div class="driver-filter-pills-container" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:20px; max-height:80px; overflow-y:auto; padding:4px 0;">
+        ${pillsHtml}
+      </div>
+      <canvas class="chart-canvas" id="positions-chart" style="cursor: crosshair;"></canvas>
     </div>
   `;
 
-  requestAnimationFrame(() => {
-    const canvas = document.getElementById('positions-chart');
-    if (canvas) drawPositionChart(canvas, datasets, { xLabel: 'Lap' });
+  const canvas = document.getElementById('positions-chart');
+  const tooltip = getOrCreateGlobalTooltip();
+
+  // Click handlers for driver filter pills
+  container.querySelectorAll('.driver-pos-filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const dn = parseInt(pill.dataset.driver, 10);
+      if (selected.has(dn)) {
+        if (selected.size > 1) selected.delete(dn);
+      } else {
+        selected.add(dn);
+      }
+      renderPositions(container);
+    });
   });
+
+  // Wire up zoom selectors
+  const zStart = document.getElementById('positions-zoom-start');
+  const zEnd = document.getElementById('positions-zoom-end');
+  const zReset = document.getElementById('positions-zoom-reset');
+
+  const onZoomChange = () => {
+    let sVal = parseInt(zStart.value, 10);
+    let eVal = parseInt(zEnd.value, 10);
+    if (sVal > eVal) {
+      eVal = sVal;
+      zEnd.value = sVal;
+    }
+    zoom.start = sVal;
+    zoom.end = eVal;
+    initInteractiveChart(document.getElementById('positions-chart'), tooltip, 'positions');
+  };
+
+  zStart.addEventListener('change', onZoomChange);
+  zEnd.addEventListener('change', onZoomChange);
+
+  zReset.addEventListener('click', () => {
+    zoom.start = 1;
+    zoom.end = maxLap;
+    zStart.value = 1;
+    zEnd.value = maxLap;
+    initInteractiveChart(document.getElementById('positions-chart'), tooltip, 'positions');
+  });
+
+  // Enlarge button click
+  const enlargeBtn = document.getElementById('positions-enlarge-btn');
+  enlargeBtn.addEventListener('click', () => {
+    openEnlargedChartModal('positions');
+  });
+
+  // Initial draw
+  initInteractiveChart(canvas, tooltip, 'positions');
 }
 
 function renderStrategy(container) {

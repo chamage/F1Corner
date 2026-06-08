@@ -34,6 +34,7 @@ export function drawLineChart(canvas, datasets, options = {}) {
     yMax: forceYMax,
     yDecimals,
     hoveredIndex,
+    xLabels,
   } = options;
 
   const plotW = W - padLeft - padRight;
@@ -106,7 +107,8 @@ export function drawLineChart(canvas, datasets, options = {}) {
     ctx.textAlign = 'center';
     const step = Math.max(1, Math.floor(maxLen / 10));
     for (let i = 0; i < maxLen; i += step) {
-      ctx.fillText(i + 1, xPos(i), H - padBottom + 20);
+      const labelText = xLabels ? xLabels[i] : (i + 1);
+      ctx.fillText(labelText, xPos(i), H - padBottom + 20);
     }
     if (xLabel) {
       ctx.fillText(xLabel, padLeft + plotW / 2, H - 5);

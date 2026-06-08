@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v121'; // v121: auto-expire recent races cache for steward decisions/penalties
+const CACHE_NAME = 'pitcorner-shell-v129'; // v129: support constructor finishing position heatmap toggling
 const STATIC_ASSETS = [
   './',
   './index.html',

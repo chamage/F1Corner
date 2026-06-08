@@ -191,9 +191,20 @@
         <button id="standings-constructors-btn">Constructors</button>
       </div>
 
-      <div class="glass-card">
+      <div class="glass-card" style="margin-bottom: var(--space-lg);">
         <div id="standings-content">
           <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+          <div class="skeleton skeleton-row"></div>
+        </div>
+      </div>
+
+      <!-- Heatmap Card -->
+      <div class="glass-card">
+        <div class="panel-header" style="margin-bottom: var(--space-md); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-md); flex-wrap:nowrap;">
+          <h3><i class="fa-solid fa-fire" style="color:var(--f1-red);"></i> Heatmap</h3>
+        </div>
+        <div id="standings-heatmap-content">
           <div class="skeleton skeleton-row"></div>
           <div class="skeleton skeleton-row"></div>
         </div>
@@ -346,6 +357,7 @@
             </div>
             
             <div id="althistory-editor-footer" class="althistory-editor-footer" style="display:none;">
+              <button id="alt-copy-latest-btn" class="alt-btn-secondary" style="margin-right:auto;"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
               <button id="althistory-save-btn" class="alt-btn-success"><i class="fa-solid fa-floppy-disk"></i> Apply & Save results</button>
             </div>
           </div>
@@ -356,6 +368,7 @@
               <h3><i class="fa-solid fa-chart-line"></i> Sandbox Analytics</h3>
               <div class="althistory-tabs">
                 <button class="alt-tab-btn active" data-tab="alt-standings">Standings</button>
+                <button class="alt-tab-btn" data-tab="alt-heatmap">Heatmap</button>
                 <button class="alt-tab-btn" data-tab="alt-chart">Chart</button>
                 <button class="alt-tab-btn" data-tab="alt-settings">Settings</button>
               </div>
@@ -369,6 +382,17 @@
                   <button id="alt-standings-constructors-btn">Constructors</button>
                 </div>
                 <div id="althistory-standings-container">
+                  <!-- Rendered dynamically -->
+                </div>
+              </div>
+
+              <!-- Heatmap Tab -->
+              <div id="alt-tab-content-heatmap" class="alt-tab-content" style="display:none;">
+                <div class="standings-toggle" style="margin-bottom: 12px; margin-top: 0;">
+                  <button class="active" id="alt-heatmap-drivers-btn">Drivers</button>
+                  <button id="alt-heatmap-constructors-btn">Constructors</button>
+                </div>
+                <div id="althistory-heatmap-container">
                   <!-- Rendered dynamically -->
                 </div>
               </div>
