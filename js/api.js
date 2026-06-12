@@ -62,6 +62,42 @@ function translateNationalityToCountry(nationality) {
   return NATIONALITY_TO_COUNTRY[clean] || null;
 }
 
+export const ISO3_TO_COUNTRY = {
+  ARG: { country: 'Argentina', code: 'ar' },
+  AUS: { country: 'Australia', code: 'au' },
+  AUT: { country: 'Austria', code: 'at' },
+  AZE: { country: 'Azerbaijan', code: 'az' },
+  BEL: { country: 'Belgium', code: 'be' },
+  BRA: { country: 'Brazil', code: 'br' },
+  CAN: { country: 'Canada', code: 'ca' },
+  CHN: { country: 'China', code: 'cn' },
+  DEN: { country: 'Denmark', code: 'dk' },
+  ESP: { country: 'Spain', code: 'es' },
+  FIN: { country: 'Finland', code: 'fi' },
+  FRA: { country: 'France', code: 'fr' },
+  GBR: { country: 'United Kingdom', code: 'gb' },
+  GER: { country: 'Germany', code: 'de' },
+  IND: { country: 'India', code: 'in' },
+  ITA: { country: 'Italy', code: 'it' },
+  JPN: { country: 'Japan', code: 'jp' },
+  MEX: { country: 'Mexico', code: 'mx' },
+  MON: { country: 'Monaco', code: 'mc' },
+  NED: { country: 'Netherlands', code: 'nl' },
+  NZL: { country: 'New Zealand', code: 'nz' },
+  POL: { country: 'Poland', code: 'pl' },
+  RUS: { country: 'Russia', code: 'ru' },
+  SGP: { country: 'Singapore', code: 'sg' },
+  SUI: { country: 'Switzerland', code: 'ch' },
+  THA: { country: 'Thailand', code: 'th' },
+  USA: { country: 'United States', code: 'us' },
+  ISR: { country: 'Israel', code: 'il' },
+  EST: { country: 'Estonia', code: 'ee' },
+  SWE: { country: 'Sweden', code: 'se' },
+  BAR: { country: 'Barbados', code: 'bb' },
+  IRL: { country: 'Ireland', code: 'ie' },
+  NOR: { country: 'Norway', code: 'no' }
+};
+
 const API_BASE = 'https://api.openf1.org/v1';
 
 // ── Jolpi Ergast Historical mirror Integration ──
@@ -945,7 +981,32 @@ export async function getDrivers(params = {}) {
       return data.driversBySession.get(params.session_key) || [];
     }
   }
-  return fetchAPI('/drivers', params);
+  const drivers = await fetchAPI('/drivers', params);
+  if (Array.isArray(drivers)) {
+    let year = 2025;
+    if (params.year) {
+      year = parseInt(params.year) || 2025;
+    } else if (params.session_key && typeof params.session_key === 'string') {
+      // Try to parse year from session_key if it's formatted as YYYY_something
+      const match = params.session_key.match(/^(\d{4})/);
+      if (match) year = parseInt(match[1]) || 2025;
+    }
+    for (const d of drivers) {
+      if (d.name_acronym) {
+        const acronym = d.name_acronym.toUpperCase();
+        if (!d.headshot_url) {
+          d.headshot_url = getDriverHeadshot(acronym, year) || null;
+        }
+        if (d.country_code) {
+          const iso3 = d.country_code.toUpperCase();
+          if (!DRIVER_NATIONALITY[acronym] && ISO3_TO_COUNTRY[iso3]) {
+            DRIVER_NATIONALITY[acronym] = ISO3_TO_COUNTRY[iso3];
+          }
+        }
+      }
+    }
+  }
+  return drivers;
 }
 
 export async function getLaps(params = {}) {
