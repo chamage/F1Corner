@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v134'; // v134: merge weekend drivers to heal missing FP1 photos/teams
+const CACHE_NAME = 'pitcorner-shell-v129'; // v129: support constructor finishing position heatmap toggling
 const STATIC_ASSETS = [
   './',
   './index.html',

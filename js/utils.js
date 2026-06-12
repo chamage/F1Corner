@@ -247,28 +247,12 @@ const OFFICIAL_F1_PHOTOS = {
   ZHO: 'guanyu01',
   MAG: 'magnus01',
   SAR: 'sargea01',
-  LIN: 'lindba01',
-  DOO: 'doohan01',
-  SHW: 'shwart01',
-  DRU: 'drugov01',
-  OWA: 'oward01',
-  POU: 'pourch01',
-  VES: 'vesti01',
-  OSU: 'osulli01',
-  BRO: 'browni01',
-  IWA: 'iwasa01',
-  BEG: 'begano01',
-  ARO: 'aron01',
-  FOR: 'fornar01',
-  HER: 'herta01'
+  LIN: 'lindba01'
 };
 
 export function getDriverHeadshot(acronym, year = 2025) {
   const file = OFFICIAL_F1_PHOTOS[acronym?.toUpperCase()];
-  if (!file) return 'https://media.formula1.com/d_driver_fallback_image.png';
-  if (year >= 2024) {
-    return 'https://media.formula1.com/d_driver_fallback_image.png';
-  }
+  if (!file) return null;
   return `https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/${year}Drivers/${file}.png`;
 }
 
@@ -301,19 +285,6 @@ export const DRIVER_NATIONALITY = {
   BOR: { country: 'Brazil', code: 'br' },
   ANT: { country: 'Italy', code: 'it' },
   LIN: { country: 'United Kingdom', code: 'gb' },
-  DOO: { country: 'Australia', code: 'au' },
-  SHW: { country: 'Israel', code: 'il' },
-  DRU: { country: 'Brazil', code: 'br' },
-  OWA: { country: 'Mexico', code: 'mx' },
-  POU: { country: 'France', code: 'fr' },
-  VES: { country: 'Denmark', code: 'dk' },
-  OSU: { country: 'United Kingdom', code: 'gb' },
-  BRO: { country: 'United Kingdom', code: 'gb' },
-  IWA: { country: 'Japan', code: 'jp' },
-  BEG: { country: 'Sweden', code: 'se' },
-  ARO: { country: 'Estonia', code: 'ee' },
-  FOR: { country: 'Italy', code: 'it' },
-  HER: { country: 'United States', code: 'us' }
 };
 
 /**

@@ -443,28 +443,10 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
-          <!-- v2.6.1 -->
-          <div class="changelog-card">
-            <div class="changelog-header">
-              <div class="changelog-version">v2.6.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
-              <div class="changelog-date">June 12, 2026</div>
-            </div>
-            <ul class="changelog-list">
-              <li class="changelog-item">
-                <span class="changelog-tag fixed">Fixed</span>
-                <span>Practice Session DNS Entries: Omitted drivers with 0 laps completed from Practice results (FP1/FP2/FP3) to avoid incorrectly listing main drivers who sat out the session as "DNS".</span>
-              </li>
-              <li class="changelog-item">
-                <span class="changelog-tag improved">Improved</span>
-                <span>Reserve Driver Data Resolution: Dynamically resolves and registers ISO country code flags and F1 official avatar fallback images for reserve drivers in telemetry results, resolving missing info errors.</span>
-              </li>
-            </ul>
-          </div>
-
           <!-- v2.6.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.6.0</div>
+              <div class="changelog-version">v2.6.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
               <div class="changelog-date">June 8, 2026</div>
             </div>
             <ul class="changelog-list">

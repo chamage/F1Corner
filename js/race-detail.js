@@ -3,9 +3,9 @@
 // Lazy-loads heavy charts and feeds to avoid API timeouts
 // =============================================
 
-import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions, clearSessionsAPICache, getCacheStats, ISO3_TO_COUNTRY } from './api.js';
+import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions, clearSessionsAPICache, getCacheStats } from './api.js';
 import { getSeasonData, getResultsForSession, clearMeetingCompilerCache } from './season-data.js';
-import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, getDriverHeadshot, $, $$ } from './utils.js';
+import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
 
 let currentTab = 'results';
@@ -22,290 +22,6 @@ const SESSION_LABELS = {
   'Sprint': 'Sprint',
   'Race': 'Race',
 };
-
-const MASTER_DRIVERS_BY_NUMBER = {
-  1: { broadcast_name: 'L NORRIS', full_name: 'Lando Norris', name_acronym: 'NOR', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'GBR' },
-  2: { broadcast_name: 'L SARGEANT', full_name: 'Logan Sargeant', name_acronym: 'SAR', team_name: 'Williams', team_colour: '37BEDD', country_code: 'USA' },
-  3: { broadcast_name: 'M VERSTAPPEN', full_name: 'Max Verstappen', name_acronym: 'VER', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'NED' },
-  4: { broadcast_name: 'L NORRIS', full_name: 'Lando Norris', name_acronym: 'NOR', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'GBR' },
-  5: { broadcast_name: 'G BORTOLETO', full_name: 'Gabriel Bortoleto', name_acronym: 'BOR', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'BRA' },
-  6: { broadcast_name: 'I HADJAR', full_name: 'Isack Hadjar', name_acronym: 'HAD', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'FRA' },
-  7: { broadcast_name: 'J DOOHAN', full_name: 'Jack Doohan', name_acronym: 'DOO', team_name: 'Alpine', team_colour: '2293D1', country_code: 'AUS' },
-  10: { broadcast_name: 'P GASLY', full_name: 'Pierre Gasly', name_acronym: 'GAS', team_name: 'Alpine', team_colour: '2293D1', country_code: 'FRA' },
-  11: { broadcast_name: 'S PEREZ', full_name: 'Sergio Perez', name_acronym: 'PER', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'MEX' },
-  12: { broadcast_name: 'K ANTONELLI', full_name: 'Andrea Kimi Antonelli', name_acronym: 'ANT', team_name: 'Mercedes', team_colour: '27F4D2', country_code: 'ITA' },
-  14: { broadcast_name: 'F ALONSO', full_name: 'Fernando Alonso', name_acronym: 'ALO', team_name: 'Aston Martin', team_colour: '229971', country_code: 'ESP' },
-  16: { broadcast_name: 'C LECLERC', full_name: 'Charles Leclerc', name_acronym: 'LEC', team_name: 'Ferrari', team_colour: 'EF1A2D', country_code: 'MON' },
-  18: { broadcast_name: 'L STROLL', full_name: 'Lance Stroll', name_acronym: 'STR', team_name: 'Aston Martin', team_colour: '229971', country_code: 'CAN' },
-  20: { broadcast_name: 'K MAGNUSSEN', full_name: 'Kevin Magnussen', name_acronym: 'MAG', team_name: 'Haas F1 Team', team_colour: 'B6BABD', country_code: 'DEN' },
-  22: { broadcast_name: 'Y TSUNODA', full_name: 'Yuki Tsunoda', name_acronym: 'TSU', team_name: 'RB', team_colour: '6692FF', country_code: 'JPN' },
-  23: { broadcast_name: 'A ALBON', full_name: 'Alexander Albon', name_acronym: 'ALB', team_name: 'Williams', team_colour: '37BEDD', country_code: 'THA' },
-  24: { broadcast_name: 'Z GUANYU', full_name: 'Zhou Guanyu', name_acronym: 'ZHO', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'CHN' },
-  27: { broadcast_name: 'N HULKENBERG', full_name: 'Nico Hulkenberg', name_acronym: 'HUL', team_name: 'Haas F1 Team', team_colour: 'B6BABD', country_code: 'GER' },
-  30: { broadcast_name: 'L LAWSON', full_name: 'Liam Lawson', name_acronym: 'LAW', team_name: 'RB', team_colour: '6692FF', country_code: 'NZL' },
-  31: { broadcast_name: 'E OCON', full_name: 'Esteban Ocon', name_acronym: 'OCO', team_name: 'Alpine', team_colour: '2293D1', country_code: 'FRA' },
-  37: { broadcast_name: 'I HADJAR', full_name: 'Isack Hadjar', name_acronym: 'HAD', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'FRA' },
-  38: { broadcast_name: 'O BEARMAN', full_name: 'Oliver Bearman', name_acronym: 'BEA', team_name: 'Ferrari', team_colour: 'EF1A2D', country_code: 'GBR' },
-  41: { broadcast_name: 'A LINDBLAD', full_name: 'Arvid Lindblad', name_acronym: 'LIN', team_name: 'Racing Bulls', team_colour: '6C98FF', country_code: 'GBR' },
-  43: { broadcast_name: 'F COLAPINTO', full_name: 'Franco Colapinto', name_acronym: 'COL', team_name: 'Williams', team_colour: '37BEDD', country_code: 'ARG' },
-  44: { broadcast_name: 'L HAMILTON', full_name: 'Lewis Hamilton', name_acronym: 'HAM', team_name: 'Mercedes', team_colour: '27F4D2', country_code: 'GBR' },
-  45: { broadcast_name: 'F COLAPINTO', full_name: 'Franco Colapinto', name_acronym: 'COL', team_name: 'Williams', team_colour: '37BEDD', country_code: 'ARG' },
-  50: { broadcast_name: 'O BEARMAN', full_name: 'Oliver Bearman', name_acronym: 'BEA', team_name: 'Haas F1 Team', team_colour: 'B6BABD', country_code: 'GBR' },
-  55: { broadcast_name: 'C SAINZ', full_name: 'Carlos Sainz', name_acronym: 'SAI', team_name: 'Ferrari', team_colour: 'EF1A2D', country_code: 'ESP' },
-  61: { broadcast_name: 'J DOOHAN', full_name: 'Jack Doohan', name_acronym: 'DOO', team_name: 'Alpine', team_colour: '2293D1', country_code: 'AUS' },
-  63: { broadcast_name: 'G RUSSELL', full_name: 'George Russell', name_acronym: 'RUS', team_name: 'Mercedes', team_colour: '27F4D2', country_code: 'GBR' },
-  77: { broadcast_name: 'V BOTTAS', full_name: 'Valtteri Bottas', name_acronym: 'BOT', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'FIN' },
-  81: { broadcast_name: 'O PIASTRI', full_name: 'Oscar Piastri', name_acronym: 'PIA', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'AUS' },
-  85: { broadcast_name: 'G BORTOLETO', full_name: 'Gabriel Bortoleto', name_acronym: 'BOR', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'BRA' },
-  87: { broadcast_name: 'O BEARMAN', full_name: 'Oliver Bearman', name_acronym: 'BEA', team_name: 'Haas F1 Team', team_colour: '9C9FA2', country_code: 'GBR' },
-  88: { broadcast_name: 'R SHWARTZMAN', full_name: 'Robert Shwartzman', name_acronym: 'SHW', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'ISR' },
-  97: { broadcast_name: 'R SHWARTZMAN', full_name: 'Robert Shwartzman', name_acronym: 'SHW', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'ISR' },
-  34: { broadcast_name: 'F DRUGOVICH', full_name: 'Felipe Drugovich', name_acronym: 'DRU', team_name: 'Aston Martin', team_colour: '229971', country_code: 'BRA' },
-  39: { broadcast_name: 'P OWARD', full_name: 'Patricio O\'Ward', name_acronym: 'OWA', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'MEX' },
-  40: { broadcast_name: 'A IWASA', full_name: 'Ayumu Iwasa', name_acronym: 'IWA', team_name: 'RB', team_colour: '6692FF', country_code: 'JPN' },
-  46: { broadcast_name: 'L BROWNING', full_name: 'Luke Browning', name_acronym: 'BRO', team_name: 'Williams', team_colour: '37BEDD', country_code: 'GBR' },
-  47: { broadcast_name: 'I HADJAR', full_name: 'Isack Hadjar', name_acronym: 'HAD', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'FRA' },
-  98: { broadcast_name: 'T POURCHAIRE', full_name: 'Théo Pourchaire', name_acronym: 'POU', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'FRA' }
-};
-
-const ROOKIE_FALLBACKS_BY_ACRONYM = {
-  HER: { full_name: 'Colton Herta', team_name: 'Cadillac', team_colour: '909090', country_code: 'USA' },
-  BEG: { full_name: 'Dino Beganovic', team_name: 'Ferrari', team_colour: 'ED1131', country_code: 'SWE' },
-  ARO: { full_name: 'Paul Aron', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'EST' },
-  FOR: { full_name: 'Leonardo Fornaroli', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'ITA' },
-  VES: { full_name: 'Frederik Vesti', team_name: 'Mercedes', team_colour: '27F4D2', country_code: 'DEN' },
-  IWA: { full_name: 'Ayumu Iwasa', team_name: 'RB', team_colour: '6692FF', country_code: 'JPN' },
-  LIN: { full_name: 'Arvid Lindblad', team_name: 'RB', team_colour: '6692FF', country_code: 'GBR' },
-  BRO: { full_name: 'Luke Browning', team_name: 'Williams', team_colour: '1868DB', country_code: 'GBR' },
-  HAD: { full_name: 'Isack Hadjar', team_name: 'Red Bull Racing', team_colour: '3671C6', country_code: 'FRA' },
-  DOO: { full_name: 'Jack Doohan', team_name: 'Alpine', team_colour: '2293D1', country_code: 'AUS' },
-  BEA: { full_name: 'Oliver Bearman', team_name: 'Haas F1 Team', team_colour: '9C9FA2', country_code: 'GBR' },
-  COL: { full_name: 'Franco Colapinto', team_name: 'Williams', team_colour: '37BEDD', country_code: 'ARG' },
-  SHW: { country: 'Israel', code: 'il', team_name: 'Kick Sauber', team_colour: '52E252', full_name: 'Robert Shwartzman' },
-  DRU: { full_name: 'Felipe Drugovich', team_name: 'Aston Martin', team_colour: '229971', country_code: 'BRA' },
-  OWA: { full_name: 'Patricio O\'Ward', team_name: 'McLaren', team_colour: 'FF8000', country_code: 'MEX' },
-  POU: { full_name: 'Théo Pourchaire', team_name: 'Kick Sauber', team_colour: '52E252', country_code: 'FRA' }
-};
-
-function normalizeTeamNameAndColor(teamName, teamColour, year) {
-  let name = teamName || 'Unknown';
-  let colour = teamColour || '666666';
-
-  if (!teamName || teamName === 'Unknown' || teamName === '?') {
-    return { name, colour };
-  }
-
-  const cleanName = teamName.toLowerCase();
-
-  if (year >= 2026) {
-    if (cleanName.includes('audi') || cleanName.includes('sauber') || cleanName.includes('kick') || cleanName.includes('stake')) {
-      name = 'Audi';
-      colour = 'F50537';
-    } else if (cleanName.includes('cadillac') || cleanName.includes('andretti')) {
-      name = 'Cadillac';
-      colour = '909090';
-    } else if (cleanName.includes('haas')) {
-      name = 'Haas F1 Team';
-      colour = '9C9FA2';
-    } else if (cleanName.includes('ferrari')) {
-      name = 'Ferrari';
-      colour = 'ED1131';
-    } else if (cleanName.includes('williams')) {
-      name = 'Williams';
-      colour = '1868DB';
-    } else if (cleanName.includes('alpine')) {
-      name = 'Alpine';
-      colour = '00A1E8';
-    } else if (cleanName.includes('racing bulls') || cleanName.includes('rb') || cleanName.includes('alphatauri')) {
-      name = 'Racing Bulls';
-      colour = '6C98FF';
-    } else if (cleanName.includes('mclaren')) {
-      name = 'McLaren';
-      colour = 'FF8000';
-    } else if (cleanName.includes('red bull')) {
-      name = 'Red Bull Racing';
-      colour = '3671C6';
-    } else if (cleanName.includes('mercedes')) {
-      name = 'Mercedes';
-      colour = '27F4D2';
-    } else if (cleanName.includes('aston martin')) {
-      name = 'Aston Martin';
-      colour = '229971';
-    }
-  } else {
-    if (cleanName.includes('sauber') || cleanName.includes('kick') || cleanName.includes('stake')) {
-      name = 'Kick Sauber';
-      colour = '52E252';
-    } else if (cleanName.includes('alphatauri') || cleanName.includes('rb')) {
-      name = 'RB';
-      colour = '6692FF';
-    } else if (cleanName.includes('haas')) {
-      name = 'Haas F1 Team';
-      colour = 'B6BABD';
-    } else if (cleanName.includes('ferrari')) {
-      name = 'Ferrari';
-      colour = 'EF1A2D';
-    } else if (cleanName.includes('williams')) {
-      name = 'Williams';
-      colour = '37BEDD';
-    } else if (cleanName.includes('alpine')) {
-      name = 'Alpine';
-      colour = '2293D1';
-    } else if (cleanName.includes('aston martin')) {
-      name = 'Aston Martin';
-      colour = '229971';
-    } else if (cleanName.includes('mclaren')) {
-      name = 'McLaren';
-      colour = 'FF8000';
-    } else if (cleanName.includes('red bull')) {
-      name = 'Red Bull Racing';
-      colour = '3671C6';
-    } else if (cleanName.includes('mercedes')) {
-      name = 'Mercedes';
-      colour = '27F4D2';
-    }
-  }
-
-  colour = colour.replace('#', '');
-  return { name, colour };
-}
-
-function getDriverRecord(driverNumber, customMap = null) {
-  const map = customMap || (raceDataCache ? raceDataCache.driverMap : null);
-  let d = map ? map.get(driverNumber) : null;
-  
-  const seasonMap = raceDataCache ? raceDataCache.seasonDriversMap : null;
-  const sd = seasonMap ? seasonMap.get(driverNumber) : null;
-  
-  const fallback = MASTER_DRIVERS_BY_NUMBER[driverNumber];
-  const year = raceDataCache?.meetingInfo?.year || 2025;
-  
-  let enriched = d ? { ...d } : { driver_number: driverNumber };
-
-  // Helper to merge fields if they are missing or null
-  const mergeField = (field, value) => {
-    if (value !== undefined && value !== null && value !== '') {
-      if (enriched[field] === undefined || enriched[field] === null || enriched[field] === '' || enriched[field] === 'Unknown' || enriched[field] === '?') {
-        enriched[field] = value;
-      }
-    }
-  };
-
-  // 1. Merge from seasonDriversMap (highest priority for year-specific main drivers)
-  if (sd) {
-    mergeField('broadcast_name', sd.broadcast_name);
-    mergeField('full_name', sd.full_name);
-    mergeField('name_acronym', sd.name_acronym);
-    mergeField('team_name', sd.team_name);
-    mergeField('team_colour', sd.team_colour);
-    mergeField('headshot_url', sd.headshot_url);
-    mergeField('country_code', sd.country_code);
-  }
-
-  // 2. Merge from acronym-based rookie fallbacks to avoid number collisions
-  const acronym = enriched.name_acronym || fallback?.name_acronym;
-  if (acronym) {
-    const acronymUpper = acronym.toUpperCase();
-    const rookieFallback = ROOKIE_FALLBACKS_BY_ACRONYM[acronymUpper];
-    if (rookieFallback) {
-      mergeField('full_name', rookieFallback.full_name);
-      mergeField('name_acronym', acronymUpper);
-      mergeField('team_name', rookieFallback.team_name);
-      mergeField('team_colour', rookieFallback.team_colour);
-      mergeField('country_code', rookieFallback.country_code);
-    }
-  }
-
-  // 3. Last-resort fallback mapping by driver number
-  if (fallback) {
-    mergeField('broadcast_name', fallback.broadcast_name);
-    mergeField('full_name', fallback.full_name);
-    mergeField('name_acronym', fallback.name_acronym);
-    mergeField('team_name', fallback.team_name);
-    mergeField('team_colour', fallback.team_colour);
-    mergeField('country_code', fallback.country_code);
-  }
-
-  // Ensure default structures
-  mergeField('name_acronym', `#${driverNumber}`);
-  mergeField('full_name', `Driver #${driverNumber}`);
-  mergeField('team_name', 'Unknown');
-  mergeField('team_colour', '666666');
-
-  // Handle year-specific dynamic overrides for driver 1 and 3 (Norris / Verstappen)
-  if (driverNumber === 1 && (enriched.name_acronym === 'VER' && year >= 2026 || enriched.name_acronym === 'NOR' && year < 2026)) {
-    if (year >= 2026) {
-      enriched.broadcast_name = 'L NORRIS';
-      enriched.full_name = 'Lando Norris';
-      enriched.name_acronym = 'NOR';
-      enriched.team_name = 'McLaren';
-      enriched.team_colour = 'FF8000';
-      enriched.country_code = 'GBR';
-    } else {
-      enriched.broadcast_name = 'M VERSTAPPEN';
-      enriched.full_name = 'Max Verstappen';
-      enriched.name_acronym = 'VER';
-      enriched.team_name = 'Red Bull Racing';
-      enriched.team_colour = '3671C6';
-      enriched.country_code = 'NED';
-    }
-  }
-
-  if (driverNumber === 3 && (enriched.name_acronym === 'RIC' && year >= 2026 || enriched.name_acronym === 'VER' && year < 2026)) {
-    if (year >= 2026) {
-      enriched.broadcast_name = 'M VERSTAPPEN';
-      enriched.full_name = 'Max Verstappen';
-      enriched.name_acronym = 'VER';
-      enriched.team_name = 'Red Bull Racing';
-      enriched.team_colour = '3671C6';
-      enriched.country_code = 'NED';
-    } else {
-      enriched.broadcast_name = 'D RICCIARDO';
-      enriched.full_name = 'Daniel Ricciardo';
-      enriched.name_acronym = 'RIC';
-      enriched.team_name = 'RB';
-      enriched.team_colour = '6692FF';
-      enriched.country_code = 'AUS';
-    }
-  }
-
-  // Teammate color matching as fallback safety check
-  if (!enriched.team_name || enriched.team_name === '?' || enriched.team_name === 'Unknown') {
-    if (enriched.team_colour && map) {
-      const colUpper = enriched.team_colour.replace('#', '').toUpperCase();
-      for (const otherDrv of map.values()) {
-        if (otherDrv.driver_number !== driverNumber && otherDrv.team_colour) {
-          const otherCol = otherDrv.team_colour.replace('#', '').toUpperCase();
-          if (otherCol === colUpper && otherDrv.team_name && otherDrv.team_name !== 'Unknown' && otherDrv.team_name !== '?') {
-            enriched.team_name = otherDrv.team_name;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // Normalize team names and livery colours based on season year (Stake -> Audi in 2026, AlphaTauri -> Racing Bulls)
-  const normalized = normalizeTeamNameAndColor(enriched.team_name, enriched.team_colour, year);
-  enriched.team_name = normalized.name;
-  enriched.team_colour = normalized.colour;
-
-  // Resolve headshot url
-  if (!enriched.headshot_url && enriched.name_acronym) {
-    enriched.headshot_url = getDriverHeadshot(enriched.name_acronym, year) || '';
-  }
-
-  // Dynamic flag country code mapping
-  if (enriched.name_acronym && enriched.country_code) {
-    const acronymUpper = enriched.name_acronym.toUpperCase();
-    const iso3 = enriched.country_code.toUpperCase();
-    if (!DRIVER_NATIONALITY[acronymUpper] && ISO3_TO_COUNTRY[iso3]) {
-      DRIVER_NATIONALITY[acronymUpper] = ISO3_TO_COUNTRY[iso3];
-    }
-  }
-  
-  return enriched;
-}
 
 // Session display order (chronological weekend order)
 const SESSION_ORDER = ['Practice 1', 'Practice 2', 'Practice 3', 'Sprint Qualifying', 'Sprint Shootout', 'Sprint', 'Qualifying', 'Race'];
@@ -487,9 +203,9 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
       };
     });
 
-    // Sort: drivers with times first (sorted by best lap), followed by drivers with no times (exclude drivers who didn't run)
+    // Sort: drivers with times first (sorted by best lap), followed by drivers with no times
     const withTime = driverRecords.filter(r => r.bestLap !== null).sort((a, b) => a.bestLap - b.bestLap);
-    const noTime = driverRecords.filter(r => r.bestLap === null && r.lapCount > 0);
+    const noTime = driverRecords.filter(r => r.bestLap === null);
     const sorted = [...withTime, ...noTime];
 
     return sorted.map((r, idx) => ({
@@ -579,68 +295,6 @@ function updateTabVisibility(sessionName) {
   }
 }
 
-/**
- * Load drivers for the current session and merge missing details (like headshot URLs and team information)
- * from other sessions of the same race weekend to heal null or fallback fields.
- */
-async function loadAndMergeWeekendDrivers(sessionKey, allMeetingSessions) {
-  try {
-    let drivers = await getSessionDrivers(sessionKey).catch(() => []);
-    
-    // If the drivers fetch for the current session returned empty, try to get drivers from other sessions of this weekend
-    if (!drivers || drivers.length === 0) {
-      const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
-      const otherSessions = allMeetingSessions.filter(s => !s.is_cancelled);
-      const candidates = [...completedSessions, ...otherSessions];
-      for (const s of candidates) {
-        if (s.session_key === sessionKey) continue;
-        try {
-          const tempDrivers = await getSessionDrivers(s.session_key);
-          if (tempDrivers && tempDrivers.length > 0) {
-            drivers = tempDrivers;
-            break;
-          }
-        } catch { /* ignore */ }
-      }
-    }
-
-    if (!drivers || drivers.length === 0) {
-      return [];
-    }
-
-    // Now, enrich/heal any null/fallback fields from any other session of this weekend
-    const otherSessions = allMeetingSessions.filter(s => s.session_key !== sessionKey && !s.is_cancelled);
-    if (otherSessions.length > 0) {
-      const results = await Promise.all(otherSessions.map(s => getSessionDrivers(s.session_key).catch(() => [])));
-      const driverMapByNumber = new Map(drivers.map(d => [d.driver_number, d]));
-      
-      for (const otherDrivers of results) {
-        for (const od of otherDrivers) {
-          const existing = driverMapByNumber.get(od.driver_number);
-          if (existing) {
-            for (const key of Object.keys(od)) {
-              if (od[key] !== null && od[key] !== undefined && od[key] !== '') {
-                const isExistingPlaceholder = (existing[key] === null || existing[key] === undefined || existing[key] === '' ||
-                  (key === 'headshot_url' && typeof existing[key] === 'string' && existing[key].includes('fallback_image.png')));
-                const isOtherBetter = (key === 'headshot_url' && typeof od[key] === 'string' && !od[key].includes('fallback_image.png'));
-                
-                if (isExistingPlaceholder || isOtherBetter) {
-                  existing[key] = od[key];
-                }
-              }
-            }
-          }
-        }
-      }
-      drivers = Array.from(driverMapByNumber.values());
-    }
-    return drivers;
-  } catch (e) {
-    console.warn('[Race Detail] Merge weekend drivers failed:', e);
-    return [];
-  }
-}
-
 export async function loadRaceDetail(sessionKey, meetingInfo) {
   const section = $('#race-detail');
   const header = $('#race-detail-header');
@@ -679,14 +333,29 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     // Trigger weather load instantly in background
     loadAndRenderWeather(sessionKey, weatherBar);
 
-    // 1. Fetch season data and ALL meeting sessions in parallel
-    let [seasonData, allMeetingSessions] = await Promise.all([
+    // 1. Fetch season data, drivers list, and ALL meeting sessions in parallel
+    let [seasonData, drivers, allMeetingSessions] = await Promise.all([
       getSeasonData(year),
+      getSessionDrivers(sessionKey).catch(() => []),
       getMeetingSessions(meetingInfo.meeting_key),
     ]);
 
-    // 2. Load and merge weekend drivers using session drivers from other sessions
-    let drivers = await loadAndMergeWeekendDrivers(sessionKey, allMeetingSessions);
+    // If main drivers fetch returned empty (common for ongoing weekends/future sessions), try to get drivers from other sessions of this weekend
+    if (!drivers || drivers.length === 0) {
+      const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
+      const otherSessions = allMeetingSessions.filter(s => !s.is_cancelled);
+      const candidates = [...completedSessions, ...otherSessions];
+      for (const s of candidates) {
+        if (s.session_key === sessionKey) continue;
+        try {
+          const tempDrivers = await getSessionDrivers(s.session_key);
+          if (tempDrivers && tempDrivers.length > 0) {
+            drivers = tempDrivers;
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+    }
 
     // Filter to completed sessions and sort by weekend chronological order
     const completedSessions = allMeetingSessions.filter(s => isPast(s.date_end) && !s.is_cancelled);
@@ -827,27 +496,6 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     const order = defaultSession.results || [];
     const driverMap = buildDriverMap(drivers);
 
-    // Compile season drivers map to resolve names & teams accurately in any context
-    const seasonDriversMap = new Map();
-    if (seasonData) {
-      for (const r of seasonData.races || []) {
-        if (r.drivers) {
-          for (const d of r.drivers) {
-            seasonDriversMap.set(d.driver_number, d);
-          }
-        }
-      }
-      for (const q of seasonData.qualifying || []) {
-        if (q.drivers) {
-          for (const d of q.drivers) {
-            if (!seasonDriversMap.has(d.driver_number)) {
-              seasonDriversMap.set(d.driver_number, d);
-            }
-          }
-        }
-      }
-    }
-
     // Initial minimal cache
     raceDataCache = { 
       sessionKey: defaultSession.session_key || sessionKey, 
@@ -855,7 +503,6 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       order, 
       drivers, 
       driverMap,
-      seasonDriversMap,
       sessions,
       currentSessionType: defaultSessionName,
       laps: null,
@@ -1085,7 +732,7 @@ function renderRaceResults(container) {
   }
 
   for (const { driver_number, position, status, points } of order) {
-    const d = getDriverRecord(driver_number, driverMap);
+    const d = driverMap.get(driver_number) || { name_acronym: `#${driver_number}`, team_name: '?', team_colour: '666', full_name: `Driver #${driver_number}`, headshot_url: '' };
     const teamColor = getTeamColor(d.team_colour);
     
     const isDNS = status === 'DNS';
@@ -1265,7 +912,7 @@ function renderSessionResults(container) {
 
   for (const entry of order) {
     const { driver_number, position, status } = entry;
-    const d = getDriverRecord(driver_number, driverMap);
+    const d = driverMap.get(driver_number) || { name_acronym: `#${driver_number}`, team_name: '?', team_colour: '666', full_name: `Driver #${driver_number}`, headshot_url: '' };
     const teamColor = getTeamColor(d.team_colour);
     
     const isDNS = status === 'DNS';
@@ -1504,7 +1151,7 @@ function initInteractiveChart(canvas, tooltip, chartType, isEnlarged = false) {
 
   function getFilteredDatasets() {
     return Array.from(selected).map(driver_number => {
-      const d = getDriverRecord(driver_number, driverMap);
+      const d = driverMap.get(driver_number) || {};
       let rawData = [];
       if (isLap) {
         const driverLaps = laps.filter(l => l.driver_number === driver_number);
@@ -1678,7 +1325,7 @@ function openEnlargedChartModal(chartType) {
 
   // Generate selector pills HTML
   const pillsHtml = sessionDriversSorted.map(dn => {
-    const d = getDriverRecord(dn, driverMap);
+    const d = driverMap.get(dn) || {};
     const acronym = d.name_acronym || `#${dn}`;
     const color = getTeamColor(d.team_colour);
     const isChecked = selected.has(dn);
@@ -1776,7 +1423,7 @@ function openEnlargedChartModal(chartType) {
       // Update pill classes styling
       modal.querySelectorAll('.modal-driver-filter-pill').forEach(p => {
         const pDn = parseInt(p.dataset.driver, 10);
-        const pColor = getTeamColor(getDriverRecord(pDn, driverMap).team_colour);
+        const pColor = getTeamColor(driverMap.get(pDn).team_colour);
         const isChecked = selected.has(pDn);
         p.style.cssText = isChecked 
           ? `cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid; border-radius:100px; font-family:inherit; font-size:0.75rem; transition:all var(--transition-fast); background:${pColor}22; border-color:${pColor}; color:#fff; font-weight:700;` 
@@ -1852,7 +1499,7 @@ function renderLapTimes(container) {
 
   // Generate HTML for driver selection pills
   const pillsHtml = sessionDriversSorted.map(dn => {
-    const d = getDriverRecord(dn, driverMap);
+    const d = driverMap.get(dn) || {};
     const acronym = d.name_acronym || `#${dn}`;
     const color = getTeamColor(d.team_colour);
     const isChecked = selected.has(dn);
@@ -1993,7 +1640,7 @@ function renderPositions(container) {
   const zoom = raceDataCache.positionsZoom;
 
   const pillsHtml = sessionDriversSorted.map(dn => {
-    const d = getDriverRecord(dn, driverMap);
+    const d = driverMap.get(dn) || {};
     const acronym = d.name_acronym || `#${dn}`;
     const color = getTeamColor(d.team_colour);
     const isChecked = selected.has(dn);
@@ -2127,7 +1774,7 @@ function renderStrategy(container) {
   `;
 
   for (const dn of driverOrder) {
-    const d = getDriverRecord(dn, driverMap);
+    const d = driverMap.get(dn) || {};
     const driverStints = stints.filter(s => s.driver_number === dn).sort((a, b) => a.stint_number - b.stint_number);
 
     if (driverStints.length === 0) continue;
@@ -2173,8 +1820,8 @@ function renderOvertakes(container) {
   `;
 
   for (const ot of sorted) {
-    const overtaker = getDriverRecord(ot.overtaking_driver_number, driverMap);
-    const overtaken = getDriverRecord(ot.overtaken_driver_number, driverMap);
+    const overtaker = driverMap.get(ot.overtaking_driver_number);
+    const overtaken = driverMap.get(ot.overtaken_driver_number);
     const oName = overtaker ? (overtaker.full_name || overtaker.name_acronym) : `#${ot.overtaking_driver_number}`;
     const tName = overtaken ? (overtaken.full_name || overtaken.name_acronym) : `#${ot.overtaken_driver_number}`;
     const oColor = overtaker ? getTeamColor(overtaker.team_colour) : '#666';
@@ -2372,7 +2019,13 @@ function closeModal() {
 export async function showRaceDriverDetail(driverNumber) {
   ensureOverlay();
   const modal = document.getElementById('driver-modal');
-  const d = getDriverRecord(driverNumber);
+  const d = raceDataCache.driverMap.get(driverNumber) || {
+    name_acronym: `#${driverNumber}`,
+    team_name: 'Unknown',
+    team_colour: '666666',
+    full_name: `Driver #${driverNumber}`,
+    headshot_url: ''
+  };
   const teamColor = getTeamColor(d.team_colour);
 
   const sessionType = raceDataCache.currentSessionType;
@@ -3030,10 +2683,9 @@ async function switchRaceDetailSession(sessionType) {
   const weatherBar = $('#race-weather-bar');
   loadAndRenderWeather(session.session_key, weatherBar);
   
-  // Fetch fresh drivers for this session, merging across weekend sessions to heal null/fallback details
+  // Fetch fresh drivers for this session
   try {
-    const allMeetingSessions = raceDataCache.meetingInfo ? await getMeetingSessions(raceDataCache.meetingInfo.meeting_key).catch(() => []) : [];
-    const sessionDrivers = await loadAndMergeWeekendDrivers(session.session_key, allMeetingSessions);
+    const sessionDrivers = await getSessionDrivers(session.session_key);
     if (sessionDrivers && sessionDrivers.length > 0) {
       raceDataCache.drivers = sessionDrivers;
       raceDataCache.driverMap = buildDriverMap(sessionDrivers);
