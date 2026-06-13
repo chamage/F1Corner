@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v129'; // v129: support constructor finishing position heatmap toggling
+const CACHE_NAME = 'pitcorner-shell-v130'; // v130: support copying any weekend session order as race result in sandbox
 const STATIC_ASSETS = [
   './',
   './index.html',

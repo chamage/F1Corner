@@ -10,7 +10,7 @@ import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
 import { renderDriverStandings, renderConstructorStandings, renderFinishingHeatmap } from './standings.js';
 import { drawLineChart } from './charts.js';
 import { getTeamColor, getPointsForPosition, isPast, $ } from './utils.js';
-import { getMeetings } from './api.js';
+import { getMeetings, getMeetingSessions, getFinishingOrder, getLaps, getSessionDrivers } from './api.js';
 
 // Global Sandbox State
 let currentYear = 2026;
@@ -309,7 +309,7 @@ async function loadAltData() {
     renderAltStandingsTable(activeStandingsType);
     renderAltHeatmap();
     drawAltChampionshipChart();
-    renderRaceEditor();
+    await renderRaceEditor();
 
   } catch (err) {
     console.error('[Alt History] Failed to load sandbox data:', err);
@@ -699,6 +699,131 @@ function loadQualiOrderAsResults(qualiData, sessionKey) {
 }
 
 /**
+ * Load driver classification from any completed session of the weekend
+ * and populate the alt-history results editor.
+ */
+async function loadSessionOrderAsResults(session, sessionKey) {
+  const isSprint = activeEditingSessionType === 'sprint';
+  
+  // Show a loading text or indicator inside the list/placeholder
+  const placeholder = $('#althistory-editor-placeholder');
+  if (placeholder) {
+    placeholder.innerHTML = `
+      <i class="fa-solid fa-spinner fa-spin fa-2x" style="color:var(--text-secondary);margin-bottom:var(--space-xs);"></i>
+      <p style="font-weight:600;color:var(--text-secondary);">Loading session classification...</p>
+    `;
+  }
+  
+  const classification = await fetchSessionClassification(session);
+  if (!classification || classification.length === 0) {
+    alert(`Failed to retrieve results for session: ${session.session_name}`);
+    await renderRaceEditor();
+    return;
+  }
+  
+  const results = classification.map((res, i) => {
+    const pos = i + 1;
+    let acronym = null;
+    if (officialSeasonData.drivers) {
+      for (const [acr, dInfo] of officialSeasonData.drivers) {
+        if (dInfo.driver_number === res.driver_number) {
+          acronym = acr;
+          break;
+        }
+      }
+    }
+    if (!acronym) acronym = `DRV_${res.driver_number}`;
+    
+    return {
+      driver_number: res.driver_number,
+      name_acronym: acronym,
+      position: pos,
+      status: res.status || 'FINISHED',
+      points: calculateDriverPoints(pos, res.status || 'FINISHED', i === 0, isSprint, sessionKey)
+    };
+  });
+  
+  userModifications[sessionKey] = {
+    results: results,
+    fastest_lap_driver: results[0]?.driver_number || null,
+    is_completed: true
+  };
+  
+  // Toggle UI state to show the editor
+  const checkbox = $('#althistory-complete-checkbox');
+  if (checkbox) { checkbox.checked = true; checkbox.disabled = false; }
+  const resultsList = $('#althistory-results-list');
+  const footer = $('#althistory-editor-footer');
+  if (resultsList) resultsList.style.display = 'flex';
+  if (footer) footer.style.display = 'flex';
+  if (placeholder) placeholder.style.display = 'none';
+  
+  renderResultsEditorList();
+}
+
+/**
+ * Fetch classification/results for a session (Races, Sprints, Quali, or Practice)
+ */
+async function fetchSessionClassification(session) {
+  const sessionKey = session.session_key;
+  const sessionName = session.session_name || '';
+  const isRaceOrSprint = sessionName.includes('Race') || (sessionName.includes('Sprint') && !sessionName.includes('Qualifying') && !sessionName.includes('Shootout'));
+  const isQuali = sessionName.includes('Qualifying') || sessionName.includes('Shootout');
+  
+  if (isRaceOrSprint || isQuali) {
+    const order = await getFinishingOrder(sessionKey).catch(() => []);
+    if (order && order.length > 0) {
+      return order.map(o => ({
+        driver_number: o.driver_number,
+        position: o.position,
+        status: o.status || 'FINISHED'
+      }));
+    }
+  }
+  
+  // For practice sessions or fallback: compute from lap times
+  const [laps, drivers] = await Promise.all([
+    getLaps({ session_key: sessionKey }).catch(() => []),
+    getSessionDrivers(sessionKey).catch(() => [])
+  ]);
+  
+  if (laps.length === 0) {
+    return drivers.map((d, idx) => ({
+      driver_number: d.driver_number,
+      position: idx + 1,
+      status: 'FINISHED'
+    }));
+  }
+  
+  const driverBestLaps = new Map();
+  for (const lap of laps) {
+    if (!lap.lap_duration || lap.lap_duration <= 0) continue;
+    const dn = lap.driver_number;
+    const current = driverBestLaps.get(dn);
+    if (!current || lap.lap_duration < current) {
+      driverBestLaps.set(dn, lap.lap_duration);
+    }
+  }
+  
+  const sorted = Array.from(driverBestLaps.entries())
+    .map(([driver_number, bestLap]) => ({ driver_number, bestLap }))
+    .sort((a, b) => a.bestLap - b.bestLap);
+  
+  const finishedNumbers = new Set(sorted.map(s => s.driver_number));
+  for (const d of drivers) {
+    if (!finishedNumbers.has(d.driver_number)) {
+      sorted.push({ driver_number: d.driver_number, bestLap: Infinity });
+    }
+  }
+  
+  return sorted.map((s, idx) => ({
+    driver_number: s.driver_number,
+    position: idx + 1,
+    status: s.bestLap === Infinity ? 'DNS' : 'FINISHED'
+  }));
+}
+
+/**
  * Copies finishing results from the chronologically closest completed race or sprint session of same type.
  * Initializes/overwrites the active sandbox editor results with this order.
  */
@@ -807,7 +932,7 @@ function copyLatestRaceOrder() {
 /**
  * Render race results editor based on the selected session key
  */
-function renderRaceEditor() {
+async function renderRaceEditor() {
   const infoBlock = $('#althistory-race-info-block');
   const sessionTypeBlock = $('#althistory-session-type-block');
   const resultsList = $('#althistory-results-list');
@@ -897,11 +1022,64 @@ function renderRaceEditor() {
     placeholder.style.display = 'none';
     resultsList.style.display = 'flex';
     footer.style.display = 'flex';
+    const footerSelect = $('#alt-copy-session-select');
+    if (footerSelect) footerSelect.style.display = 'none';
     renderResultsEditorList();
     
   } else {
     // If future race, it is togglable
     checkbox.disabled = false;
+    
+    // Fetch all sessions of the GP weekend meeting key to populate copying options
+    const allSessions = await getMeetingSessions(gpSession.meeting_key).catch(() => []);
+    
+    const completedOtherSessions = allSessions.filter(s => 
+      s.session_key !== currentSessionKey && 
+      isPast(s.date_end) && 
+      !s.is_cancelled
+    );
+
+    const SESSION_ORDER = ['Practice 1', 'Practice 2', 'Practice 3', 'Sprint Qualifying', 'Sprint Shootout', 'Sprint', 'Qualifying', 'Race'];
+    completedOtherSessions.sort((a, b) => {
+      const orderA = SESSION_ORDER.indexOf(a.session_name);
+      const orderB = SESSION_ORDER.indexOf(b.session_name);
+      return (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB);
+    });
+
+    // Populate the footer dropdown
+    const footerSelect = $('#alt-copy-session-select');
+    if (footerSelect) {
+      if (completedOtherSessions.length > 0) {
+        footerSelect.style.display = 'inline-block';
+        footerSelect.innerHTML = '<option value="">Copy session order...</option>' + completedOtherSessions.map(s => {
+          let label = s.session_name;
+          if (s.session_name === 'Practice 1') label = 'FP1 (Practice 1)';
+          if (s.session_name === 'Practice 2') label = 'FP2 (Practice 2)';
+          if (s.session_name === 'Practice 3') label = 'FP3 (Practice 3)';
+          if (s.session_name === 'Qualifying') label = 'Qualifying';
+          if (s.session_name === 'Sprint Qualifying') label = 'Sprint Qualifying';
+          if (s.session_name === 'Sprint Shootout') label = 'Sprint Shootout';
+          if (s.session_name === 'Sprint') label = 'Sprint Race';
+          return `<option value="${s.session_key}">${label}</option>`;
+        }).join('');
+        
+        // Setup/re-bind change listener
+        const newSelect = footerSelect.cloneNode(true);
+        footerSelect.parentNode.replaceChild(newSelect, footerSelect);
+        newSelect.addEventListener('change', (e) => {
+          const val = e.target.value;
+          if (val) {
+            const selectedSession = completedOtherSessions.find(s => s.session_key == val);
+            if (selectedSession) {
+              loadSessionOrderAsResults(selectedSession, currentSessionKey);
+            }
+          }
+        });
+      } else {
+        footerSelect.style.display = 'none';
+      }
+    }
+
     if (simulated) {
       checkbox.checked = true;
       placeholder.style.display = 'none';
@@ -916,45 +1094,45 @@ function renderRaceEditor() {
       const flWrap = $('#alt-fastest-lap-wrap');
       if (flWrap) flWrap.style.display = 'none';
 
-      // Check if qualifying data exists for this meeting
-      // For GP editing: find 'Qualifying'. For Sprint editing: find 'Sprint Qualifying'/'Sprint Shootout'
-      console.log('[AltHistory] gpSession.meeting_key:', gpSession.meeting_key, typeof gpSession.meeting_key);
-      console.log('[AltHistory] Available qualifying sessions:', officialSeasonData.qualifying?.map(q => ({ name: q.session_name, key: q.meeting_key, type: typeof q.meeting_key, resultsCount: q.results?.length })));
-      const qualiForMeeting = officialSeasonData.qualifying
-        ? officialSeasonData.qualifying.find(q => {
-            const match = String(q.meeting_key) === String(gpSession.meeting_key);
-            if (!match) return false;
-            const name = (q.session_name || '').toLowerCase();
-            if (activeEditingSessionType === 'sprint') {
-              return name.includes('sprint') || name.includes('shootout');
-            }
-            return name === 'qualifying';
-          })
-        : null;
-      console.log('[AltHistory] Resolved qualiForMeeting:', qualiForMeeting);
-      const hasQuali = qualiForMeeting && qualiForMeeting.results && qualiForMeeting.results.length > 0;
+      let buttonsHtml = '';
+      if (completedOtherSessions.length > 0) {
+        buttonsHtml = completedOtherSessions.map(s => {
+          let label = s.session_name;
+          if (s.session_name === 'Practice 1') label = 'FP1 (Practice 1)';
+          if (s.session_name === 'Practice 2') label = 'FP2 (Practice 2)';
+          if (s.session_name === 'Practice 3') label = 'FP3 (Practice 3)';
+          if (s.session_name === 'Qualifying') label = 'Qualifying';
+          if (s.session_name === 'Sprint Qualifying') label = 'Sprint Qualifying';
+          if (s.session_name === 'Sprint Shootout') label = 'Sprint Shootout';
+          if (s.session_name === 'Sprint') label = 'Sprint Race';
+
+          const isPractice = s.session_name.toLowerCase().includes('practice');
+          const icon = isPractice ? 'fa-stopwatch' : 'fa-flag-checkered';
+          return `<button class="alt-load-session-btn alt-btn-success" data-session-key="${s.session_key}"><i class="fa-solid ${icon}"></i> Load ${label} Order</button>`;
+        }).join('');
+      } else {
+        buttonsHtml = `<p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;"><i class="fa-solid fa-triangle-exclamation"></i> No completed practice or qualifying sessions available for this weekend.</p>`;
+      }
 
       placeholder.innerHTML = `
         <i class="fa-solid fa-hourglass-start fa-2x" style="color:var(--text-muted);margin-bottom:var(--space-xs);"></i>
         <p style="font-weight:600;color:var(--text-secondary);">This session is in the future.</p>
-        <p style="font-size:0.8rem;max-width:300px;margin-top:4px;">Toggle the "Completed" switch above to simulate this ${activeEditingSessionType === 'gp' ? 'race' : 'sprint'} and edit results.</p>
-        <div style="display:flex; flex-direction:column; gap:8px; align-items:center; margin-top:12px;">
-          ${hasQuali 
-            ? `<button id="alt-load-quali-btn" class="alt-btn-success"><i class="fa-solid fa-flag-checkered"></i> Load Quali Grid Order</button>` 
-            : `<p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0;"><i class="fa-solid fa-triangle-exclamation"></i> Qualifying results not loaded or not yet available for this weekend.</p>`}
-          <button id="alt-load-latest-race-btn-placeholder" class="alt-btn-secondary"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
+        <p style="font-size:0.8rem;max-width:300px;margin-top:4px;margin-bottom:12px;">Toggle the "Completed" switch above to simulate this ${activeEditingSessionType === 'gp' ? 'race' : 'sprint'} and edit results.</p>
+        <div style="display:flex; flex-direction:column; gap:8px; align-items:center; width: 100%;">
+          ${buttonsHtml}
+          <button id="alt-load-latest-race-btn-placeholder" class="alt-btn-secondary" style="margin-top:4px;"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
         </div>
       `;
 
-      // Wire up the Load Quali button
-      if (hasQuali) {
-        const loadQualiBtn = document.getElementById('alt-load-quali-btn');
-        if (loadQualiBtn) {
-          loadQualiBtn.addEventListener('click', () => {
-            loadQualiOrderAsResults(qualiForMeeting, currentSessionKey);
+      // Wire up click handlers for dynamic load buttons
+      completedOtherSessions.forEach(s => {
+        const btn = placeholder.querySelector(`.alt-load-session-btn[data-session-key="${s.session_key}"]`);
+        if (btn) {
+          btn.addEventListener('click', () => {
+            loadSessionOrderAsResults(s, currentSessionKey);
           });
         }
-      }
+      });
 
       // Wire up the Copy Latest Race button in placeholder
       const copyLatestBtnPlaceholder = document.getElementById('alt-load-latest-race-btn-placeholder');

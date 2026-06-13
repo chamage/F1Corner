@@ -357,7 +357,12 @@
             </div>
             
             <div id="althistory-editor-footer" class="althistory-editor-footer" style="display:none;">
-              <button id="alt-copy-latest-btn" class="alt-btn-secondary" style="margin-right:auto;"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
+              <div style="display:flex; gap:8px; align-items:center; margin-right:auto; flex-wrap:wrap;">
+                <button id="alt-copy-latest-btn" class="alt-btn-secondary"><i class="fa-solid fa-clone"></i> Copy Latest Race Order</button>
+                <select id="alt-copy-session-select" class="alt-select" style="display:none; font-size:0.75rem; padding:6px 12px; height: 32px; border-radius:100px;">
+                  <option value="">Copy session order...</option>
+                </select>
+              </div>
               <button id="althistory-save-btn" class="alt-btn-success"><i class="fa-solid fa-floppy-disk"></i> Apply & Save results</button>
             </div>
           </div>

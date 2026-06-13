@@ -443,10 +443,36 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.7.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.7.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">June 13, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Alternate History Session Copying: Added support to copy the classification of any completed session of the GP weekend (FP1, FP2, FP3, Qualifying, Sprint) when the main GP race is not yet completed.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Editor Footer Copy Dropdown: Integrated a "Copy session order..." dropdown selector directly into the simulated race editor footer, allowing users to copy weekend session classifications during active editing.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Practice Session Classification Engine: Developed personal best-lap time ranking logic that compiles raw lap telemetry from practice sessions (where official session result standouts are not published by the API) to sort and rank drivers.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>PWA Version Bump: Bumped the offline static cache storage shell version to v130 to trigger a clean page refresh on client browsers automatically.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.6.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.6.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.6.0</div>
               <div class="changelog-date">June 8, 2026</div>
             </div>
             <ul class="changelog-list">
