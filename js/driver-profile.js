@@ -20,15 +20,18 @@ function ensureOverlay() {
     document.body.appendChild(overlay);
   }
 
-  // Close on backdrop click
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
-  });
+  if (!overlay.dataset.boundClose) {
+    overlay.dataset.boundClose = 'true';
+    // Close on backdrop click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
 
-  // Close on Escape
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) closeModal();
-  });
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay.classList.contains('open')) closeModal();
+    });
+  }
 
   return overlay;
 }
@@ -77,7 +80,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
     : '—';
   const bestFinish = rr.length > 0 ? Math.min(...rr) : '—';
   const worstFinish = rr.length > 0 ? Math.max(...rr) : '—';
-  const gpPoints = driver.points - (driver.sprintPoints || 0);
+  const gpPoints = Math.round(((driver.points - (driver.sprintPoints || 0)) + Number.EPSILON) * 100) / 100;
   const pointsPerRace = rr.length > 0
     ? (gpPoints / rr.length).toFixed(1)
     : '—';
@@ -148,9 +151,9 @@ export function showDriverProfile(driver, standings, raceSessions) {
   }
 
   // ── Teammate comparison ──
-  const teammate = standings.drivers.find(d =>
-    d.team_name === driver.team_name && d.name_acronym !== driver.name_acronym
-  );
+  const teammate = (driver.team_name && driver.team_name !== 'Unknown')
+    ? standings.drivers.find(d => d.team_name === driver.team_name && d.name_acronym !== driver.name_acronym)
+    : null;
 
   let teammateHtml = '';
   let driverWins = 0, tmWins = 0;
@@ -158,13 +161,13 @@ export function showDriverProfile(driver, standings, raceSessions) {
   if (teammate) {
     const tmRr = teammate.raceResults || [];
 
-    // GP H2H count
+    // GP H2H count (only sessions where both competed as teammates)
     for (const result of driver.allResults || []) {
-      if (result.isSprint) continue;
+      if (result.isSprint || result.status === 'ABSENT') continue;
       const tmResult = (teammate.allResults || []).find(
-        r => r.session_key === result.session_key && !r.isSprint
+        r => r.session_key === result.session_key && !r.isSprint && r.status !== 'ABSENT'
       );
-      if (tmResult) {
+      if (tmResult && result.team_name === tmResult.team_name && !(result.status === 'DNS' && tmResult.status === 'DNS')) {
         if (result.position < tmResult.position) driverWins++;
         else if (tmResult.position < result.position) tmWins++;
       }
@@ -173,11 +176,11 @@ export function showDriverProfile(driver, standings, raceSessions) {
     // Sprint H2H count
     if (hasSprints) {
       for (const result of driver.allResults || []) {
-        if (!result.isSprint) continue;
+        if (!result.isSprint || result.status === 'ABSENT') continue;
         const tmResult = (teammate.allResults || []).find(
-          r => r.session_key === result.session_key && r.isSprint
+          r => r.session_key === result.session_key && r.isSprint && r.status !== 'ABSENT'
         );
-        if (tmResult) {
+        if (tmResult && result.team_name === tmResult.team_name && !(result.status === 'DNS' && tmResult.status === 'DNS')) {
           if (result.position < tmResult.position) sprintDriverWins++;
           else if (tmResult.position < result.position) sprintTmWins++;
         }
@@ -197,7 +200,8 @@ export function showDriverProfile(driver, standings, raceSessions) {
       {
         label: 'Avg Finish',
         v1: rr.length > 0 ? (rr.reduce((a, b) => a + b, 0) / rr.length).toFixed(1) : '—',
-        v2: tmRr.length > 0 ? (tmRr.reduce((a, b) => a + b, 0) / tmRr.length).toFixed(1) : '—'
+        v2: tmRr.length > 0 ? (tmRr.reduce((a, b) => a + b, 0) / tmRr.length).toFixed(1) : '—',
+        lowerBetter: true
       },
     );
 
@@ -205,8 +209,16 @@ export function showDriverProfile(driver, standings, raceSessions) {
     teammateHtml = `
       <div class="dm-section-title">vs Teammate — ${teammate.full_name || teammate.name_acronym}</div>
       ${rows.map(row => {
-      const total = (parseFloat(row.v1) || 0) + (parseFloat(row.v2) || 0) || 1;
-      const pct1 = ((parseFloat(row.v1) || 0) / total) * 100;
+      const n1 = parseFloat(row.v1);
+      const n2 = parseFloat(row.v2);
+      let pct1 = 50;
+      if (!isNaN(n1) && !isNaN(n2) && (n1 + n2) > 0) {
+        pct1 = row.lowerBetter ? (n2 / (n1 + n2)) * 100 : (n1 / (n1 + n2)) * 100;
+      } else if (!isNaN(n1) && isNaN(n2)) {
+        pct1 = 100;
+      } else if (isNaN(n1) && !isNaN(n2)) {
+        pct1 = 0;
+      }
       return `
           <div class="dm-teammate-row">
             <div class="dm-tm-label">${row.label}</div>
@@ -245,7 +257,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
     milestones.push({
       icon: '<i class="fa-solid fa-trophy" style="color: #ffd700;"></i>',
       title: 'Winners Circle',
-      desc: `Secured ${driver.wins} Grand Prix victory${driver.wins > 1 ? 'ies' : ''} this season.`
+      desc: `Secured ${driver.wins} Grand Prix ${driver.wins === 1 ? 'victory' : 'victories'} this season.`
     });
   }
 
@@ -538,8 +550,125 @@ export function showDriverProfile(driver, standings, raceSessions) {
   // ── Championship position ──
   const champPos = standings.drivers.findIndex(d => d.name_acronym === driver.name_acronym) + 1;
   const pointsGap = champPos > 1
-    ? standings.drivers[0].points - driver.points
+    ? Math.round(((standings.drivers[0].points - driver.points) + Number.EPSILON) * 100) / 100
     : 0;
+
+  // ── Mathematical Championship Outlook (when season has races/points remaining) ──
+  let championshipOutlookHtml = '';
+  const maxRemDriverPts = standings.maxRemainingDriverPoints || 0;
+  if (!standings.isFinished && !standings.isPreliminary && maxRemDriverPts > 0 && champPos > 0) {
+    const bestPos = driver.bestPos ?? champPos;
+    const worstPos = driver.worstPos ?? champPos;
+    const maxPossiblePts = driver.maxPossiblePoints ?? Math.round(((driver.points + maxRemDriverPts) + Number.EPSILON) * 100) / 100;
+    const canGain = Math.max(0, champPos - bestPos);
+    const canLose = Math.max(0, worstPos - champPos);
+    const totalGrid = Math.max(standings.drivers.length, 2);
+
+    const startPct = ((bestPos - 1) / (totalGrid - 1)) * 100;
+    const endPct = ((worstPos - 1) / (totalGrid - 1)) * 100;
+    const currPct = ((champPos - 1) / (totalGrid - 1)) * 100;
+    const spanWidthPct = Math.max(2, endPct - startPct);
+
+    const remGPs = standings.remainingGPs || 0;
+    const remSprints = standings.remainingSprints || 0;
+    const evParts = [];
+    if (remGPs > 0) evParts.push(`${remGPs} GP${remGPs !== 1 ? 's' : ''}`);
+    if (remSprints > 0) evParts.push(`${remSprints} Sprint${remSprints !== 1 ? 's' : ''}`);
+    const sc = standings.scoringInfo || {};
+    const ruleNotes = [];
+    if (remGPs > 0) ruleNotes.push(`${sc.maxPointsPerGP || 25}/GP${sc.awardFastestLap ? ' incl. FL' : ''}`);
+    if (remSprints > 0 && (sc.maxSprintPoints || 0) > 0) ruleNotes.push(`${sc.maxSprintPoints}/Sprint`);
+    if (sc.doublePointsFinal) ruleNotes.push('2× Finale');
+
+    let statusTagHtml = '';
+    if (bestPos === 1 && worstPos === 1) {
+      statusTagHtml = `<span class="outlook-status-tag clinched"><i class="fa-solid fa-crown"></i> Title Clinched</span>`;
+    } else if (bestPos === worstPos) {
+      statusTagHtml = `<span class="outlook-status-tag locked"><i class="fa-solid fa-lock"></i> Locked at P${bestPos}</span>`;
+    } else if (bestPos === 1) {
+      statusTagHtml = `<span class="outlook-status-tag contender"><i class="fa-solid fa-trophy"></i> In Title Contention</span>`;
+    } else {
+      statusTagHtml = `<span class="outlook-status-tag neutral">Ceiling: P${bestPos}</span>`;
+    }
+
+    // Build nearby targets ahead & chasers behind
+    const rivalItems = [];
+    if (canGain > 0 && champPos > 1) {
+      const nextAhead = standings.drivers[champPos - 2];
+      if (nextAhead) {
+        const gapAhead = Math.round(((nextAhead.points - driver.points) + Number.EPSILON) * 100) / 100;
+        rivalItems.push(`<div class="outlook-rival-row"><span class="outlook-rival-label"><i class="fa-solid fa-arrow-up" style="color:#2ecc71;"></i> Next ahead:</span> <span class="outlook-rival-val"><strong>P${champPos - 1} ${nextAhead.name_acronym}</strong> (${gapAhead === 0 ? 'tied' : `+${gapAhead} pts`})</span></div>`);
+      }
+      if (bestPos < champPos - 1) {
+        const topTarget = standings.drivers[bestPos - 1];
+        if (topTarget) {
+          const gapTop = Math.round(((topTarget.points - driver.points) + Number.EPSILON) * 100) / 100;
+          rivalItems.push(`<div class="outlook-rival-row"><span class="outlook-rival-label"><i class="fa-solid fa-bullseye" style="color:#ffd700;"></i> Highest reach:</span> <span class="outlook-rival-val"><strong>P${bestPos} ${topTarget.name_acronym}</strong> (+${gapTop} pts)</span></div>`);
+        }
+      }
+    }
+
+    if (canLose > 0 && champPos < standings.drivers.length) {
+      const threats = [];
+      for (let k = champPos; k < standings.drivers.length; k++) {
+        const ch = standings.drivers[k];
+        const chMax = ch.maxPossiblePoints ?? (ch.points + maxRemDriverPts);
+        if (chMax >= driver.points) {
+          const gapBehind = Math.round(((driver.points - ch.points) + Number.EPSILON) * 100) / 100;
+          threats.push({ pos: k + 1, acronym: ch.name_acronym, gap: gapBehind });
+        }
+      }
+      if (threats.length > 0) {
+        const preview = threats.slice(0, 3)
+          .map(t => `<strong>P${t.pos} ${t.acronym}</strong> (${t.gap === 0 ? 'tied' : `−${t.gap} pts`})`)
+          .join(', ');
+        const more = threats.length > 3 ? ` +${threats.length - 3} more` : '';
+        rivalItems.push(`<div class="outlook-rival-row"><span class="outlook-rival-label"><i class="fa-solid fa-triangle-exclamation" style="color:#f87171;"></i> Chasers in range:</span> <span class="outlook-rival-val">${preview}${more}</span></div>`);
+      }
+    }
+
+    const rangeLabel = bestPos === worstPos ? `P${bestPos}` : `P${bestPos} – P${worstPos}`;
+    const rangeAccent = bestPos === 1 ? '#ffd700' : teamColor;
+
+    championshipOutlookHtml = `
+      <div class="champ-outlook-card">
+        <div class="champ-outlook-header">
+          <div class="champ-outlook-title">
+            <i class="fa-solid fa-calculator" style="color:${rangeAccent};"></i>
+            <span>Possible Championship Finish</span>
+          </div>
+          ${statusTagHtml}
+        </div>
+
+        <div class="champ-outlook-main">
+          <div class="champ-outlook-kpi">
+            <div class="champ-outlook-range" style="color:${rangeAccent};">${rangeLabel}</div>
+            <div class="champ-outlook-sub">
+              ${bestPos === worstPos
+                ? 'Position mathematically locked'
+                : `${canGain > 0 ? `<span class="delta-up">↑ Gain up to ${canGain}</span>` : '<span class="delta-muted">No gain ahead</span>'} · ${canLose > 0 ? `<span class="delta-down">↓ Lose up to ${canLose}</span>` : '<span class="delta-muted">Safe from behind</span>'}`
+              }
+            </div>
+          </div>
+          <div class="champ-outlook-pts-box">
+            <div class="champ-outlook-pts-ceil">${driver.points} <span style="color:var(--text-muted);font-weight:500;">→</span> <strong>${maxPossiblePts}</strong> <span style="font-size:0.72rem;color:var(--text-muted);">pts max</span></div>
+            <div class="champ-outlook-pts-meta">${evParts.join(' + ')} left · +${maxRemDriverPts} max (${ruleNotes.join(' · ')})</div>
+          </div>
+        </div>
+
+        <div class="champ-outlook-spectrum">
+          <span class="spectrum-bound">P1</span>
+          <div class="spectrum-track">
+            <div class="spectrum-fill" style="left:${startPct}%;width:${spanWidthPct}%;background:${rangeAccent};"></div>
+            <div class="spectrum-marker" style="left:${currPct}%;border-color:${rangeAccent};" title="Current Position: P${champPos}"></div>
+          </div>
+          <span class="spectrum-bound">P${totalGrid}</span>
+        </div>
+
+        ${rivalItems.length > 0 ? `<div class="champ-outlook-rivals">${rivalItems.join('')}</div>` : ''}
+      </div>
+    `;
+  }
 
   const nat = DRIVER_NATIONALITY[driver.name_acronym] || { country: 'International' };
   const flagInfo = DRIVER_NATIONALITY[driver.name_acronym?.toUpperCase()];
@@ -584,7 +713,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
           <div class="dm-stat-label">Avg Finish</div>
         </div>
         <div class="dm-stat-tile">
-          <div class="dm-stat-value" style="color:#ffd700">P${bestFinish}</div>
+          <div class="dm-stat-value" style="color:#ffd700">${bestFinish !== '—' ? `P${bestFinish}` : '—'}</div>
           <div class="dm-stat-label">Best Finish</div>
         </div>
         <div class="dm-stat-tile">
@@ -622,7 +751,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
           <div class="dm-stat-label">Avg Grid Pos</div>
         </div>
         <div class="dm-stat-tile">
-          <div class="dm-stat-value" style="color:#ffd700">P${bestQuali}</div>
+          <div class="dm-stat-value" style="color:#ffd700">${bestQuali !== '—' ? `P${bestQuali}` : '—'}</div>
           <div class="dm-stat-label">Best Quali</div>
         </div>
       </div>
@@ -665,7 +794,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
             <div class="dm-stat-label">Avg Finish</div>
           </div>
           <div class="dm-stat-tile">
-            <div class="dm-stat-value" style="color:#ffd700">P${bestSprintFinish}</div>
+            <div class="dm-stat-value" style="color:#ffd700">${bestSprintFinish !== '—' ? `P${bestSprintFinish}` : '—'}</div>
             <div class="dm-stat-label">Best Finish</div>
           </div>
           <div class="dm-stat-tile">
@@ -696,7 +825,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
             <div class="dm-stat-label">Avg Grid Pos</div>
           </div>
           <div class="dm-stat-tile">
-            <div class="dm-stat-value" style="color:#ffd700">P${bestSprintQuali}</div>
+            <div class="dm-stat-value" style="color:#ffd700">${bestSprintQuali !== '—' ? `P${bestSprintQuali}` : '—'}</div>
             <div class="dm-stat-label">Best Quali</div>
           </div>
         </div>
@@ -736,6 +865,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
 
     <div class="dm-body">
       ${championBannerHtml}
+      ${championshipOutlookHtml}
       ${tabSelectorHtml}
       ${gpContentHtml}
       ${sprintContentHtml}

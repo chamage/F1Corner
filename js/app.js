@@ -15,11 +15,12 @@ import { openSeasonPickerModal } from './season-picker.js';
 import { initAltHistory } from './alt-history.js';
 
 // Available years (1950-2022 Jolpi Ergast mirror, 2023+ OpenF1)
+const MAX_SEASON_YEAR = Math.max(2026, new Date().getFullYear());
 const AVAILABLE_YEARS = [];
-for (let y = 2026; y >= 1950; y--) {
+for (let y = MAX_SEASON_YEAR; y >= 1950; y--) {
   AVAILABLE_YEARS.push(y);
 }
-let currentYear = 2026;
+let currentYear = MAX_SEASON_YEAR;
 
 // Generation counter — prevents stale loads when switching years rapidly
 let loadGeneration = 0;

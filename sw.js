@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v130'; // v130: support copying any weekend session order as race result in sandbox
+const CACHE_NAME = 'pitcorner-shell-v131'; // v131: championship possible finishing position ranges & standings/profile bug fixes
 const STATIC_ASSETS = [
   './',
   './index.html',

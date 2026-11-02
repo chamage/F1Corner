@@ -1289,21 +1289,10 @@ h1, h2, h3, h4, h5, h6 {
 
 /* ── Responsive ── */
 @media (max-width: 768px) {
-  /* Hide points bar (4th column) in all standings tables */
-  .standings-table th:nth-child(4),
-  .standings-table td:nth-child(4) {
-    display: none !important;
-  }
-
-  /* Hide trend sparkline (7th column) in driver standings table */
-  #drivers-standings-table th:nth-child(7),
-  #drivers-standings-table td:nth-child(7) {
-    display: none !important;
-  }
-
-  /* Hide drivers list (6th column) in constructor standings table */
-  #constructors-standings-table th:nth-child(6),
-  #constructors-standings-table td:nth-child(6) {
+  /* Hide points bar, sparklines, and constructor driver lists on tablet/mobile */
+  .standings-table .col-pts-bar,
+  .standings-table .col-trend,
+  .standings-table .col-team-drivers {
     display: none !important;
   }
 
@@ -4391,21 +4380,20 @@ select.althistory-pos-badge option {
     font-size: 0.82rem !important;
   }
 
-  .standings-table th:nth-child(4),
-  .standings-table td:nth-child(4),
-  .standings-table th:nth-child(7),
-  .standings-table td:nth-child(7) {
+  .standings-table .col-pts-bar,
+  .standings-table .col-trend,
+  .standings-table .col-podiums,
+  .standings-table .col-team-drivers {
     display: none !important;
   }
 
-  #drivers-standings-table th:nth-child(6),
-  #drivers-standings-table td:nth-child(6) {
-    display: none !important; /* Hide Podiums on small screens */
+  .pos-range-pill .pos-range-deltas {
+    display: none !important;
   }
 
-  #constructors-standings-table th:nth-child(6),
-  #constructors-standings-table td:nth-child(6) {
-    display: none !important; /* Hide Drivers on small screens */
+  .pos-range-pill {
+    padding: 2px 6px !important;
+    font-size: 0.7rem !important;
   }
 
   .driver-headshot {
@@ -4464,5 +4452,306 @@ select.althistory-pos-badge option {
   z-index: 2;
   cursor: pointer;
 }
+
+/* ── Championship Remaining Points Bar & Possible Position Badges ── */
+.standings-outlook-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: var(--space-md);
+  background: linear-gradient(90deg, rgba(225, 6, 0, 0.09), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid var(--f1-red);
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.outlook-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.outlook-bar-icon {
+  color: var(--f1-red);
+  font-size: 0.85rem;
+}
+
+.outlook-bar-left strong {
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+}
+
+.outlook-bar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.outlook-max-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 215, 0, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  color: #ffd700;
+}
+
+.outlook-breakdown {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.pos-range-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.pos-range-pill.contender {
+  background: rgba(255, 215, 0, 0.09);
+  border-color: rgba(255, 215, 0, 0.28);
+  color: #ffd700;
+}
+
+.pos-range-pill.upward {
+  background: rgba(46, 204, 113, 0.09);
+  border-color: rgba(46, 204, 113, 0.25);
+}
+
+.pos-range-pill.at-risk {
+  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
+.pos-range-pill.locked {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.pos-range-pill.locked.title-locked {
+  background: rgba(255, 215, 0, 0.14);
+  border-color: rgba(255, 215, 0, 0.35);
+  color: #ffd700;
+}
+
+.pos-range-trophy {
+  font-size: 0.65rem;
+  color: #ffd700;
+}
+
+.pos-range-deltas {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.delta-up {
+  color: #2ecc71;
+}
+
+.delta-down {
+  color: #f87171;
+}
+
+.delta-muted {
+  color: var(--text-muted);
+}
+
+/* ── Driver & Team Profile Championship Outlook Card ── */
+.champ-outlook-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.champ-outlook-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.champ-outlook-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.outlook-status-tag {
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.outlook-status-tag.contender,
+.outlook-status-tag.clinched {
+  background: rgba(255, 215, 0, 0.14);
+  border: 1px solid rgba(255, 215, 0, 0.32);
+  color: #ffd700;
+}
+
+.outlook-status-tag.locked,
+.outlook-status-tag.neutral {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
+.champ-outlook-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.champ-outlook-range {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.champ-outlook-sub {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+.champ-outlook-pts-box {
+  text-align: right;
+}
+
+.champ-outlook-pts-ceil {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.champ-outlook-pts-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.champ-outlook-spectrum {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.spectrum-bound {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.spectrum-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+}
+
+.spectrum-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  opacity: 0.5;
+}
+
+.spectrum-marker {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  border: 3px solid var(--f1-red);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+}
+
+.champ-outlook-rivals {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+}
+
+.outlook-rival-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  line-height: 1.4;
+}
+
+.outlook-rival-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.outlook-rival-val {
+  color: var(--text-secondary);
+}
+
+.outlook-rival-val strong {
+  color: var(--text-primary);
+}
+
+@media (max-width: 520px) {
+  .champ-outlook-pts-box {
+    text-align: left;
+  }
+}
+
 
 

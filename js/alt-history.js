@@ -1210,8 +1210,9 @@ function renderResultsEditorList() {
     }).join('');
 
     const fastestChecked = data.fastest_lap_driver == res.driver_number ? 'checked' : '';
-    const isFastestLapAbolished = currentYear >= 2025;
-    const fastestStyle = (isSprint || isFastestLapAbolished || res.status !== 'FINISHED' || res.position > 10) ? 'display:none;' : '';
+    const flRule = sandboxSettings.fastestLapPoint || 'auto';
+    const awardFlPoint = flRule === 'on' ? true : (flRule === 'off' ? false : (currentYear < 2025));
+    const fastestStyle = (isSprint || !awardFlPoint || res.status !== 'FINISHED' || res.position > 10) ? 'display:none;' : '';
 
     // Build option selectors for position
     const totalPos = data.results.length;

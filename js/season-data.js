@@ -5,12 +5,12 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps } from './api.js';
+import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './db.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_RACE_VERSION = 26; // Bump race cache to v26 to compile fastest_lap_driver and fastest_lap_time
+const LS_RACE_VERSION = 27; // Bump race cache to v27 to preserve official points & unclassified flags
 const LS_QUALI_VERSION = 23; // Bump quali cache to v23 to store driver mapping list in qualifying cache
 
 // In-memory cache
@@ -155,21 +155,43 @@ export function getSeasonData(year) {
       const seasonKey = `season_compiled_${year}`;
       const dbSeasonPromise = dbGet('compiled_races', seasonKey);
 
-      // Parallelize session list fetching
+      // Parallelize session and calendar meeting list fetching
       const sessionsPromise = Promise.all([
         getRaceSessions(year),
         getSessions({ year, session_name: 'Sprint' }),
-        getSessions({ year, session_type: 'Qualifying' })
+        getSessions({ year, session_type: 'Qualifying' }),
+        getMeetings(year).catch(() => [])
       ]);
 
-      const [cachedSeason, [gpSessions, sprintSessions, qualifyingSessions]] = await Promise.all([
+      const [cachedSeason, [gpSessions, sprintSessions, qualifyingSessions, meetings]] = await Promise.all([
         dbSeasonPromise,
         sessionsPromise
       ]);
 
+      // Synthesize upcoming GP session entries for future meetings whose session schedule isn't published yet
+      const gpMeetings = (meetings || []).filter(m =>
+        m.meeting_name && m.meeting_name.includes('Grand Prix') && !m.is_cancelled
+      );
+      const existingGpMeetingKeys = new Set(gpSessions.map(s => String(s.meeting_key)));
+      const fallbackUpcomingGps = [];
+      for (const m of gpMeetings) {
+        if (!existingGpMeetingKeys.has(String(m.meeting_key)) && !isPast(m.date_end)) {
+          fallbackUpcomingGps.push({
+            session_key: `upcoming_race_${m.meeting_key}`,
+            session_name: 'Race',
+            session_type: 'Race',
+            meeting_key: m.meeting_key,
+            circuit_short_name: m.circuit_short_name || m.location || m.meeting_name.replace(' Grand Prix', ''),
+            date_start: m.date_start,
+            date_end: m.date_end,
+            is_fallback: true
+          });
+        }
+      }
+
       const activeSprints = sprintSessions.filter(s => !s.is_cancelled);
-      const allRaceSessions = [...gpSessions, ...activeSprints];
-      const completedSessions = allRaceSessions.filter(s => isPast(s.date_end));
+      const allRaceSessions = [...gpSessions, ...fallbackUpcomingGps, ...activeSprints];
+      const completedSessions = allRaceSessions.filter(s => !s.is_fallback && isPast(s.date_end));
       
       // Load qualifying sessions list
       const activeQuali = qualifyingSessions.filter(s => !s.is_cancelled);
@@ -179,8 +201,9 @@ export function getSeasonData(year) {
       if (cachedSeason) {
         const completedRaceCount = completedSessions.length;
         const completedQualiCount = completedQuali.length;
+        const totalSessionCountMatches = (cachedSeason.totalRaceSessions || []).length === allRaceSessions.length;
 
-        if (cachedSeason.version === LS_RACE_VERSION && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
+        if (cachedSeason.version === LS_RACE_VERSION && totalSessionCountMatches && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
           const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete) || cachedSeason.qualifying.some(q => q.is_incomplete);
           
           let hasRecentSession = false;
@@ -481,11 +504,16 @@ async function fetchRaceData(session) {
         }
       }
 
+      const finalPoints = r.points !== undefined
+        ? r.points
+        : ((status === 'DNS' || status === 'DSQ' || r.unclassified) ? 0 : undefined);
+
       return {
         driver_number: dn,
         position: r.position,
         status: status,
-        points: r.points
+        points: finalPoints,
+        ...(r.unclassified ? { unclassified: true } : {})
       };
     });
 
@@ -579,6 +607,419 @@ function initDriverStats() {
   };
 }
 
+const PTS_EPS = 1e-9;
+
+function roundPoints(val) {
+  return Math.round(((Number(val) || 0) + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Return era-accurate or custom sandbox F1 scoring rules for a season.
+ */
+export function getSeasonScoringLimits(year, customSandboxSettings = null) {
+  const y = parseInt(year) || 2026;
+  let gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+  let sprintSlotPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+  let awardFastestLap = false;
+  let constructorAwardFastestLap = false;
+  let fastestLapTopTenOnly = true;
+  let doublePointsFinal = false;
+
+  if (customSandboxSettings) {
+    const sys = customSandboxSettings.pointsSystem || 'modern';
+    if (sys === 'modern') {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+    } else if (sys === 'classic') {
+      gpSlotPoints = [10, 8, 6, 5, 4, 3, 2, 1];
+    } else if (sys === 'retro') {
+      gpSlotPoints = [10, 6, 4, 3, 2, 1];
+    } else if (sys === 'custom') {
+      const customPts = customSandboxSettings.customPoints || [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      gpSlotPoints = customPts.length > 0 ? [...customPts] : [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+    }
+
+    const flRule = customSandboxSettings.fastestLapPoint || 'auto';
+    if (flRule === 'on') {
+      awardFastestLap = true;
+    } else if (flRule === 'off') {
+      awardFastestLap = false;
+    } else {
+      awardFastestLap = (y < 2025);
+    }
+    constructorAwardFastestLap = awardFastestLap;
+
+    const sprintSys = customSandboxSettings.sprintPointsSystem || 'modern';
+    if (sprintSys === 'modern') {
+      sprintSlotPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+    } else if (sprintSys === 'original') {
+      sprintSlotPoints = [3, 2, 1];
+    } else {
+      sprintSlotPoints = [];
+    }
+
+    doublePointsFinal = !!customSandboxSettings.doublePointsFinal;
+  } else {
+    if (y >= 2025) {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      sprintSlotPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+      awardFastestLap = false;
+    } else if (y >= 2022) {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      sprintSlotPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+      awardFastestLap = true;
+      constructorAwardFastestLap = true;
+    } else if (y === 2021) {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      sprintSlotPoints = [3, 2, 1];
+      awardFastestLap = true;
+      constructorAwardFastestLap = true;
+    } else if (y >= 2019) {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      sprintSlotPoints = [];
+      awardFastestLap = true;
+      constructorAwardFastestLap = true;
+    } else if (y >= 2010) {
+      gpSlotPoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+      sprintSlotPoints = [];
+      awardFastestLap = false;
+      doublePointsFinal = (y === 2014);
+    } else if (y >= 2003) {
+      gpSlotPoints = [10, 8, 6, 5, 4, 3, 2, 1];
+      sprintSlotPoints = [];
+    } else if (y >= 1991) {
+      gpSlotPoints = [10, 6, 4, 3, 2, 1];
+      sprintSlotPoints = [];
+    } else if (y >= 1961) {
+      gpSlotPoints = [9, 6, 4, 3, 2, 1];
+      sprintSlotPoints = [];
+    } else if (y === 1960) {
+      gpSlotPoints = [8, 6, 4, 3, 2, 1];
+      sprintSlotPoints = [];
+    } else {
+      gpSlotPoints = [8, 6, 4, 3, 2];
+      sprintSlotPoints = [];
+      awardFastestLap = true;
+      constructorAwardFastestLap = false;
+      fastestLapTopTenOnly = false;
+    }
+  }
+
+  const maxPointsPerGP = (gpSlotPoints[0] || 0) + (awardFastestLap ? 1 : 0);
+  const maxSprintPoints = sprintSlotPoints[0] || 0;
+  const maxConstructorPointsPerGP = (gpSlotPoints[0] || 0) + (gpSlotPoints[1] || 0) + (constructorAwardFastestLap ? 1 : 0);
+  const maxConstructorSprintPoints = (sprintSlotPoints[0] || 0) + (sprintSlotPoints[1] || 0);
+
+  return {
+    gpSlotPoints,
+    sprintSlotPoints,
+    awardFastestLap,
+    constructorAwardFastestLap,
+    fastestLapTopTenOnly,
+    doublePointsFinal,
+    maxPointsPerGP,
+    maxSprintPoints,
+    maxConstructorPointsPerGP,
+    maxConstructorSprintPoints
+  };
+}
+
+function buildPositionCounts(raceResults) {
+  const counts = new Array(21).fill(0);
+  for (const pos of (raceResults || [])) {
+    if (pos >= 1 && pos <= 20) counts[pos]++;
+  }
+  return counts;
+}
+
+function comparePositionCounts(countsA, countsB) {
+  for (let pos = 1; pos <= 20; pos++) {
+    if (countsA[pos] !== countsB[pos]) {
+      return countsA[pos] > countsB[pos] ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+function canChasersSimultaneouslyPass(deficits, sessionList, carsPerCompetitor = 1) {
+  if (deficits.length === 0) return true;
+  const rem = deficits.slice();
+  const m = rem.length;
+
+  for (const session of sessionList) {
+    const carsUsed = new Array(m).fill(0);
+    const scoredTopTen = new Array(m).fill(false);
+
+    for (let sIdx = 0; sIdx < session.slots.length; sIdx++) {
+      const pts = session.slots[sIdx];
+      if (pts <= 0) continue;
+
+      let bestIdx = -1;
+      let bestRem = PTS_EPS;
+      for (let c = 0; c < m; c++) {
+        if (carsUsed[c] < carsPerCompetitor && rem[c] > bestRem) {
+          bestRem = rem[c];
+          bestIdx = c;
+        }
+      }
+      if (bestIdx === -1) break;
+
+      rem[bestIdx] = Math.max(0, rem[bestIdx] - pts);
+      carsUsed[bestIdx]++;
+      if (sIdx < 10) scoredTopTen[bestIdx] = true;
+    }
+
+    if (session.flBonus > 0) {
+      let flIdx = -1;
+      let flRem = PTS_EPS;
+      for (let c = 0; c < m; c++) {
+        const eligible = session.flTopTenOnly ? scoredTopTen[c] : (carsUsed[c] < carsPerCompetitor || scoredTopTen[c]);
+        if (eligible && rem[c] > flRem) {
+          flRem = rem[c];
+          flIdx = c;
+        }
+      }
+      if (flIdx !== -1) {
+        rem[flIdx] = Math.max(0, rem[flIdx] - session.flBonus);
+      }
+    }
+  }
+
+  return rem.every(r => r <= PTS_EPS);
+}
+
+/**
+ * Compute exact mathematical best and worst finishing positions for all drivers & constructors.
+ */
+function computeMathematicalPositionRanges({
+  driverStandings,
+  constructorStandings,
+  remainingSessions,
+  finalGpKey,
+  scoring,
+  maxRemainingPoints,
+  maxConstructorRemainingPoints,
+  isFinished,
+  isPrelim
+}) {
+  const remainingGPs = remainingSessions.filter(s => s.session_name === 'Race').length;
+  const remainingSprints = remainingSessions.filter(s => s.session_name === 'Sprint').length;
+  const noPointsLeft = isFinished || (remainingGPs === 0 && remainingSprints === 0) || maxRemainingPoints <= 0;
+
+  // Build concrete session descriptors sorted by largest top slot first (Double GP -> GP -> Sprint)
+  const driverSessions = remainingSessions.map(s => {
+    if (s.session_name === 'Sprint') {
+      return { slots: [...scoring.sprintSlotPoints], flBonus: 0, flTopTenOnly: true, isGP: false };
+    }
+    const mult = (scoring.doublePointsFinal && String(s.session_key) === String(finalGpKey)) ? 2 : 1;
+    return {
+      slots: scoring.gpSlotPoints.map(p => p * mult),
+      flBonus: scoring.awardFastestLap ? (1 * mult) : 0,
+      flTopTenOnly: scoring.fastestLapTopTenOnly,
+      isGP: true
+    };
+  }).sort((a, b) => ((b.slots[0] || 0) + b.flBonus) - ((a.slots[0] || 0) + a.flBonus));
+
+  const constructorSessions = driverSessions.map(s => ({
+    ...s,
+    flBonus: (s.isGP && scoring.constructorAwardFastestLap) ? s.flBonus : 0
+  }));
+
+  // Precompute countback arrays for all drivers
+  const driverCounts = driverStandings.map(d => buildPositionCounts(d.raceResults));
+
+  // 1. Driver Position Ranges
+  for (let i = 0; i < driverStandings.length; i++) {
+    const d = driverStandings[i];
+    const currentPos = i + 1;
+    d.currentPos = currentPos;
+    d.maxPossiblePoints = roundPoints(d.points + (noPointsLeft ? 0 : maxRemainingPoints));
+
+    if (noPointsLeft || isPrelim) {
+      d.bestPos = currentPos;
+      d.worstPos = currentPos;
+      d.canWinTitle = (currentPos === 1);
+      d.positionLocked = !isPrelim;
+      continue;
+    }
+
+    // Best possible rank: d wins all remaining GPs and scores maxRemainingPoints; rivals ahead score 0
+    const countsWithAllWins = driverCounts[i].slice();
+    countsWithAllWins[1] += remainingGPs;
+
+    let unbeatableAhead = 0;
+    for (let j = 0; j < i; j++) {
+      const rival = driverStandings[j];
+      let canOvertake = false;
+      if (d.maxPossiblePoints > rival.points + PTS_EPS) {
+        canOvertake = true;
+      } else if (Math.abs(d.maxPossiblePoints - rival.points) <= PTS_EPS) {
+        canOvertake = comparePositionCounts(countsWithAllWins, driverCounts[j]) >= 0;
+      }
+      if (!canOvertake) unbeatableAhead++;
+    }
+    d.bestPos = 1 + unbeatableAhead;
+
+    // Worst possible rank: d scores 0 in remaining sessions; how many chasers behind can simultaneously pass d?
+    const reachableChasers = [];
+    const nonScoringBestPos = Math.min(20, scoring.gpSlotPoints.length + 1);
+
+    for (let k = i + 1; k < driverStandings.length; k++) {
+      const chaser = driverStandings[k];
+      const chaserMaxPts = roundPoints(chaser.points + maxRemainingPoints);
+      const chaserCountsMax = driverCounts[k].slice();
+      chaserCountsMax[1] += remainingGPs;
+
+      let individuallyReachable = false;
+      if (chaserMaxPts > d.points + PTS_EPS) {
+        individuallyReachable = true;
+      } else if (Math.abs(chaserMaxPts - d.points) <= PTS_EPS) {
+        individuallyReachable = comparePositionCounts(chaserCountsMax, driverCounts[i]) >= 0;
+      }
+      if (!individuallyReachable) continue;
+
+      const rawGap = roundPoints(d.points - chaser.points);
+      let neededPts = 1;
+
+      if (Math.abs(rawGap) <= PTS_EPS) {
+        // Currently tied on points (chaser behind on countback)
+        if (remainingGPs > 0 && nonScoringBestPos <= 20) {
+          const testCounts = driverCounts[k].slice();
+          testCounts[nonScoringBestPos] += remainingGPs;
+          if (comparePositionCounts(testCounts, driverCounts[i]) > 0) {
+            neededPts = 0; // Can pass via non-scoring finish (e.g. P11)
+          }
+        }
+      } else if (rawGap > 0) {
+        if (Number.isInteger(rawGap)) {
+          // Test whether tying d.points with best plausible GP finishes wins countback
+          const testCounts = driverCounts[k].slice();
+          let remGap = rawGap;
+          for (const sess of driverSessions) {
+            if (!sess.isGP || remGap <= 0) continue;
+            for (let sIdx = 0; sIdx < sess.slots.length; sIdx++) {
+              if (sess.slots[sIdx] <= remGap) {
+                testCounts[Math.min(20, sIdx + 1)]++;
+                remGap -= sess.slots[sIdx];
+                break;
+              }
+            }
+          }
+          neededPts = comparePositionCounts(testCounts, driverCounts[i]) > 0 ? rawGap : (rawGap + 1);
+        } else {
+          neededPts = Math.ceil(rawGap - PTS_EPS);
+        }
+      }
+
+      reachableChasers.push(neededPts);
+    }
+
+    reachableChasers.sort((a, b) => a - b);
+
+    // Up to remainingGPs * non-scoring positions better than d's tiebreaker can pass with 0 points; extras need >=1 pt
+    let freeNonScoringSlots = 0;
+    if (remainingGPs > 0 && reachableChasers.some(n => n === 0)) {
+      const bestFinishD = (d.raceResults && d.raceResults.length > 0) ? Math.min(...d.raceResults) : 20;
+      const positionsStrictlyBetterNonScoring = Math.max(0, bestFinishD - scoring.gpSlotPoints.length);
+      freeNonScoringSlots = remainingGPs * Math.max(1, positionsStrictlyBetterNonScoring);
+    }
+
+    let zeroUsed = 0;
+    const effectiveDeficits = reachableChasers.map(n => {
+      if (n === 0) {
+        if (zeroUsed < freeNonScoringSlots) {
+          zeroUsed++;
+          return 0;
+        }
+        return 1;
+      }
+      return n;
+    }).sort((a, b) => a - b);
+
+    let maxSimultaneousChasers = 0;
+    for (let m = effectiveDeficits.length; m >= 1; m--) {
+      const positiveSlice = effectiveDeficits.slice(0, m).filter(v => v > 0);
+      if (canChasersSimultaneouslyPass(positiveSlice, driverSessions, 1)) {
+        maxSimultaneousChasers = m;
+        break;
+      }
+    }
+
+    d.worstPos = currentPos + maxSimultaneousChasers;
+    d.canWinTitle = (d.bestPos === 1);
+    d.positionLocked = (d.bestPos === d.worstPos);
+  }
+
+  // 2. Constructor Position Ranges
+  const noConstPointsLeft = isFinished || (remainingGPs === 0 && remainingSprints === 0) || maxConstructorRemainingPoints <= 0;
+  for (let i = 0; i < constructorStandings.length; i++) {
+    const c = constructorStandings[i];
+    const currentPos = i + 1;
+    c.currentPos = currentPos;
+    c.maxPossiblePoints = roundPoints(c.points + (noConstPointsLeft ? 0 : maxConstructorRemainingPoints));
+
+    if (noConstPointsLeft || isPrelim) {
+      c.bestPos = currentPos;
+      c.worstPos = currentPos;
+      c.canWinTitle = (currentPos === 1);
+      c.positionLocked = !isPrelim;
+      continue;
+    }
+
+    let unbeatableAhead = 0;
+    for (let j = 0; j < i; j++) {
+      const rival = constructorStandings[j];
+      let canOvertake = false;
+      if (c.maxPossiblePoints > rival.points + PTS_EPS) {
+        canOvertake = true;
+      } else if (Math.abs(c.maxPossiblePoints - rival.points) <= PTS_EPS) {
+        canOvertake = (c.wins + remainingGPs) >= rival.wins;
+      }
+      if (!canOvertake) unbeatableAhead++;
+    }
+    c.bestPos = 1 + unbeatableAhead;
+
+    const reachableChasers = [];
+    for (let k = i + 1; k < constructorStandings.length; k++) {
+      const chaser = constructorStandings[k];
+      const chaserMaxPts = roundPoints(chaser.points + maxConstructorRemainingPoints);
+      let individuallyReachable = false;
+      if (chaserMaxPts > c.points + PTS_EPS) {
+        individuallyReachable = true;
+      } else if (Math.abs(chaserMaxPts - c.points) <= PTS_EPS) {
+        individuallyReachable = (chaser.wins + remainingGPs) >= c.wins;
+      }
+      if (!individuallyReachable) continue;
+
+      const rawGap = roundPoints(c.points - chaser.points);
+      let neededPts = 1;
+      if (rawGap > 0) {
+        if (Number.isInteger(rawGap)) {
+          const maxGPWinPts = scoring.gpSlotPoints[0] || 25;
+          const extraWinsAtTie = remainingGPs > 0 && rawGap >= maxGPWinPts ? 1 : 0;
+          neededPts = (chaser.wins + extraWinsAtTie) > c.wins ? rawGap : (rawGap + 1);
+        } else {
+          neededPts = Math.ceil(rawGap - PTS_EPS);
+        }
+      }
+      reachableChasers.push(neededPts);
+    }
+
+    reachableChasers.sort((a, b) => a - b);
+
+    let maxSimultaneousChasers = 0;
+    for (let m = reachableChasers.length; m >= 1; m--) {
+      if (canChasersSimultaneouslyPass(reachableChasers.slice(0, m), constructorSessions, 2)) {
+        maxSimultaneousChasers = m;
+        break;
+      }
+    }
+
+    c.worstPos = currentPos + maxSimultaneousChasers;
+    c.canWinTitle = (c.bestPos === 1);
+    c.positionLocked = (c.bestPos === c.worstPos);
+  }
+}
+
 /**
  * Build computed standings from compiled season data.
  * Zero API calls — everything from already-compiled race results.
@@ -666,7 +1107,8 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     sortedMeetings.pop();
   }
 
-  for (const meeting of sortedMeetings) {
+  for (let meetingIdx = 0; meetingIdx < sortedMeetings.length; meetingIdx++) {
+    const meeting = sortedMeetings[meetingIdx];
     for (const race of meeting.sessions) {
       const isSprint = race.session_name === 'Sprint';
       const fastestLapDriver = !isSprint ? race.fastest_lap_driver : null;
@@ -679,19 +1121,21 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
       }
       const raceDrivers = new Set();
 
-      for (const { driver_number, position, status, points } of race.results) {
+      for (const { driver_number, position, status, points, unclassified } of race.results) {
         const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
         raceDrivers.add(acronym);
 
         if (!driverStats.has(acronym)) {
-          driverStats.set(acronym, initDriverStats());
+          const init = initDriverStats();
+          init.pointsHistory = new Array(meetingIdx).fill(0);
+          driverStats.set(acronym, init);
         }
         const stats = driverStats.get(acronym);
 
         // Use pre-computed official points if available, otherwise calculate dynamically
         let pts = (points !== undefined)
           ? points
-          : ((status === 'DSQ' || status === 'DNS' || status === 'ABSENT') ? 0 : getPointsForPosition(position, isSprint));
+          : ((status === 'DSQ' || status === 'DNS' || status === 'ABSENT' || unclassified) ? 0 : getPointsForPosition(position, isSprint));
 
         if (points === undefined) {
           // Award 1 extra point for fastest lap if driver finished in top 10 (only prior to 2025)
@@ -701,15 +1145,15 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
           }
         }
 
-        stats.points += pts;
+        stats.points = roundPoints(stats.points + pts);
 
         if (isSprint) {
           if (position === 1 && status === 'FINISHED') stats.sprintWins++;
           if (position <= 3 && status === 'FINISHED') stats.sprintPodiums++;
           if (status === 'DNF') stats.sprintDnfs++;
-          stats.sprintPoints += pts;
+          stats.sprintPoints = roundPoints(stats.sprintPoints + pts);
 
-          if (status === 'FINISHED' || status === 'DNF') {
+          if ((status === 'FINISHED' || status === 'DNF') && !unclassified) {
             stats.sprintResults.push(position);
           }
         } else {
@@ -719,7 +1163,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
           if (status === 'DNS') stats.dnss++;
           if (status === 'DSQ') stats.dsqs++;
 
-          if (status === 'FINISHED' || status === 'DNF') {
+          if ((status === 'FINISHED' || status === 'DNF') && !unclassified) {
             stats.raceResults.push(position);
           }
         }
@@ -733,6 +1177,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
           isSprint,
           session_key: race.session_key,
           status: status,
+          points: pts,
           team_name: raceTeamName,
           team_colour: raceTeamColour
         });
@@ -744,12 +1189,13 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
               team_colour: raceTeamColour,
               points: 0,
               wins: 0,
-              driverPoints: new Map()
+              driverPoints: new Map(),
+              pointsHistory: new Array(meetingIdx).fill(0)
             });
           }
           const cStats = constructorStats.get(raceTeamName);
-          cStats.points += pts;
-          cStats.driverPoints.set(acronym, (cStats.driverPoints.get(acronym) || 0) + pts);
+          cStats.points = roundPoints(cStats.points + pts);
+          cStats.driverPoints.set(acronym, roundPoints((cStats.driverPoints.get(acronym) || 0) + pts));
           if (!isSprint && position === 1 && status === 'FINISHED') {
             cStats.wins++;
           }
@@ -763,7 +1209,9 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
           const firstDate = driverFirstRaceDate.get(acronym);
 
           if (!driverStats.has(acronym)) {
-            driverStats.set(acronym, initDriverStats());
+            const init = initDriverStats();
+            init.pointsHistory = new Array(meetingIdx).fill(0);
+            driverStats.set(acronym, init);
           }
           const stats = driverStats.get(acronym);
 
@@ -784,6 +1232,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
             isSprint,
             session_key: race.session_key,
             status: status,
+            points: 0,
             team_name: defaultTeamName,
             team_colour: defaultTeamColour
           });
@@ -791,12 +1240,14 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
       }
     }
 
-    // Record cumulative points for ALL drivers seen so far at the end of this GP weekend
+    // Record cumulative points for ALL drivers and constructors seen so far at the end of this GP weekend
     for (const stats of driverStats.values()) {
       stats.pointsHistory.push(stats.points);
     }
+    for (const cStats of constructorStats.values()) {
+      cStats.pointsHistory.push(cStats.points);
+    }
     // Handle newly seen active drivers if they weren't initialized yet, padding their history with 0s
-    const meetingIdx = sortedMeetings.indexOf(meeting);
     for (const acronym of activeDrivers) {
       if (!driverStats.has(acronym)) {
         driverStats.set(acronym, initDriverStats());
@@ -820,10 +1271,13 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
       raceDriversMap.set(d.driver_number, d.name_acronym);
     }
 
-    for (const { driver_number, position } of quali.results) {
+    for (const { driver_number, position, status } of quali.results) {
+      if (status === 'DNS') continue;
       const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
       if (!driverStats.has(acronym)) {
-        driverStats.set(acronym, initDriverStats());
+        const init = initDriverStats();
+        init.pointsHistory = new Array(sortedMeetings.length).fill(0);
+        driverStats.set(acronym, init);
       }
       const stats = driverStats.get(acronym);
       if (isSprintQ) {
@@ -886,9 +1340,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     const driversList = [];
     for (const [acronym, ptsScored] of cStats.driverPoints.entries()) {
       const dInfo = seasonData.drivers.get(acronym);
-      if (dInfo) {
-        driversList.push({ name: dInfo.name_acronym, points: ptsScored });
-      }
+      driversList.push({ name: dInfo ? dInfo.name_acronym : acronym, points: ptsScored });
     }
     driversList.sort((a, b) => b.points - a.points);
 
@@ -898,6 +1350,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
       points: cStats.points,
       wins: cStats.wins,
       drivers: driversList,
+      pointsHistory: cStats.pointsHistory || new Array(sortedMeetings.length).fill(0)
     });
   }
 
@@ -912,11 +1365,12 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
         points: 0,
         wins: 0,
         drivers: [],
+        pointsHistory: new Array(sortedMeetings.length).fill(0)
       });
     }
     const t = teamMap.get(team);
     if (!t.drivers.some(d => d.name === ds.name_acronym)) {
-      t.drivers.push({ name: ds.name_acronym, points: ds.points });
+      t.drivers.push({ name: ds.name_acronym, points: 0 });
     }
   }
 
@@ -927,152 +1381,65 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     });
 
   const allRaceSessions = seasonData.totalRaceSessions || [];
-  const completedSessionKeys = new Set((seasonData.races || []).map(r => String(r.session_key)));
+  const completedSessionKeys = new Set(completedRaces.map(r => String(r.session_key)));
 
-  const gpSessions = allRaceSessions.filter(s => s.session_name === 'Race');
+  const gpSessions = [...allRaceSessions.filter(s => s.session_name === 'Race')]
+    .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
   const sprintSessions = allRaceSessions.filter(s => s.session_name === 'Sprint');
   const isFinished = gpSessions.length > 0 && gpSessions.every(s => completedSessionKeys.has(String(s.session_key)));
 
-  // Calculate remaining sessions for mathematical clinching (independent of real-world date for sandbox flexibility)
+  // Calculate remaining sessions for mathematical clinching & position ranges
   const remainingSessions = allRaceSessions.filter(s => !completedSessionKeys.has(String(s.session_key)));
   const remainingGPs = remainingSessions.filter(s => s.session_name === 'Race').length;
   const remainingSprints = remainingSessions.filter(s => s.session_name === 'Sprint').length;
 
-  let maxPointsPerGP = seasonData.year < 2025 ? 26 : 25;
-  let maxSprintPoints = 8;
-  let maxConstructorPointsPerGP = seasonData.year < 2025 ? 44 : 43;
-  let maxConstructorSprintPoints = 15;
+  const scoring = getSeasonScoringLimits(seasonData.year, customSandboxSettings);
+  const finalGpSession = gpSessions.length > 0 ? gpSessions[gpSessions.length - 1] : null;
+  const finalGpKey = finalGpSession ? finalGpSession.session_key : '';
+  const finalGpIsRemaining = !!finalGpSession && remainingSessions.some(s => String(s.session_key) === String(finalGpKey) && s.session_name === 'Race');
 
-  let maxRemainingPoints = 0;
-  let maxConstructorRemainingPoints = 0;
-
-  if (customSandboxSettings) {
-    // Determine custom GP points limit
-    const sys = customSandboxSettings.pointsSystem || 'modern';
-    let maxGpPts = 25;
-    if (sys === 'modern') {
-      maxGpPts = 25;
-    } else if (sys === 'classic') {
-      maxGpPts = 10;
-    } else if (sys === 'retro') {
-      maxGpPts = 10;
-    } else if (sys === 'custom') {
-      const customPts = customSandboxSettings.customPoints || [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-      maxGpPts = customPts.length > 0 ? customPts[0] : 25;
-    }
-
-    // Determine fastest lap point rule
-    const flRule = customSandboxSettings.fastestLapPoint || 'auto';
-    let awardFl = false;
-    if (flRule === 'on') {
-      awardFl = true;
-    } else if (flRule === 'off') {
-      awardFl = false;
-    } else {
-      awardFl = (seasonData.year < 2025);
-    }
-    if (awardFl) {
-      maxGpPts += 1;
-    }
-
-    maxPointsPerGP = maxGpPts;
-
-    // Determine Sprint points limit
-    const sprintSys = customSandboxSettings.sprintPointsSystem || 'modern';
-    if (sprintSys === 'modern') {
-      maxSprintPoints = 8;
-    } else if (sprintSys === 'original') {
-      maxSprintPoints = 3;
-    } else {
-      maxSprintPoints = 0;
-    }
-
-    // Constructor max points (assumes 1 constructor takes P1 + P2, plus optional fastest lap)
-    let maxGpPointsConstructor = 0;
-    if (sys === 'modern') {
-      maxGpPointsConstructor = 25 + 18;
-    } else if (sys === 'classic') {
-      maxGpPointsConstructor = 10 + 8;
-    } else if (sys === 'retro') {
-      maxGpPointsConstructor = 10 + 6;
-    } else if (sys === 'custom') {
-      const customPts = customSandboxSettings.customPoints || [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-      const p1 = customPts.length > 0 ? customPts[0] : 25;
-      const p2 = customPts.length > 1 ? customPts[1] : 18;
-      maxGpPointsConstructor = p1 + p2;
-    }
-    if (awardFl) {
-      maxGpPointsConstructor += 1;
-    }
-
-    // Constructor Sprint max points (P1 + P2)
-    let maxSprintPointsConstructor = 15;
-    if (sprintSys === 'modern') {
-      maxSprintPointsConstructor = 8 + 7;
-    } else if (sprintSys === 'original') {
-      maxSprintPointsConstructor = 3 + 2;
-    } else {
-      maxSprintPointsConstructor = 0;
-    }
-
-    // Account for double points on final GP if final GP is remaining
-    let finalGpKey = '';
-    const gpSessionsSorted = gpSessions.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
-    if (gpSessionsSorted.length > 0) {
-      finalGpKey = gpSessionsSorted[gpSessionsSorted.length - 1].session_key;
-    }
-    const finalGpIsRemaining = remainingSessions.some(s => s.session_key == finalGpKey && s.session_name === 'Race');
-
-    let remPts = (remainingGPs * maxPointsPerGP) + (remainingSprints * maxSprintPoints);
-    if (customSandboxSettings.doublePointsFinal && finalGpIsRemaining) {
-      remPts += maxPointsPerGP;
-    }
-    maxRemainingPoints = remPts;
-
-    let remConstPts = (remainingGPs * maxGpPointsConstructor) + (remainingSprints * maxSprintPointsConstructor);
-    if (customSandboxSettings.doublePointsFinal && finalGpIsRemaining) {
-      remConstPts += maxGpPointsConstructor;
-    }
-    maxConstructorRemainingPoints = remConstPts;
-  } else {
-    maxRemainingPoints = (remainingGPs * maxPointsPerGP) + (remainingSprints * 8);
-    maxConstructorRemainingPoints = (remainingGPs * maxConstructorPointsPerGP) + (remainingSprints * 15);
+  let maxRemainingPoints = (remainingGPs * scoring.maxPointsPerGP) + (remainingSprints * scoring.maxSprintPoints);
+  let maxConstructorRemainingPoints = (remainingGPs * scoring.maxConstructorPointsPerGP) + (remainingSprints * scoring.maxConstructorSprintPoints);
+  if (scoring.doublePointsFinal && finalGpIsRemaining) {
+    maxRemainingPoints += scoring.maxPointsPerGP;
+    maxConstructorRemainingPoints += scoring.maxConstructorPointsPerGP;
   }
 
   const isPrelim = !!seasonData.is_preliminary;
 
-  const driverClinched = !isPrelim && driverStandings.length >= 2 && 
-    (driverStandings[0].points - driverStandings[1].points) > maxRemainingPoints;
+  if (!excludeLastMeeting) {
+    computeMathematicalPositionRanges({
+      driverStandings,
+      constructorStandings,
+      remainingSessions,
+      finalGpKey,
+      scoring,
+      maxRemainingPoints,
+      maxConstructorRemainingPoints,
+      isFinished,
+      isPrelim
+    });
+  }
 
-  const constructorClinched = !isPrelim && constructorStandings.length >= 2 && 
-    (constructorStandings[0].points - constructorStandings[1].points) > maxConstructorRemainingPoints;
+  const driverClinched = !isPrelim && driverStandings.length >= 2 && (
+    !excludeLastMeeting
+      ? driverStandings[0].worstPos === 1
+      : (driverStandings[0].points - driverStandings[1].points) > maxRemainingPoints
+  );
+
+  const constructorClinched = !isPrelim && constructorStandings.length >= 2 && (
+    !excludeLastMeeting
+      ? constructorStandings[0].worstPos === 1
+      : (constructorStandings[0].points - constructorStandings[1].points) > maxConstructorRemainingPoints
+  );
 
   // ── Compute Chronological Clinch GP Round for Drivers & Constructors ──
   let driverClinchMeeting = null;
   let constructorClinchMeeting = null;
 
-  // We can calculate pointsHistory for constructors by summing driver points histories:
-  const teamPointsHistories = new Map(); // teamName -> pointsHistory[]
-  for (const ds of driverStandings) {
-    const teamName = ds.team_name || 'Unknown';
-    if (teamName === 'Unknown') continue;
-    if (!teamPointsHistories.has(teamName)) {
-      teamPointsHistories.set(teamName, new Array(sortedMeetings.length).fill(0));
-    }
-    const tHistory = teamPointsHistories.get(teamName);
-    const dHistory = ds.pointsHistory || [];
-    for (let rIdx = 0; rIdx < sortedMeetings.length; rIdx++) {
-      if (rIdx < dHistory.length) {
-        tHistory[rIdx] += dHistory[rIdx];
-      } else if (dHistory.length > 0) {
-        tHistory[rIdx] += dHistory[dHistory.length - 1];
-      }
-    }
-  }
-
-  // Assign pointsHistory to constructors
+  const teamPointsHistories = new Map();
   for (const team of constructorStandings) {
-    team.pointsHistory = teamPointsHistories.get(team.team_name) || new Array(sortedMeetings.length).fill(0);
+    teamPointsHistories.set(team.team_name, team.pointsHistory || new Array(sortedMeetings.length).fill(0));
   }
 
   // ── Track Championship Leadership History ──
@@ -1084,11 +1451,16 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     const meetingDate = new Date(meeting.date_end);
 
     // Remaining GPs/Sprints strictly after this meeting date
-    const remGPs = gpSessions.filter(s => new Date(s.date_end) > meetingDate).length;
-    const remSprints = sprintSessions.filter(s => new Date(s.date_end) > meetingDate).length;
+    const remGPsAfter = gpSessions.filter(s => new Date(s.date_end) > meetingDate);
+    const remSprintsAfter = sprintSessions.filter(s => new Date(s.date_end) > meetingDate);
+    const finalGpAfter = scoring.doublePointsFinal && finalGpSession && new Date(finalGpSession.date_end) > meetingDate;
 
-    const maxRemPts = (remGPs * maxPointsPerGP) + (remSprints * 8);
-    const maxConstRemPts = (remGPs * maxConstructorPointsPerGP) + (remSprints * 15);
+    let maxRemPts = (remGPsAfter.length * scoring.maxPointsPerGP) + (remSprintsAfter.length * scoring.maxSprintPoints);
+    let maxConstRemPts = (remGPsAfter.length * scoring.maxConstructorPointsPerGP) + (remSprintsAfter.length * scoring.maxConstructorSprintPoints);
+    if (finalGpAfter) {
+      maxRemPts += scoring.maxPointsPerGP;
+      maxConstRemPts += scoring.maxConstructorPointsPerGP;
+    }
 
     // Check Driver Clinch at round mIdx
     if (!isPrelim && !driverClinchMeeting) {
@@ -1153,9 +1525,9 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     }
   }
 
-  // If the season is fully finished and no clinch occurred earlier (absolute tie-breaker in final round)
-  if (!isPrelim && isFinished) {
-    if (!driverClinchMeeting && driverStandings.length > 0) {
+  // If the season is fully finished (or mathematically clinched on countback) and no clinch occurred earlier
+  if (!isPrelim && (isFinished || driverClinched)) {
+    if (!driverClinchMeeting && driverStandings.length > 0 && sortedMeetings.length > 0) {
       const lastMeeting = sortedMeetings[sortedMeetings.length - 1];
       driverClinchMeeting = {
         round: sortedMeetings.length,
@@ -1164,7 +1536,9 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
         driver_number: driverStandings[0].driver_number
       };
     }
-    if (!constructorClinchMeeting && constructorStandings.length > 0) {
+  }
+  if (!isPrelim && (isFinished || constructorClinched)) {
+    if (!constructorClinchMeeting && constructorStandings.length > 0 && sortedMeetings.length > 0) {
       const lastMeeting = sortedMeetings[sortedMeetings.length - 1];
       constructorClinchMeeting = {
         round: sortedMeetings.length,
@@ -1215,7 +1589,22 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     constructors: constructorStandings,
     raceCount: completedRaces.filter(r => r.session_name === 'Race').length,
     raceSessions: completedRaces,
+    isPreliminary: isPrelim,
     isFinished: isFinished && !isPrelim,
+    totalGPs: gpSessions.length,
+    totalSprints: sprintSessions.length,
+    remainingGPs,
+    remainingSprints,
+    maxRemainingDriverPoints: maxRemainingPoints,
+    maxRemainingConstructorPoints: maxConstructorRemainingPoints,
+    scoringInfo: {
+      maxPointsPerGP: scoring.maxPointsPerGP,
+      maxSprintPoints: scoring.maxSprintPoints,
+      maxConstructorPointsPerGP: scoring.maxConstructorPointsPerGP,
+      maxConstructorSprintPoints: scoring.maxConstructorSprintPoints,
+      awardFastestLap: scoring.awardFastestLap,
+      doublePointsFinal: scoring.doublePointsFinal && finalGpIsRemaining
+    },
     driverClinched: driverClinched,
     constructorClinched: constructorClinched,
     driverClinchMeeting: driverClinchMeeting,

@@ -747,8 +747,11 @@ function renderRaceResults(container) {
     const isFastest = laps ? driver_number === fastestLapDriver : false;
     const driverLapCount = laps ? (computedLapCounts.get(driver_number) ?? 0) : '…';
     const driverPits = pits ? pits.filter(p => p.driver_number === driver_number) : null;
-    const awardFastestLap = raceDataCache.meetingInfo.year < 2025;
-    let pts = points !== undefined ? points : (isDSQ ? 0 : getPointsForPosition(position));
+    const isSprintSession = raceDataCache.currentSessionType === 'Sprint';
+    const awardFastestLap = !isSprintSession && raceDataCache.meetingInfo.year < 2025;
+    let pts = points !== undefined
+      ? points
+      : ((isDSQ || isDNS) ? 0 : getPointsForPosition(position, isSprintSession));
     if (points === undefined) {
       if (awardFastestLap && isFastest && position <= 10 && status === 'FINISHED') {
         pts += 1;

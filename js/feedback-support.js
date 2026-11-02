@@ -443,10 +443,48 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.8.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.8.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">November 2, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Championship Possible Finishing Positions: Integrated exact mathematical championship projection logic. Calculates both highest (best) and lowest (worst) possible finishing ranks for every driver and constructor based on remaining GPs, Sprints, era-specific scoring rules, and multi-car slot feasibility.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Possible Column &amp; Overview Bar: Added an active championship overview banner displaying remaining events and maximum available points, along with a "Possible" position range column showing achievable ranks (e.g. P1–P3 with gain/loss deltas, title contention indicators, or locked badges).</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Driver &amp; Team Profile Championship Outlook: Added a dedicated "Possible Championship Finish" card inside driver and team modals detailing points ceilings, visual range spectrum bars, closest targets ahead, and chasers in range.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Mid-Season Driver Swap Tracking: Fixed constructor standings, driver lineup contributions, points progression history, and teammate duels to attribute points and results strictly to the team the driver competed for in each round.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Race Detail Sprint Points &amp; Unclassified DNFs: Corrected Sprint race point allocations (preventing erroneous fastest lap points on sprint sessions) and ensured unclassified retirements in high-attrition races do not receive top-10 points.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Profile Modals &amp; UI Polish: Corrected "victoryies" plural typo, "P—" display on zero-finish drivers, floating-point rounding on half-point totals, inverted teammate average finish bars, canvas sparkline stroke color parsing, and Alt History fastest lap toggle rules.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>PWA Version Bump: Bumped the offline service worker shell cache to v131 to deliver updated features and styles seamlessly to users.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.7.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.7.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.7.0</div>
               <div class="changelog-date">June 13, 2026</div>
             </div>
             <ul class="changelog-list">

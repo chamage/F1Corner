@@ -305,7 +305,7 @@ export function drawSparkline(canvas, data, color = '#e10600', filled = false) {
       ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
-      ctx.strokeStyle = 'var(--bg-secondary)';
+      ctx.strokeStyle = '#111118';
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }

@@ -1102,21 +1102,31 @@ export async function getFinishingOrder(sessionKey) {
       return a.position - b.position;
     });
 
-    // Map to our standard schema: { driver_number, position, status }
+    // Map to our standard schema: { driver_number, position, status, points }
     return sorted.map((r, index) => {
       let status = 'FINISHED';
       if (r.dsq) status = 'DSQ';
       else if (r.dns) status = 'DNS';
       else if (r.dnf) status = 'DNF';
 
+      const isUnclassified = r.position === null || r.position === undefined;
       // If position is null (like DNF/DSQ/DNS), assign a sequential fallback rank at the end
-      const finalPosition = r.position !== null ? r.position : (index + 1);
+      const finalPosition = !isUnclassified ? r.position : (index + 1);
 
-      return {
+      const entry = {
         driver_number: r.driver_number,
         position: finalPosition,
         status: status
       };
+      if (typeof r.points === 'number') {
+        entry.points = r.points;
+      } else if (isUnclassified) {
+        entry.points = 0;
+      }
+      if (isUnclassified) {
+        entry.unclassified = true;
+      }
+      return entry;
     });
   } catch (e) {
     console.warn(`[API] Failed to get official finishing order for ${sessionKey}:`, e);

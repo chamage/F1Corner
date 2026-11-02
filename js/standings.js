@@ -21,24 +21,97 @@ function getPositionChangeHTML(change) {
   return '';
 }
 
+function buildStandingsOutlookBannerHTML(standings, isConstructors = false) {
+  if (!standings || standings.isFinished || standings.isPreliminary) return '';
+  const maxPts = isConstructors ? standings.maxRemainingConstructorPoints : standings.maxRemainingDriverPoints;
+  if (!maxPts || maxPts <= 0) return '';
+
+  const remGPs = standings.remainingGPs || 0;
+  const remSprints = standings.remainingSprints || 0;
+  if (remGPs === 0 && remSprints === 0) return '';
+
+  const parts = [];
+  if (remGPs > 0) parts.push(`${remGPs} GP${remGPs !== 1 ? 's' : ''}`);
+  if (remSprints > 0) parts.push(`${remSprints} Sprint${remSprints !== 1 ? 's' : ''}`);
+  const eventsText = `${parts.join(' + ')} left`;
+
+  const sc = standings.scoringInfo || {};
+  const breakdownParts = [];
+  if (remGPs > 0) {
+    const perGp = isConstructors ? (sc.maxConstructorPointsPerGP || 43) : (sc.maxPointsPerGP || 25);
+    breakdownParts.push(`${perGp}/GP${sc.awardFastestLap ? ' (incl. FL)' : ''}`);
+  }
+  if (remSprints > 0) {
+    const perSp = isConstructors ? (sc.maxConstructorSprintPoints || 15) : (sc.maxSprintPoints || 8);
+    if (perSp > 0) breakdownParts.push(`${perSp}/Sprint`);
+  }
+  if (sc.doublePointsFinal) {
+    breakdownParts.push('2× Finale');
+  }
+
+  return `
+    <div class="standings-outlook-bar">
+      <div class="outlook-bar-left">
+        <i class="fa-solid fa-flag-checkered outlook-bar-icon"></i>
+        <span><strong>${eventsText}</strong> in championship</span>
+      </div>
+      <div class="outlook-bar-right">
+        <span class="outlook-max-pill">Max <strong>+${maxPts} pts</strong> available</span>
+        ${breakdownParts.length > 0 ? `<span class="outlook-breakdown">${breakdownParts.join(' · ')}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function getPossiblePositionBadgeHTML(item, pos) {
+  const best = item.bestPos ?? pos;
+  const worst = item.worstPos ?? pos;
+  const maxPts = item.maxPossiblePoints ?? item.points;
+
+  if (best === worst) {
+    return `<span class="pos-range-pill locked ${best === 1 ? 'title-locked' : ''}" title="Mathematically locked at P${best} • Max possible: ${maxPts} pts"><i class="fa-solid fa-lock"></i> P${best}</span>`;
+  }
+
+  const canGain = Math.max(0, pos - best);
+  const canLose = Math.max(0, worst - pos);
+  const stateClass = best === 1
+    ? 'contender'
+    : (canGain > 0 && canLose === 0 ? 'upward' : (canGain === 0 && canLose > 0 ? 'at-risk' : ''));
+
+  const gainNote = canGain > 0 ? `can gain ${canGain}` : 'cannot gain higher';
+  const loseNote = canLose > 0 ? `can lose ${canLose}` : 'safe from behind';
+  const tooltip = `Best: P${best} • Worst: P${worst} • Max possible: ${maxPts} pts (${gainNote}, ${loseNote})`;
+
+  return `
+    <span class="pos-range-pill ${stateClass}" title="${tooltip}">
+      ${best === 1 ? '<i class="fa-solid fa-trophy pos-range-trophy"></i>' : ''}
+      <span class="pos-range-text">P${best}–P${worst}</span>
+      <span class="pos-range-deltas">${canGain > 0 ? `<span class="delta-up">↑${canGain}</span>` : ''}${canLose > 0 ? `<span class="delta-down">↓${canLose}</span>` : ''}</span>
+    </span>
+  `;
+}
+
 /**
  * Render driver standings table
  */
 export function renderDriverStandings(standings, container) {
   const maxPoints = standings.drivers.length > 0 ? standings.drivers[0].points : 1;
+  const showRange = !standings.isFinished && !standings.isPreliminary && (standings.maxRemainingDriverPoints || 0) > 0;
 
-  let html = `
+  let html = buildStandingsOutlookBannerHTML(standings, false);
+  html += `
     <div style="overflow-x:auto;">
-    <table class="standings-table" id="drivers-standings-table">
+    <table class="standings-table drivers-standings-table" id="drivers-standings-table">
       <thead>
         <tr>
           <th style="width:40px">Pos</th>
           <th>Driver</th>
           <th style="width:80px">Points</th>
-          <th style="width:120px"></th>
-          <th style="width:60px">Wins</th>
-          <th style="width:70px">Podiums</th>
-          <th style="width:80px">Trend</th>
+          <th class="col-pts-bar" style="width:120px"></th>
+          ${showRange ? '<th class="col-pos-range" style="width:118px;text-align:center;" title="Mathematically achievable finishing positions">Possible</th>' : ''}
+          <th class="col-wins" style="width:60px;text-align:center;">Wins</th>
+          <th class="col-podiums" style="width:70px;text-align:center;">Podiums</th>
+          <th class="col-trend" style="width:80px">Trend</th>
         </tr>
       </thead>
       <tbody>
@@ -54,7 +127,7 @@ export function renderDriverStandings(standings, container) {
     const champClass = isChampion ? 'champion-row' : '';
 
     html += `
-      <tr data-driver="${d.name_acronym}" class="${champClass}">
+      <tr data-driver="${d.name_acronym}" class="${champClass}" style="cursor:pointer;">
         <td>
           <div class="pos-cell-container">
             <span class="position-badge ${posClass}">${pos}</span>
@@ -77,14 +150,15 @@ export function renderDriverStandings(standings, container) {
           </div>
         </td>
         <td class="points-cell">${d.points}</td>
-        <td>
+        <td class="col-pts-bar">
           <div class="points-bar-wrap">
             <div class="points-bar" style="width:${barWidth}%;background:${teamColor}"></div>
           </div>
         </td>
-        <td style="text-align:center">${d.wins}</td>
-        <td style="text-align:center">${d.podiums}</td>
-        <td class="sparkline-cell"><canvas id="${sparkId}" width="80" height="28" style="width:80px;height:28px"></canvas></td>
+        ${showRange ? `<td class="col-pos-range" style="text-align:center;">${getPossiblePositionBadgeHTML(d, pos)}</td>` : ''}
+        <td class="col-wins" style="text-align:center">${d.wins}</td>
+        <td class="col-podiums" style="text-align:center">${d.podiums}</td>
+        <td class="sparkline-cell col-trend"><canvas id="${sparkId}" width="80" height="28" style="width:80px;height:28px"></canvas></td>
       </tr>
     `;
   });
@@ -145,18 +219,21 @@ export function renderDriverStandings(standings, container) {
  */
 export function renderConstructorStandings(standings, container) {
   const maxPoints = standings.constructors.length > 0 ? standings.constructors[0].points : 1;
+  const showRange = !standings.isFinished && !standings.isPreliminary && (standings.maxRemainingConstructorPoints || 0) > 0;
 
-  let html = `
+  let html = buildStandingsOutlookBannerHTML(standings, true);
+  html += `
     <div style="overflow-x:auto;">
-    <table class="standings-table" id="constructors-standings-table">
+    <table class="standings-table constructors-standings-table" id="constructors-standings-table">
       <thead>
         <tr>
           <th style="width:40px">Pos</th>
           <th>Constructor</th>
           <th style="width:80px">Points</th>
-          <th style="width:200px"></th>
-          <th style="width:60px">Wins</th>
-          <th style="width:160px">Drivers</th>
+          <th class="col-pts-bar" style="width:180px"></th>
+          ${showRange ? '<th class="col-pos-range" style="width:118px;text-align:center;" title="Mathematically achievable finishing positions">Possible</th>' : ''}
+          <th class="col-wins" style="width:60px;text-align:center;">Wins</th>
+          <th class="col-team-drivers" style="width:160px">Drivers</th>
         </tr>
       </thead>
       <tbody>
@@ -172,11 +249,11 @@ export function renderConstructorStandings(standings, container) {
 
     const totalTeamPts = t.points || 1;
     const driverBars = t.drivers.map((d, idx) =>
-      `<span style="display:inline-block;width:${(d.points / totalTeamPts) * 100}%;min-width:8px;height:6px;background:${teamColor};opacity:${idx === 0 ? 1 : 0.5};border-radius:3px;"></span>`
+      `<span style="display:inline-block;width:${(d.points / totalTeamPts) * 100}%;min-width:8px;height:6px;background:${teamColor};opacity:${idx === 0 ? 1 : (idx === 1 ? 0.55 : 0.35)};border-radius:3px;"></span>`
     ).join('');
 
     html += `
-      <tr data-team="${t.team_name}" class="${champClass}">
+      <tr data-team="${t.team_name}" class="${champClass}" style="cursor:pointer;">
         <td>
           <div class="pos-cell-container">
             <span class="position-badge ${posClass}">${pos}</span>
@@ -195,13 +272,14 @@ export function renderConstructorStandings(standings, container) {
           </div>
         </td>
         <td class="points-cell">${t.points}</td>
-        <td>
+        <td class="col-pts-bar">
           <div class="points-bar-wrap">
             <div class="points-bar" style="width:${barWidth}%;background:${teamColor}"></div>
           </div>
         </td>
-        <td style="text-align:center">${t.wins}</td>
-        <td>
+        ${showRange ? `<td class="col-pos-range" style="text-align:center;">${getPossiblePositionBadgeHTML(t, pos)}</td>` : ''}
+        <td class="col-wins" style="text-align:center">${t.wins}</td>
+        <td class="col-team-drivers">
           <div class="constructor-drivers">
             ${t.drivers.map(d => `<span>${d.name} (${d.points})</span>`).join(' · ')}
           </div>
