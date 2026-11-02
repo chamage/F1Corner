@@ -1580,6 +1580,26 @@ export async function enrichDriversForSession(rawDrivers, sessionKey, knownResul
   return Array.from(byNumber.values());
 }
 
+/**
+ * Enrichment is best-effort: any failure or stall falls back to the raw OpenF1 driver list
+ * so season/race loading is never blocked by the extra team-resolution lookups.
+ */
+async function safeEnrichDrivers(raw, sessionKey, knownResults = null, sessionMeta = null) {
+  try {
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), 120000));
+    const enriched = await Promise.race([
+      enrichDriversForSession(raw, sessionKey, knownResults, sessionMeta),
+      timeout
+    ]);
+    return Array.isArray(enriched) ? enriched : raw;
+  } catch (err) {
+    console.warn('[API] Driver enrichment failed, using raw drivers:', err?.message || err);
+    return raw;
+  }
+}
+
+export { safeEnrichDrivers };
+
 export async function getSessionDrivers(sessionKey) {
   const cacheKey = String(sessionKey);
   if (enrichedSessionDriversCache.has(cacheKey)) {
@@ -1587,7 +1607,7 @@ export async function getSessionDrivers(sessionKey) {
   }
   const promise = (async () => {
     const raw = await getDrivers({ session_key: sessionKey });
-    return enrichDriversForSession(raw, sessionKey);
+    return safeEnrichDrivers(raw, sessionKey);
   })();
   enrichedSessionDriversCache.set(cacheKey, promise);
   promise.catch(() => enrichedSessionDriversCache.delete(cacheKey));
@@ -1596,7 +1616,7 @@ export async function getSessionDrivers(sessionKey) {
 
 export async function getLatestDrivers() {
   const raw = await getDrivers({ session_key: 'latest' });
-  return enrichDriversForSession(raw, 'latest');
+  return safeEnrichDrivers(raw, 'latest');
 }
 
 // ── Finishing Order from Laps ──

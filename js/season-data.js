@@ -5,7 +5,7 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps, enrichDriversForSession, registerDriverNationalityFromRecord } from './api.js';
+import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps, safeEnrichDrivers, registerDriverNationalityFromRecord } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './db.js';
 
@@ -14,7 +14,12 @@ const LS_RACE_VERSION = 29; // Bump race cache to v29 for dynamic API/grid resol
 const LS_QUALI_VERSION = 24; // Bump quali cache to v24 for enriched reserve driver team & nationality metadata
 
 function hasUnresolvedSessionTeam(compiled) {
-  return Array.isArray(compiled?.drivers) && compiled.drivers.some(d => !d || !d.team_name || d.team_name === 'Unknown');
+  // Only re-check recent sessions (OpenF1/Ergast may still backfill); older ones are accepted as-is
+  // to avoid endlessly re-fetching sessions that genuinely have unresolvable entries.
+  if (!compiled || !Array.isArray(compiled.drivers)) return false;
+  const endedAgo = Date.now() - new Date(compiled.date_end || 0).getTime();
+  if (!(endedAgo < 7 * 24 * 60 * 60 * 1000)) return false;
+  return compiled.drivers.some(d => !d || !d.team_name || d.team_name === 'Unknown');
 }
 
 function upsertSeasonDriver(driversMap, d) {
@@ -462,7 +467,7 @@ async function fetchQualiData(session) {
       throw new Error('Empty qualifying results fetched');
     }
 
-    const sessionDrivers = await enrichDriversForSession(rawSessionDrivers, session.session_key, results, session);
+    const sessionDrivers = await safeEnrichDrivers(rawSessionDrivers, session.session_key, results, session);
     const updatedResults = [...results];
     const resultsDrivers = new Set(results.map(r => r.driver_number));
 
@@ -510,7 +515,7 @@ async function fetchRaceData(session) {
       throw new Error(`Empty results (${results.length}) fetched`);
     }
 
-    const sessionDrivers = await enrichDriversForSession(rawSessionDrivers, session.session_key, results, session);
+    const sessionDrivers = await safeEnrichDrivers(rawSessionDrivers, session.session_key, results, session);
     if (!sessionDrivers.length) {
       throw new Error(`Empty drivers (${sessionDrivers.length}) fetched`);
     }
