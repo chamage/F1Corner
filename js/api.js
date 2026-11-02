@@ -62,10 +62,90 @@ function translateNationalityToCountry(nationality) {
   return NATIONALITY_TO_COUNTRY[clean] || null;
 }
 
+// Standard ISO-3166-1 alpha-3 / FIA / IOC 3-letter country codes used by OpenF1 /v1/drivers
+const OPENF1_COUNTRY_CODES = {
+  'GBR': { country: 'United Kingdom', code: 'gb' },
+  'GER': { country: 'Germany', code: 'de' },
+  'DEU': { country: 'Germany', code: 'de' },
+  'FRA': { country: 'France', code: 'fr' },
+  'ITA': { country: 'Italy', code: 'it' },
+  'BRA': { country: 'Brazil', code: 'br' },
+  'USA': { country: 'United States', code: 'us' },
+  'FIN': { country: 'Finland', code: 'fi' },
+  'AUS': { country: 'Australia', code: 'au' },
+  'ESP': { country: 'Spain', code: 'es' },
+  'JPN': { country: 'Japan', code: 'jp' },
+  'AUT': { country: 'Austria', code: 'at' },
+  'CAN': { country: 'Canada', code: 'ca' },
+  'NZL': { country: 'New Zealand', code: 'nz' },
+  'SWE': { country: 'Sweden', code: 'se' },
+  'BEL': { country: 'Belgium', code: 'be' },
+  'SUI': { country: 'Switzerland', code: 'ch' },
+  'CHE': { country: 'Switzerland', code: 'ch' },
+  'ARG': { country: 'Argentina', code: 'ar' },
+  'NED': { country: 'Netherlands', code: 'nl' },
+  'NLD': { country: 'Netherlands', code: 'nl' },
+  'RSA': { country: 'South Africa', code: 'za' },
+  'ZAF': { country: 'South Africa', code: 'za' },
+  'COL': { country: 'Colombia', code: 'co' },
+  'MEX': { country: 'Mexico', code: 'mx' },
+  'RUS': { country: 'Russia', code: 'ru' },
+  'DEN': { country: 'Denmark', code: 'dk' },
+  'DNK': { country: 'Denmark', code: 'dk' },
+  'POL': { country: 'Poland', code: 'pl' },
+  'MON': { country: 'Monaco', code: 'mc' },
+  'MCO': { country: 'Monaco', code: 'mc' },
+  'VEN': { country: 'Venezuela', code: 've' },
+  'IND': { country: 'India', code: 'in' },
+  'THA': { country: 'Thailand', code: 'th' },
+  'CHN': { country: 'China', code: 'cn' },
+  'IRL': { country: 'Ireland', code: 'ie' },
+  'POR': { country: 'Portugal', code: 'pt' },
+  'PRT': { country: 'Portugal', code: 'pt' },
+  'HUN': { country: 'Hungary', code: 'hu' },
+  'CHI': { country: 'Chile', code: 'cl' },
+  'CHL': { country: 'Chile', code: 'cl' },
+  'URU': { country: 'Uruguay', code: 'uy' },
+  'URY': { country: 'Uruguay', code: 'uy' },
+  'CZE': { country: 'Czechia', code: 'cz' },
+  'EST': { country: 'Estonia', code: 'ee' },
+  'NOR': { country: 'Norway', code: 'no' },
+  'ISR': { country: 'Israel', code: 'il' },
+  'IDN': { country: 'Indonesia', code: 'id' },
+  'INA': { country: 'Indonesia', code: 'id' },
+  'MYS': { country: 'Malaysia', code: 'my' },
+  'MAS': { country: 'Malaysia', code: 'my' },
+  'ARE': { country: 'United Arab Emirates', code: 'ae' },
+  'UAE': { country: 'United Arab Emirates', code: 'ae' },
+  'SAU': { country: 'Saudi Arabia', code: 'sa' },
+  'QAT': { country: 'Qatar', code: 'qa' },
+  'BHR': { country: 'Bahrain', code: 'bh' },
+  'SGP': { country: 'Singapore', code: 'sg' },
+  'KOR': { country: 'South Korea', code: 'kr' },
+  'TUR': { country: 'Turkey', code: 'tr' },
+  'BGR': { country: 'Bulgaria', code: 'bg' },
+  'BUL': { country: 'Bulgaria', code: 'bg' },
+  'ROU': { country: 'Romania', code: 'ro' }
+};
+
+export function registerDriverNationalityFromRecord(driverRecord) {
+  if (!driverRecord || !driverRecord.name_acronym) return;
+  const acronym = driverRecord.name_acronym;
+  if (DRIVER_NATIONALITY[acronym]) return;
+  if (driverRecord.country_code) {
+    const mapped = OPENF1_COUNTRY_CODES[String(driverRecord.country_code).trim().toUpperCase()];
+    if (mapped) {
+      DRIVER_NATIONALITY[acronym] = mapped;
+    }
+  }
+}
+
 const API_BASE = 'https://api.openf1.org/v1';
 
-// ── Jolpi Ergast Historical mirror Integration ──
+// ── Jolpi Ergast Historical & Modern Fallback Integration ──
 const historicalSeasons = new Map();
+const jolpiWeekendCache = new Map(); // year_round -> normalized weekend driver-team entries
+const enrichedSessionDriversCache = new Map(); // sessionKey -> Promise<driver[]>
 
 const HISTORICAL_COUNTRY_CODES = {
   'australia': 'au',
@@ -856,6 +936,16 @@ async function fetchAPI(endpoint, params = {}) {
               console.warn(`[API] Empty response for immutable endpoint ${endpoint}, overriding to TTL_FRESH`);
               ttl = TTL_FRESH;
             }
+            // If OpenF1 /drivers for a session has any reserve/replacement driver with null team_name,
+            // use TTL_FRESH so upstream OpenF1 backfills are picked up quickly
+            if (Array.isArray(data) && data.length > 0 && /\/drivers\?.*session_key=\d+/.test(cacheKey)) {
+              if (data.some(d => !d || !d.team_name)) {
+                ttl = TTL_FRESH;
+              }
+            }
+            if (cacheKey.includes('api.jolpi.ca') && data?.MRData?.RaceTable?.Races?.length === 0) {
+              ttl = TTL_FRESH;
+            }
             memCache.set(cacheKey, data);
             lsSet(cacheKey, data, ttl);
             resolve(data);
@@ -1033,12 +1123,480 @@ export async function getMeetingSessions(meetingKey) {
   return getSessions({ meeting_key: meetingKey });
 }
 
+function isMissingTeamName(d) {
+  return !d || !d.team_name || d.team_name === 'Unknown' || String(d.team_name).trim() === '';
+}
+
+function mergeDriverFields(target, patch) {
+  if (!target || !patch) return target;
+  if (!target.name_acronym && patch.name_acronym) target.name_acronym = patch.name_acronym;
+  if (!target.full_name && patch.full_name) target.full_name = patch.full_name;
+  if (!target.first_name && patch.first_name) target.first_name = patch.first_name;
+  if (!target.last_name && patch.last_name) target.last_name = patch.last_name;
+  if (!target.broadcast_name && patch.broadcast_name) target.broadcast_name = patch.broadcast_name;
+  if (!target.country_code && patch.country_code) target.country_code = patch.country_code;
+  if (!target.meeting_key && patch.meeting_key) target.meeting_key = patch.meeting_key;
+
+  if (isMissingTeamName(target) && !isMissingTeamName(patch)) {
+    target.team_name = patch.team_name;
+    if (patch.team_colour && patch.team_colour !== '666666') {
+      target.team_colour = patch.team_colour;
+    }
+  }
+  if ((!target.team_colour || target.team_colour === '666666') && patch.team_colour && patch.team_colour !== '666666') {
+    target.team_colour = patch.team_colour;
+  }
+  if (!target.headshot_url && patch.headshot_url) {
+    target.headshot_url = patch.headshot_url;
+  }
+  if (!target.headshot_url && target.name_acronym) {
+    const fallbackHeadshot = getDriverHeadshot(target.name_acronym);
+    if (fallbackHeadshot) target.headshot_url = fallbackHeadshot;
+  }
+  registerDriverNationalityFromRecord(target);
+  return target;
+}
+
+const GENERIC_TEAM_TOKENS = new Set(['f1', 'team', 'racing', 'scuderia', 'formula', 'motorsport', 'gp', 'stake', 'kick', 'visa', 'cash', 'app', 'aramco', 'petronas', 'oracle', 'bwt', 'moneygram', 'at', 't']);
+
+function tokenizeTeamIdentifier(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(tok => tok.length >= 2 && !GENERIC_TEAM_TOKENS.has(tok));
+}
+
+function matchJolpiTeamToOpenF1(constructorId, constructorName, jolpiEntries, byNumber, meetingDrivers, allWeekendTeams) {
+  // 1. Teammate Bridge: find another car on the same Jolpi constructorId in this weekend that already has an OpenF1 team_name
+  if (constructorId) {
+    const sameConstructorEntries = jolpiEntries.filter(e => e.constructorId === constructorId);
+    for (const mate of sameConstructorEntries) {
+      const candidates = [];
+      if (mate.carNumber != null && byNumber.has(mate.carNumber)) candidates.push(byNumber.get(mate.carNumber));
+      if (mate.permanentNumber != null && byNumber.has(mate.permanentNumber)) candidates.push(byNumber.get(mate.permanentNumber));
+      if (mate.code) {
+        for (const d of byNumber.values()) {
+          if (d.name_acronym === mate.code) candidates.push(d);
+        }
+        for (const md of meetingDrivers) {
+          if (md && md.name_acronym === mate.code) candidates.push(md);
+        }
+      }
+      for (const cand of candidates) {
+        if (cand && !isMissingTeamName(cand)) {
+          return {
+            team_name: cand.team_name,
+            team_colour: (cand.team_colour && cand.team_colour !== '666666')
+              ? cand.team_colour
+              : (allWeekendTeams.get(cand.team_name) || getConstructorColor(constructorId, constructorName || cand.team_name))
+          };
+        }
+      }
+    }
+  }
+
+  // 2. Distinctive token match against OpenF1 team names active on the same weekend
+  const targetTokens = new Set([
+    ...tokenizeTeamIdentifier(constructorId),
+    ...tokenizeTeamIdentifier(constructorName)
+  ]);
+  if (targetTokens.size > 0 && allWeekendTeams.size > 0) {
+    const matches = [];
+    for (const [openF1TeamName, openF1Colour] of allWeekendTeams.entries()) {
+      const openTokens = tokenizeTeamIdentifier(openF1TeamName);
+      if (openTokens.some(t => targetTokens.has(t))) {
+        matches.push({ team_name: openF1TeamName, team_colour: openF1Colour });
+      }
+    }
+    if (matches.length === 1) {
+      return matches[0];
+    }
+  }
+
+  // 3. Clean fallback to Jolpi's official constructor name + deterministic color
+  if (constructorName) {
+    return {
+      team_name: constructorName,
+      team_colour: getConstructorColor(constructorId, constructorName)
+    };
+  }
+  return null;
+}
+
+async function resolveJolpiWeekendEntries(year, sessionDateStr) {
+  if (!year || !sessionDateStr) return [];
+  const sessionTs = new Date(sessionDateStr).getTime();
+  if (isNaN(sessionTs)) return [];
+
+  try {
+    const schedData = await fetchAPI(`https://api.jolpi.ca/ergast/f1/${year}.json`, { limit: 100 });
+    const races = schedData?.MRData?.RaceTable?.Races;
+    if (!Array.isArray(races) || races.length === 0) return [];
+
+    let bestRace = null;
+    let bestDiff = Infinity;
+    const maxWindowMs = 6 * 24 * 60 * 60 * 1000;
+
+    for (const r of races) {
+      if (!r.date) continue;
+      const raceTs = new Date(`${r.date}T12:00:00Z`).getTime();
+      const diff = Math.abs(raceTs - sessionTs);
+      if (diff <= maxWindowMs && diff < bestDiff) {
+        bestDiff = diff;
+        bestRace = r;
+      }
+    }
+
+    if (!bestRace || !bestRace.round) return [];
+    const roundKey = `${year}_${bestRace.round}`;
+    if (jolpiWeekendCache.has(roundKey)) {
+      return jolpiWeekendCache.get(roundKey);
+    }
+
+    const roundPromises = [
+      fetchAPI(`https://api.jolpi.ca/ergast/f1/${year}/${bestRace.round}/results.json`, { limit: 100 }),
+      fetchAPI(`https://api.jolpi.ca/ergast/f1/${year}/${bestRace.round}/qualifying.json`, { limit: 100 })
+    ];
+    if (bestRace.Sprint) {
+      roundPromises.push(fetchAPI(`https://api.jolpi.ca/ergast/f1/${year}/${bestRace.round}/sprint.json`, { limit: 100 }));
+    }
+
+    const [resJson, qualiJson, sprintJson] = await Promise.all(roundPromises);
+    const rawLists = [
+      ...(resJson?.MRData?.RaceTable?.Races?.[0]?.Results || []),
+      ...(sprintJson?.MRData?.RaceTable?.Races?.[0]?.SprintResults || []),
+      ...(qualiJson?.MRData?.RaceTable?.Races?.[0]?.QualifyingResults || [])
+    ];
+
+    const entries = rawLists.map(item => ({
+      carNumber: item.number != null && !isNaN(Number(item.number)) ? Number(item.number) : null,
+      permanentNumber: item.Driver?.permanentNumber != null && !isNaN(Number(item.Driver.permanentNumber)) ? Number(item.Driver.permanentNumber) : null,
+      code: item.Driver?.code ? String(item.Driver.code).trim().toUpperCase() : null,
+      givenName: item.Driver?.givenName || '',
+      familyName: item.Driver?.familyName || '',
+      nationality: item.Driver?.nationality || null,
+      constructorId: item.Constructor?.constructorId || '',
+      constructorName: item.Constructor?.name || ''
+    }));
+
+    if (entries.length > 0) {
+      jolpiWeekendCache.set(roundKey, entries);
+    }
+    return entries;
+  } catch (err) {
+    console.warn('[API] Jolpi weekend driver fallback failed:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Dynamically enrich OpenF1 session driver records when OpenF1 returns null/missing team_name
+ * (common for mid-season reserve/stand-in drivers) or omits a classified driver from /drivers.
+ * Uses a 4-stage zero-hardcode pipeline:
+ *  1) Same-weekend OpenF1 /drivers?meeting_key=... merge
+ *  2) Official FIA / Jolpi Ergast round results/qualifying/sprint lookup with teammate name bridging
+ *  3) Exact FIA 2-car constructor grid vacancy deduction
+ *  4) Same-season OpenF1 driver history fallback
+ */
+export async function enrichDriversForSession(rawDrivers, sessionKey, knownResults = null, sessionMeta = null) {
+  const safeRaw = Array.isArray(rawDrivers) ? rawDrivers : [];
+  for (const d of safeRaw) {
+    registerDriverNationalityFromRecord(d);
+  }
+
+  // Historical seasons (<=2022) already come fully hydrated from Jolpi Ergast
+  if (typeof sessionKey === 'string' && sessionKey.includes('_')) {
+    return safeRaw;
+  }
+
+  const rawNums = new Set(safeRaw.map(d => d.driver_number));
+  const missingResultNums = new Set();
+  if (Array.isArray(knownResults)) {
+    for (const r of knownResults) {
+      if (r && r.driver_number != null && !rawNums.has(r.driver_number)) {
+        missingResultNums.add(r.driver_number);
+      }
+    }
+  }
+
+  const hasIncompleteDriver = safeRaw.length === 0 || safeRaw.some(d => isMissingTeamName(d) || !d.name_acronym);
+  if (!hasIncompleteDriver && missingResultNums.size === 0) {
+    return safeRaw;
+  }
+
+  // Clone records by driver_number so cached raw API arrays are never mutated in place
+  const byNumber = new Map();
+  for (const d of safeRaw) {
+    if (d && d.driver_number != null) {
+      byNumber.set(Number(d.driver_number), { ...d });
+    }
+  }
+  for (const dn of missingResultNums) {
+    const num = Number(dn);
+    if (!byNumber.has(num)) {
+      byNumber.set(num, {
+        driver_number: num,
+        session_key: sessionKey,
+        meeting_key: sessionMeta?.meeting_key || safeRaw[0]?.meeting_key || null,
+        name_acronym: null,
+        full_name: null,
+        first_name: null,
+        last_name: null,
+        team_name: null,
+        team_colour: null,
+        country_code: null,
+        headshot_url: null
+      });
+    }
+  }
+
+  // Resolve session metadata (meeting_key, year, date_end) if not provided by caller
+  let meetingKey = sessionMeta?.meeting_key || safeRaw.find(d => d?.meeting_key)?.meeting_key || null;
+  let sessionDateEnd = sessionMeta?.date_end || sessionMeta?.date_start || (sessionKey != null ? sessionEndTimes.get(String(sessionKey)) : null) || null;
+  let year = sessionMeta?.year || (sessionDateEnd ? new Date(sessionDateEnd).getFullYear() : null);
+
+  if ((!meetingKey || !sessionDateEnd || !year) && sessionKey && sessionKey !== 'latest') {
+    const sessionArr = await fetchAPI('/sessions', { session_key: sessionKey });
+    const sInfo = Array.isArray(sessionArr) && sessionArr.length > 0 ? sessionArr[0] : null;
+    if (sInfo) {
+      meetingKey = meetingKey || sInfo.meeting_key;
+      sessionDateEnd = sessionDateEnd || sInfo.date_end || sInfo.date_start;
+      year = year || sInfo.year || (sessionDateEnd ? new Date(sessionDateEnd).getFullYear() : null);
+      if (sInfo.session_key && sInfo.date_end) {
+        sessionEndTimes.set(String(sInfo.session_key), sInfo.date_end);
+      }
+    }
+  }
+
+  const allWeekendTeams = new Map(); // team_name -> team_colour
+  for (const d of byNumber.values()) {
+    if (!isMissingTeamName(d)) {
+      if (!allWeekendTeams.has(d.team_name) || (d.team_colour && d.team_colour !== '666666')) {
+        allWeekendTeams.set(d.team_name, d.team_colour || '666666');
+      }
+    }
+  }
+
+  // ── Stage 1: Same-Weekend OpenF1 Merge (/drivers?meeting_key=...) ──
+  let meetingDrivers = [];
+  if (meetingKey) {
+    const fetchedMeetingDrivers = await fetchAPI('/drivers', { meeting_key: meetingKey });
+    if (Array.isArray(fetchedMeetingDrivers)) {
+      meetingDrivers = fetchedMeetingDrivers;
+      for (const md of meetingDrivers) {
+        if (!md || md.driver_number == null) continue;
+        registerDriverNationalityFromRecord(md);
+        if (!isMissingTeamName(md)) {
+          if (!allWeekendTeams.has(md.team_name) || (md.team_colour && md.team_colour !== '666666')) {
+            allWeekendTeams.set(md.team_name, md.team_colour || '666666');
+          }
+        }
+        const num = Number(md.driver_number);
+        if (byNumber.has(num)) {
+          mergeDriverFields(byNumber.get(num), md);
+        } else if (safeRaw.length === 0) {
+          byNumber.set(num, mergeDriverFields({ ...md, session_key: sessionKey }, md));
+        }
+      }
+    }
+  }
+
+  const stillNeedsResolution = () => {
+    for (const d of byNumber.values()) {
+      if (isMissingTeamName(d) || !d.name_acronym) return true;
+    }
+    return false;
+  };
+
+  // ── Stage 2: Official FIA / Jolpi Ergast Weekend Lookup ──
+  if (stillNeedsResolution() && year && year >= 2023 && sessionDateEnd) {
+    const jolpiEntries = await resolveJolpiWeekendEntries(year, sessionDateEnd);
+    if (jolpiEntries.length > 0) {
+      for (const entry of jolpiEntries) {
+        if (entry.code && entry.nationality && !DRIVER_NATIONALITY[entry.code]) {
+          const nat = translateNationalityToCountry(entry.nationality);
+          if (nat) DRIVER_NATIONALITY[entry.code] = nat;
+        }
+
+        // Match target driver in byNumber by session car number first, then acronym, then permanent number
+        let target = (entry.carNumber != null && byNumber.has(entry.carNumber)) ? byNumber.get(entry.carNumber) : null;
+        if (!target && entry.code) {
+          for (const d of byNumber.values()) {
+            if (d.name_acronym === entry.code) {
+              target = d;
+              break;
+            }
+          }
+        }
+        if (!target && entry.permanentNumber != null && byNumber.has(entry.permanentNumber)) {
+          const cand = byNumber.get(entry.permanentNumber);
+          if (!cand.name_acronym || !entry.code || cand.name_acronym === entry.code) {
+            target = cand;
+          }
+        }
+        if (!target) continue;
+
+        const fullName = `${entry.givenName} ${entry.familyName}`.trim();
+        const acronym = entry.code || target.name_acronym || (entry.familyName ? entry.familyName.slice(0, 3).toUpperCase() : null);
+        const resolvedTeam = matchJolpiTeamToOpenF1(
+          entry.constructorId,
+          entry.constructorName,
+          jolpiEntries,
+          byNumber,
+          meetingDrivers,
+          allWeekendTeams
+        );
+
+        mergeDriverFields(target, {
+          name_acronym: acronym,
+          full_name: fullName || null,
+          first_name: entry.givenName || null,
+          last_name: entry.familyName || null,
+          team_name: resolvedTeam?.team_name || null,
+          team_colour: resolvedTeam?.team_colour || null,
+          headshot_url: acronym ? getDriverHeadshot(acronym) : null
+        });
+
+        if (resolvedTeam?.team_name && !allWeekendTeams.has(resolvedTeam.team_name)) {
+          allWeekendTeams.set(resolvedTeam.team_name, resolvedTeam.team_colour || '666666');
+        }
+      }
+    }
+  }
+
+  // ── Stage 3: Exact FIA 2-Car Constructor Grid Vacancy Deduction ──
+  if (stillNeedsResolution()) {
+    let activeResults = Array.isArray(knownResults) && knownResults.length > 0 ? knownResults : null;
+    if (!activeResults && sessionKey && sessionKey !== 'latest') {
+      const fetchedRes = await getSessionResult({ session_key: sessionKey }).catch(() => []);
+      if (Array.isArray(fetchedRes) && fetchedRes.length > 0) {
+        activeResults = fetchedRes;
+      }
+    }
+
+    const activeNums = activeResults
+      ? Array.from(new Set(activeResults.map(r => Number(r.driver_number)).filter(n => !isNaN(n))))
+      : Array.from(byNumber.keys());
+
+    // Ensure any driver present in activeResults exists in byNumber
+    for (const dn of activeNums) {
+      if (!byNumber.has(dn)) {
+        const mdMatch = meetingDrivers.find(m => Number(m.driver_number) === dn);
+        byNumber.set(dn, mergeDriverFields({
+          driver_number: dn,
+          session_key: sessionKey,
+          meeting_key: meetingKey,
+          name_acronym: null,
+          full_name: null,
+          team_name: null,
+          team_colour: null
+        }, mdMatch || {}));
+      }
+    }
+
+    const teamCounts = new Map();
+    for (const [tName] of allWeekendTeams) {
+      teamCounts.set(tName, 0);
+    }
+    for (const d of byNumber.values()) {
+      if (!isMissingTeamName(d) && !teamCounts.has(d.team_name)) {
+        teamCounts.set(d.team_name, 0);
+      }
+    }
+
+    const unassignedActiveNums = [];
+    for (const dn of activeNums) {
+      const d = byNumber.get(dn);
+      if (d && !isMissingTeamName(d)) {
+        teamCounts.set(d.team_name, (teamCounts.get(d.team_name) || 0) + 1);
+      } else {
+        unassignedActiveNums.push(dn);
+      }
+    }
+
+    const underfilledTeams = Array.from(teamCounts.entries()).filter(([, count]) => count < 2);
+    if (teamCounts.size >= 8 && unassignedActiveNums.length > 0 && underfilledTeams.length === 1) {
+      const [vacantTeamName, currentCars] = underfilledTeams[0];
+      const openSeats = 2 - currentCars;
+      if (unassignedActiveNums.length <= openSeats) {
+        const vacantColour = allWeekendTeams.get(vacantTeamName)
+          || Array.from(byNumber.values()).find(d => d.team_name === vacantTeamName && d.team_colour && d.team_colour !== '666666')?.team_colour
+          || getConstructorColor(vacantTeamName, vacantTeamName);
+
+        for (const dn of unassignedActiveNums) {
+          const d = byNumber.get(dn);
+          if (d) {
+            d.team_name = vacantTeamName;
+            if (!d.team_colour || d.team_colour === '666666') {
+              d.team_colour = vacantColour;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── Stage 4: Same-Season OpenF1 Driver History Fallback (for multi-rookie Practice sessions) ──
+  if (stillNeedsResolution() && year && year >= 2023) {
+    const unresolvedWithAcronym = Array.from(byNumber.values()).filter(d => isMissingTeamName(d) && d.name_acronym);
+    if (unresolvedWithAcronym.length > 0) {
+      const seasonSessions = await fetchAPI('/sessions', { year }).catch(() => []);
+      const validSessionKeys = new Set(
+        Array.isArray(seasonSessions) ? seasonSessions.map(s => Number(s.session_key)) : []
+      );
+      const targetKeyNum = Number(sessionKey) || 0;
+
+      for (const d of unresolvedWithAcronym) {
+        const history = await fetchAPI('/drivers', { name_acronym: d.name_acronym }).catch(() => []);
+        if (!Array.isArray(history) || history.length === 0) continue;
+
+        const sameSeasonValid = history
+          .filter(h => h && validSessionKeys.has(Number(h.session_key)) && !isMissingTeamName(h))
+          .sort((a, b) => Math.abs(Number(a.session_key) - targetKeyNum) - Math.abs(Number(b.session_key) - targetKeyNum));
+
+        if (sameSeasonValid.length > 0) {
+          mergeDriverFields(d, sameSeasonValid[0]);
+        }
+      }
+    }
+  }
+
+  // Ensure sensible fallback acronym & colour if upstream omitted everything
+  for (const [dn, d] of byNumber.entries()) {
+    if (!d.name_acronym) {
+      d.name_acronym = d.last_name ? d.last_name.slice(0, 3).toUpperCase() : `DRV_${dn}`;
+    }
+    if (!d.full_name) {
+      d.full_name = `${d.first_name || ''} ${d.last_name || ''}`.trim() || `Driver #${dn}`;
+    }
+    if (!isMissingTeamName(d) && (!d.team_colour || d.team_colour === '666666')) {
+      d.team_colour = allWeekendTeams.get(d.team_name) || getConstructorColor(d.team_name, d.team_name);
+    }
+    registerDriverNationalityFromRecord(d);
+  }
+
+  return Array.from(byNumber.values());
+}
+
 export async function getSessionDrivers(sessionKey) {
-  return getDrivers({ session_key: sessionKey });
+  const cacheKey = String(sessionKey);
+  if (enrichedSessionDriversCache.has(cacheKey)) {
+    return enrichedSessionDriversCache.get(cacheKey);
+  }
+  const promise = (async () => {
+    const raw = await getDrivers({ session_key: sessionKey });
+    return enrichDriversForSession(raw, sessionKey);
+  })();
+  enrichedSessionDriversCache.set(cacheKey, promise);
+  promise.catch(() => enrichedSessionDriversCache.delete(cacheKey));
+  return promise;
 }
 
 export async function getLatestDrivers() {
-  return getDrivers({ session_key: 'latest' });
+  const raw = await getDrivers({ session_key: 'latest' });
+  return enrichDriversForSession(raw, 'latest');
 }
 
 // ── Finishing Order from Laps ──
@@ -1147,6 +1705,8 @@ export async function preloadYear(year) {
  */
 export async function clearCache() {
   memCache.clear();
+  jolpiWeekendCache.clear();
+  enrichedSessionDriversCache.clear();
   try {
     await dbClear('api_cache');
     await dbClear('historical_seasons');
@@ -1161,6 +1721,8 @@ export async function clearCache() {
  */
 export async function clearSingleSeasonAPICache(year) {
   memCache.clear();
+  jolpiWeekendCache.clear();
+  enrichedSessionDriversCache.clear();
   try {
     const keys = await dbGetAllKeys('api_cache');
     let clearedCount = 0;
@@ -1183,6 +1745,10 @@ export async function clearSingleSeasonAPICache(year) {
  * Clear cached entries (IndexedDB + memory) for specific session keys
  */
 export async function clearSessionsAPICache(sessionKeys) {
+  jolpiWeekendCache.clear();
+  for (const sk of sessionKeys) {
+    enrichedSessionDriversCache.delete(String(sk));
+  }
   // Clear from in-memory cache
   for (const key of memCache.keys()) {
     const match = sessionKeys.some(s => key.includes(`session_key=${s}`));

@@ -382,12 +382,22 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
         date_start: s.date_start,
         date_end: s.date_end,
         results: compiled ? compiled.results : [],
+        drivers: compiled ? compiled.drivers : null,
       };
     }
 
     // Default to the Race session (or the initially clicked session)
     const defaultSessionName = sessions['Race'] ? 'Race' : (completedSessions.length > 0 ? completedSessions[completedSessions.length - 1].session_name : 'Race');
     const defaultSession = sessions[defaultSessionName] || { session_key: sessionKey, results: getResultsForSession(seasonData, sessionKey) };
+
+    if (defaultSession.drivers && defaultSession.drivers.length > 0) {
+      drivers = defaultSession.drivers;
+    } else if (defaultSession.session_key && String(defaultSession.session_key) !== String(sessionKey)) {
+      const defaultDrivers = await getSessionDrivers(defaultSession.session_key).catch(() => []);
+      if (defaultDrivers && defaultDrivers.length > 0) {
+        drivers = defaultDrivers;
+      }
+    }
 
     // Render session pills if there are multiple sessions
     if (completedSessions.length > 1 && pillsContainer) {

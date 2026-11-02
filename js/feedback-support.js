@@ -452,6 +452,10 @@ export function showChangelogModal() {
             <ul class="changelog-list">
               <li class="changelog-item">
                 <span class="changelog-tag fixed">Fixed</span>
+                <span>Dynamic Reserve Driver Team &amp; Flag Resolution: Fixed stand-in and replacement drivers showing as "Unknown" team when live timing omits constructor metadata; PitCorner now dynamically resolves constructor assignments, team colors, and nationalities across same-weekend sessions, official FIA/Ergast round feeds, and 2-car constructor grid vacancies.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
                 <span>Temporary Reserve &amp; Dropped Driver DNS Bug: Resolved phantom DNS entries on Driver Profile modals for temporary replacement drivers (e.g. Bearman, Lawson) and mid-season dropped drivers across races where they were no longer participating.</span>
               </li>
               <li class="changelog-item">
@@ -472,7 +476,7 @@ export function showChangelogModal() {
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag improved">Improved</span>
-                <span>PWA &amp; Race Cache Bump: Bumped service worker cache to v132 and compiler version to v28 to deliver clean invalidation and seamless updates.</span>
+                <span>PWA &amp; Race Cache Bump: Bumped service worker cache to v133 and compiler version to v29 to deliver clean invalidation and automatic re-enrichment of cached sessions.</span>
               </li>
             </ul>
           </div>

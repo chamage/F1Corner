@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v132'; // v132: 3+ driver team handling & temporary mid-season replacement DNS fixes
+const CACHE_NAME = 'pitcorner-shell-v133'; // v133: Dynamic API & grid constructor resolution for reserve/stand-in drivers
 const STATIC_ASSETS = [
   './',
   './index.html',

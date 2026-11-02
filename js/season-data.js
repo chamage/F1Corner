@@ -5,13 +5,38 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps } from './api.js';
+import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps, enrichDriversForSession, registerDriverNationalityFromRecord } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './db.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_RACE_VERSION = 28; // Bump race cache to v28 to filter replaced Friday drivers & preserve official points
-const LS_QUALI_VERSION = 23; // Bump quali cache to v23 to store driver mapping list in qualifying cache
+const LS_RACE_VERSION = 29; // Bump race cache to v29 for dynamic API/grid resolution of reserve drivers with null team_name
+const LS_QUALI_VERSION = 24; // Bump quali cache to v24 for enriched reserve driver team & nationality metadata
+
+function hasUnresolvedSessionTeam(compiled) {
+  return Array.isArray(compiled?.drivers) && compiled.drivers.some(d => !d || !d.team_name || d.team_name === 'Unknown');
+}
+
+function upsertSeasonDriver(driversMap, d) {
+  if (!d || !d.name_acronym) return;
+  registerDriverNationalityFromRecord(d);
+  const prev = driversMap.get(d.name_acronym);
+  if (!prev) {
+    driversMap.set(d.name_acronym, { ...d });
+    return;
+  }
+  driversMap.set(d.name_acronym, {
+    ...prev,
+    ...d,
+    team_name: (d.team_name && d.team_name !== 'Unknown') ? d.team_name : (prev.team_name || d.team_name),
+    team_colour: (d.team_colour && d.team_colour !== '666666') ? d.team_colour : (prev.team_colour || d.team_colour),
+    headshot_url: d.headshot_url || prev.headshot_url || null,
+    country_code: d.country_code || prev.country_code || null,
+    full_name: d.full_name || prev.full_name,
+    first_name: d.first_name || prev.first_name,
+    last_name: d.last_name || prev.last_name,
+  });
+}
 
 // In-memory cache
 let seasonCache = new Map(); // year -> compiled season data
@@ -58,6 +83,13 @@ async function loadRaceFromStorage(sessionKey, isQuali = false) {
           await dbDelete('compiled_races', key);
           return null;
         }
+      }
+    }
+
+    if (compiled && hasUnresolvedSessionTeam(compiled)) {
+      if (Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000) {
+        await dbDelete('compiled_races', key);
+        return null;
       }
     }
 
@@ -204,7 +236,8 @@ export function getSeasonData(year) {
         const totalSessionCountMatches = (cachedSeason.totalRaceSessions || []).length === allRaceSessions.length;
 
         if (cachedSeason.version === LS_RACE_VERSION && totalSessionCountMatches && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
-          const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete) || cachedSeason.qualifying.some(q => q.is_incomplete);
+          const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete || hasUnresolvedSessionTeam(r))
+            || cachedSeason.qualifying.some(q => q.is_incomplete || hasUnresolvedSessionTeam(q));
           
           let hasRecentSession = false;
           const oneDay = 24 * 60 * 60 * 1000;
@@ -233,6 +266,9 @@ export function getSeasonData(year) {
                   driversMap.set(k, v);
                 }
               }
+            }
+            for (const d of driversMap.values()) {
+              registerDriverNationalityFromRecord(d);
             }
             cachedSeason.drivers = driversMap;
 
@@ -285,7 +321,8 @@ export function getSeasonData(year) {
               isValid = false;
             }
           }
-          if (compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
+          if ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
+              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000)) {
             await dbDelete('compiled_races', key);
             isValid = false;
           }
@@ -300,7 +337,8 @@ export function getSeasonData(year) {
         const compiled = dbResults.get(key);
         if (compiled) {
           let isValid = true;
-          if (compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
+          if ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
+              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000)) {
             await dbDelete('compiled_races', key);
             isValid = false;
           }
@@ -345,19 +383,17 @@ export function getSeasonData(year) {
       races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
       qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-      for (const race of races) {
-        if (race.drivers) {
-          for (const d of race.drivers) {
-            drivers.set(d.name_acronym, d);
-          }
-        }
-      }
       for (const quali of qualifying) {
         if (quali.drivers) {
           for (const d of quali.drivers) {
-            if (!drivers.has(d.name_acronym)) {
-              drivers.set(d.name_acronym, d);
-            }
+            upsertSeasonDriver(drivers, d);
+          }
+        }
+      }
+      for (const race of races) {
+        if (race.drivers) {
+          for (const d of race.drivers) {
+            upsertSeasonDriver(drivers, d);
           }
         }
       }
@@ -417,7 +453,7 @@ export function isSeasonPreliminary(year) {
  */
 async function fetchQualiData(session) {
   try {
-    const [results, sessionDrivers] = await Promise.all([
+    const [results, rawSessionDrivers] = await Promise.all([
       getFinishingOrder(session.session_key),
       getSessionDrivers(session.session_key).catch(() => [])
     ]);
@@ -426,6 +462,7 @@ async function fetchQualiData(session) {
       throw new Error('Empty qualifying results fetched');
     }
 
+    const sessionDrivers = await enrichDriversForSession(rawSessionDrivers, session.session_key, results, session);
     const updatedResults = [...results];
     const resultsDrivers = new Set(results.map(r => r.driver_number));
 
@@ -462,15 +499,20 @@ async function fetchQualiData(session) {
  */
 async function fetchRaceData(session) {
   try {
-    const [sessionDrivers, results, stints, laps] = await Promise.all([
-      getSessionDrivers(session.session_key),
+    const [rawSessionDrivers, results, stints, laps] = await Promise.all([
+      getSessionDrivers(session.session_key).catch(() => []),
       getFinishingOrder(session.session_key),
       getStints({ session_key: session.session_key }),
       getLaps({ session_key: session.session_key }).catch(() => [])
     ]);
 
-    if (!sessionDrivers.length || !results.length) {
-      throw new Error(`Empty drivers (${sessionDrivers.length}) or results (${results.length}) fetched`);
+    if (!results.length) {
+      throw new Error(`Empty results (${results.length}) fetched`);
+    }
+
+    const sessionDrivers = await enrichDriversForSession(rawSessionDrivers, session.session_key, results, session);
+    if (!sessionDrivers.length) {
+      throw new Error(`Empty drivers (${sessionDrivers.length}) fetched`);
     }
 
     // Calculate completed laps per driver from tyre stints (extremely lightweight!)
@@ -1110,6 +1152,27 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     }
   }
 
+  // Build registry of active season constructors (team_name -> team_colour) for 2-car vacancy deduction
+  const knownSeasonTeams = new Map();
+  for (const race of completedRaces) {
+    for (const d of (race.drivers || [])) {
+      if (d?.team_name && d.team_name !== 'Unknown') {
+        if (!knownSeasonTeams.has(d.team_name) || (d.team_colour && d.team_colour !== '666666')) {
+          knownSeasonTeams.set(d.team_name, d.team_colour || '666666');
+        }
+      }
+    }
+  }
+  for (const quali of completedQualifying) {
+    for (const d of (quali.drivers || [])) {
+      if (d?.team_name && d.team_name !== 'Unknown') {
+        if (!knownSeasonTeams.has(d.team_name) || (d.team_colour && d.team_colour !== '666666')) {
+          knownSeasonTeams.set(d.team_name, d.team_colour || '666666');
+        }
+      }
+    }
+  }
+
   const activeDrivers = Array.from(seasonData.drivers.keys()); // Unique acronyms
 
   // Group completed sessions by meeting_key to treat Sprint + GP as one event on the timeline
@@ -1154,6 +1217,53 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
       }
       const raceDrivers = new Set();
       const teamCarsInRace = new Map();
+      const mQualiMapForRace = qualiParticipantsByMeeting.get(race.meeting_key);
+
+      // Pre-resolve team per driver_number for this session so any single-team 2-car vacancy
+      // (e.g. a reserve stand-in with null OpenF1 team_name) is attributed to the exact constructor
+      const resolvedSessionTeams = new Map();
+      const sessionTeamCounts = new Map();
+      for (const [tName] of knownSeasonTeams) {
+        sessionTeamCounts.set(tName, 0);
+      }
+      const unresolvedDriverNums = [];
+
+      for (const { driver_number } of race.results) {
+        const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
+        const raceDriverInfo = race.drivers ? race.drivers.find(rd => rd.driver_number === driver_number) : null;
+        const qDriverInfo = mQualiMapForRace ? mQualiMapForRace.get(acronym) : null;
+
+        let tName = (raceDriverInfo && raceDriverInfo.team_name && raceDriverInfo.team_name !== 'Unknown')
+          ? raceDriverInfo.team_name
+          : ((qDriverInfo && qDriverInfo.team_name && qDriverInfo.team_name !== 'Unknown') ? qDriverInfo.team_name : null);
+        let tCol = (raceDriverInfo && raceDriverInfo.team_colour && raceDriverInfo.team_colour !== '666666')
+          ? raceDriverInfo.team_colour
+          : ((qDriverInfo && qDriverInfo.team_colour && qDriverInfo.team_colour !== '666666') ? qDriverInfo.team_colour : null);
+
+        if (tName) {
+          tCol = tCol || knownSeasonTeams.get(tName) || '666666';
+          resolvedSessionTeams.set(driver_number, { team_name: tName, team_colour: tCol });
+          sessionTeamCounts.set(tName, (sessionTeamCounts.get(tName) || 0) + 1);
+        } else {
+          unresolvedDriverNums.push({ driver_number, acronym });
+        }
+      }
+
+      if (unresolvedDriverNums.length > 0 && sessionTeamCounts.size >= 8) {
+        const underfilled = Array.from(sessionTeamCounts.entries()).filter(([, count]) => count < 2);
+        if (underfilled.length === 1 && unresolvedDriverNums.length <= (2 - underfilled[0][1])) {
+          const [vacantTeam] = underfilled[0];
+          const vacantCol = knownSeasonTeams.get(vacantTeam) || '666666';
+          for (const { driver_number, acronym } of unresolvedDriverNums) {
+            resolvedSessionTeams.set(driver_number, { team_name: vacantTeam, team_colour: vacantCol });
+            const sdInfo = seasonData.drivers.get(acronym);
+            if (sdInfo && (!sdInfo.team_name || sdInfo.team_name === 'Unknown')) {
+              sdInfo.team_name = vacantTeam;
+              sdInfo.team_colour = vacantCol;
+            }
+          }
+        }
+      }
 
       for (const { driver_number, position, status, points, unclassified } of race.results) {
         const acronym = raceDriversMap.get(driver_number) || masterDriverAcronyms.get(driver_number) || `DRV_${driver_number}`;
@@ -1202,11 +1312,19 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
             stats.raceResults.push(position);
           }
         }
-        // Find driver's team for THIS specific race (supports mid-season team swaps & multi-team stand-ins)
+        // Find driver's team for THIS specific race (supports mid-season team swaps, multi-team stand-ins & API-resolved reserves)
+        const preResolvedTeam = resolvedSessionTeams.get(driver_number);
         const raceDriverInfo = race.drivers ? race.drivers.find(rd => rd.driver_number === driver_number) : null;
-        const fallbackDriverInfo = !raceDriverInfo ? seasonData.drivers.get(acronym) : null;
-        const raceTeamName = (raceDriverInfo && raceDriverInfo.team_name) || (fallbackDriverInfo && fallbackDriverInfo.team_name) || 'Unknown';
-        const raceTeamColour = (raceDriverInfo && raceDriverInfo.team_colour) || (fallbackDriverInfo && fallbackDriverInfo.team_colour) || '666666';
+        const fallbackDriverInfo = seasonData.drivers.get(acronym);
+        const raceTeamName = preResolvedTeam?.team_name
+          || (raceDriverInfo && raceDriverInfo.team_name && raceDriverInfo.team_name !== 'Unknown' ? raceDriverInfo.team_name : null)
+          || (fallbackDriverInfo && fallbackDriverInfo.team_name && fallbackDriverInfo.team_name !== 'Unknown' ? fallbackDriverInfo.team_name : null)
+          || 'Unknown';
+        const raceTeamColour = preResolvedTeam?.team_colour
+          || (raceDriverInfo && raceDriverInfo.team_colour && raceDriverInfo.team_colour !== '666666' ? raceDriverInfo.team_colour : null)
+          || (fallbackDriverInfo && fallbackDriverInfo.team_colour && fallbackDriverInfo.team_colour !== '666666' ? fallbackDriverInfo.team_colour : null)
+          || knownSeasonTeams.get(raceTeamName)
+          || '666666';
 
         stats.allResults.push({
           position,
@@ -1921,19 +2039,17 @@ async function triggerSeasonUpdate(year, allRaceSessions, completedSessions, com
   races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
   qualifying.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-  for (const race of races) {
-    if (race.drivers) {
-      for (const d of race.drivers) {
-        drivers.set(d.name_acronym, d);
-      }
-    }
-  }
   for (const quali of qualifying) {
     if (quali.drivers) {
       for (const d of quali.drivers) {
-        if (!drivers.has(d.name_acronym)) {
-          drivers.set(d.name_acronym, d);
-        }
+        upsertSeasonDriver(drivers, d);
+      }
+    }
+  }
+  for (const race of races) {
+    if (race.drivers) {
+      for (const d of race.drivers) {
+        upsertSeasonDriver(drivers, d);
       }
     }
   }
