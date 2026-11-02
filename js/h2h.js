@@ -228,27 +228,72 @@ function renderTeammatePicks() {
   const container = $('#teammates-grid');
   if (!container) return;
 
-  const teams = new Map();
-  for (const d of h2hDrivers) {
-    const team = d.team_name || 'Unknown';
-    if (!teams.has(team)) teams.set(team, []);
-    teams.get(team).push(d);
+  // Build actual shared-race teammate pairs (supports 3+ driver teams & mid-season swaps)
+  const pairCounts = new Map();
+  const knownAcronyms = new Set(h2hDrivers.map(d => d.name_acronym));
+  const gpRaces = h2hCompletedRaces.filter(r => r.session_name !== 'Sprint');
+
+  for (const race of gpRaces) {
+    if (!race.drivers || !race.results) continue;
+    const resultNums = new Set(race.results.map(r => r.driver_number));
+    const byTeam = new Map();
+    for (const d of race.drivers) {
+      if (!d.team_name || d.team_name === 'Unknown' || !d.name_acronym) continue;
+      if (!resultNums.has(d.driver_number) || !knownAcronyms.has(d.name_acronym)) continue;
+      if (!byTeam.has(d.team_name)) byTeam.set(d.team_name, []);
+      byTeam.get(d.team_name).push(d.name_acronym);
+    }
+    for (const [, members] of byTeam) {
+      const uniq = Array.from(new Set(members));
+      for (let i = 0; i < uniq.length; i++) {
+        for (let j = i + 1; j < uniq.length; j++) {
+          const [a, b] = [uniq[i], uniq[j]];
+          // Order pair by standings order in h2hDrivers
+          const idxA = h2hDrivers.findIndex(d => d.name_acronym === a);
+          const idxB = h2hDrivers.findIndex(d => d.name_acronym === b);
+          const first = (idxA !== -1 && idxB !== -1 && idxB < idxA) ? b : a;
+          const second = first === a ? b : a;
+          const key = `${first}|${second}`;
+          pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+  }
+
+  let pairs = Array.from(pairCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => key.split('|'));
+
+  // Fallback before any GP is completed
+  if (pairs.length === 0) {
+    const teams = new Map();
+    for (const d of h2hDrivers) {
+      const team = d.team_name || 'Unknown';
+      if (team === 'Unknown') continue;
+      if (!teams.has(team)) teams.set(team, []);
+      teams.get(team).push(d.name_acronym);
+    }
+    for (const [, members] of teams) {
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          pairs.push([members[i], members[j]]);
+        }
+      }
+    }
   }
 
   container.innerHTML = '';
-  for (const [, drivers] of teams) {
-    if (drivers.length >= 2) {
-      const btn = document.createElement('button');
-      btn.className = 'teammate-btn';
-      btn.textContent = `${drivers[0].name_acronym} vs ${drivers[1].name_acronym}`;
-      btn.addEventListener('click', () => {
-        selectDriver(drivers[0].name_acronym, true);
-        selectDriver(drivers[1].name_acronym, false);
-        container.querySelectorAll('.teammate-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-      container.appendChild(btn);
-    }
+  for (const [acr1, acr2] of pairs) {
+    const btn = document.createElement('button');
+    btn.className = 'teammate-btn';
+    btn.textContent = `${acr1} vs ${acr2}`;
+    btn.addEventListener('click', () => {
+      selectDriver(acr1, true);
+      selectDriver(acr2, false);
+      container.querySelectorAll('.teammate-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    container.appendChild(btn);
   }
 }
 
@@ -274,6 +319,7 @@ async function runComparison() {
     let raceH2H_1 = 0, raceH2H_2 = 0;
 
     for (const race of h2hCompletedRaces) {
+      if (race.session_name === 'Sprint') continue;
       const rd1 = race.drivers ? race.drivers.find(d => d.name_acronym === dn1) : null;
       const rd2 = race.drivers ? race.drivers.find(d => d.name_acronym === dn2) : null;
       
@@ -283,7 +329,7 @@ async function runComparison() {
       const pos1 = num1 ? race.results.find(o => o.driver_number === num1) : null;
       const pos2 = num2 ? race.results.find(o => o.driver_number === num2) : null;
 
-      if (pos1 && pos2) {
+      if (pos1 && pos2 && !(pos1.status === 'DNS' && pos2.status === 'DNS')) {
         if (pos1.position < pos2.position) raceH2H_1++;
         else if (pos2.position < pos1.position) raceH2H_2++;
       }
@@ -307,7 +353,7 @@ async function runComparison() {
     let overtakesMade1 = 0, overtakesMade2 = 0;
     let pitTotal1 = 0, pitCount1 = 0, pitTotal2 = 0, pitCount2 = 0;
 
-    const recentRaces = h2hCompletedRaces.slice(-5);
+    const recentRaces = h2hCompletedRaces.filter(r => r.session_name !== 'Sprint').slice(-5);
     const recentDataPromises = recentRaces.map(async (race) => {
       try {
         const [overtakes, pits] = await Promise.all([

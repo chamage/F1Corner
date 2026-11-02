@@ -607,8 +607,27 @@ function handleSimulationToggle(completed) {
 
     // Check if we already have modifications
     if (!userModifications[currentSessionKey]) {
-      // Create fresh default results using existing grid drivers
-      const activeDrivers = Array.from(officialSeasonData.drivers.values());
+      // Create fresh default results from the latest completed race's active grid
+      // (avoids dumping 23+ drivers onto a 20/22-car grid after mid-season swaps or temporary replacements)
+      let activeDrivers = [];
+      const sortedCompleted = [...(altSeasonData?.races || officialSeasonData.races || [])]
+        .filter(r => r.results && r.results.length > 0)
+        .sort((a, b) => new Date(b.date_end) - new Date(a.date_end));
+      if (sortedCompleted.length > 0) {
+        const latestRace = sortedCompleted[0];
+        const latestMap = new Map((latestRace.drivers || []).map(d => [d.driver_number, d]));
+        activeDrivers = latestRace.results.map(res => {
+          const dSrc = latestMap.get(res.driver_number);
+          const acr = res.name_acronym || dSrc?.name_acronym;
+          const reg = acr ? officialSeasonData.drivers.get(acr) : null;
+          return {
+            driver_number: res.driver_number,
+            name_acronym: acr || reg?.name_acronym || `DRV_${res.driver_number}`
+          };
+        });
+      } else {
+        activeDrivers = Array.from(officialSeasonData.drivers.values());
+      }
       const mockResults = activeDrivers.map((d, i) => {
         const pos = i + 1;
         const status = 'FINISHED';

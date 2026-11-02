@@ -190,7 +190,7 @@ export function renderDriverStandings(standings, container) {
           if (otherRow !== row) {
             const otherAcronym = otherRow.dataset.driver;
             const otherDriver = standings.drivers.find(d => d.name_acronym === otherAcronym);
-            if (otherDriver && otherDriver.team_name === teamName) {
+            if (teamName && teamName !== 'Unknown' && otherDriver && otherDriver.team_name === teamName) {
               otherRow.style.background = 'rgba(255, 255, 255, 0.04)';
               otherRow.style.boxShadow = `inset 4px 0 0 ${getTeamColor(driver.team_colour)}`;
               otherRow.style.transition = 'all var(--transition-fast)';
@@ -247,10 +247,11 @@ export function renderConstructorStandings(standings, container) {
     const isChampion = i === 0 && (standings.isFinished || standings.constructorClinched);
     const champClass = isChampion ? 'champion-row' : '';
 
-    const totalTeamPts = t.points || 1;
-    const driverBars = t.drivers.map((d, idx) =>
-      `<span style="display:inline-block;width:${(d.points / totalTeamPts) * 100}%;min-width:8px;height:6px;background:${teamColor};opacity:${idx === 0 ? 1 : (idx === 1 ? 0.55 : 0.35)};border-radius:3px;"></span>`
-    ).join('');
+    const driverCount = Math.max(t.drivers.length, 1);
+    const driverBars = t.drivers.map((d, idx) => {
+      const segPct = t.points > 0 ? (d.points / t.points) * 100 : (100 / driverCount);
+      return `<span style="display:inline-block;width:${segPct}%;min-width:${d.points > 0 || t.points === 0 ? 6 : 3}px;height:6px;background:${teamColor};opacity:${idx === 0 ? 1 : (idx === 1 ? 0.6 : 0.38)};border-radius:3px;"></span>`;
+    }).join('');
 
     html += `
       <tr data-team="${t.team_name}" class="${champClass}" style="cursor:pointer;">
@@ -281,7 +282,7 @@ export function renderConstructorStandings(standings, container) {
         <td class="col-wins" style="text-align:center">${t.wins}</td>
         <td class="col-team-drivers">
           <div class="constructor-drivers">
-            ${t.drivers.map(d => `<span>${d.name} (${d.points})</span>`).join(' · ')}
+            ${t.drivers.map(d => `<span class="constructor-driver-chip">${d.name} (${d.points})</span>`).join('')}
           </div>
           <div class="constructor-bar-container">${driverBars}</div>
         </td>
@@ -483,6 +484,7 @@ export function renderFinishingHeatmap(standings, container, type = 'drivers') {
     standings.drivers.forEach(d => {
       const gpResults = d.allResults ? d.allResults.filter(r => !r.isSprint) : [];
       gpResults.forEach(r => {
+        if (r.status === 'ABSENT') return;
         const teamName = r.team_name || d.team_name;
         if (!teamDataMap.has(teamName)) return;
         const item = teamDataMap.get(teamName);

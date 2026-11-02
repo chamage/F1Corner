@@ -1431,9 +1431,35 @@ h1, h2, h3, h4, h5, h6 {
 /* Constructor table specific */
 .constructor-drivers {
   display: flex;
-  gap: var(--space-xs);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.constructor-driver-chip {
+  white-space: nowrap;
+}
+
+.constructor-driver-chip + .constructor-driver-chip::before {
+  content: '· ';
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.dm-stint-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
 }
 
 .constructor-bar-container {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v131'; // v131: championship possible finishing position ranges & standings/profile bug fixes
+const CACHE_NAME = 'pitcorner-shell-v132'; // v132: 3+ driver team handling & temporary mid-season replacement DNS fixes
 const STATIC_ASSETS = [
   './',
   './index.html',

@@ -96,11 +96,12 @@ export function showTeamProfile(team, standings) {
       teamWins,
       teamPodiums,
       teamDnfs,
+      teamGpCount: teamGpResults.length,
       teamRaceResults: teamClassifiedPositions,
       teamSprintCount: teamSprintResults.length,
       teamAllResults: teamResults
     };
-  }).sort((a, b) => b.teamPoints - a.teamPoints);
+  }).sort((a, b) => (b.teamPoints - a.teamPoints) || (b.teamGpCount - a.teamGpCount));
 
   const totalTeamPoints = team.points || 1;
   const teamPos = standings.constructors.findIndex(t => t.team_name === team.team_name) + 1;
@@ -233,11 +234,14 @@ export function showTeamProfile(team, standings) {
             <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);display:flex;align-items:center;gap:var(--space-md);position:relative;">
               <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;background:var(--bg-tertiary);border:2px solid ${teamColor};" onerror="this.style.display='none'">
               <div style="flex:1;min-width:0;">
-                <div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:0.95rem;">${d.full_name || d.name_acronym}</div>
+                <div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:0.95rem;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                  <span>${d.full_name || d.name_acronym}</span>
+                  <span class="dm-stint-pill">${d.teamGpCount} GP${d.teamGpCount !== 1 ? 's' : ''}${d.teamSprintCount > 0 ? ` · ${d.teamSprintCount} Spr` : ''}</span>
+                </div>
                 <div style="color:var(--text-muted);font-size:0.75rem;margin-top:2px;">Points: <strong>${d.teamPoints}</strong> • Wins: <strong>${d.teamWins}</strong> • Podiums: <strong>${d.teamPodiums}</strong></div>
                 <div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:var(--space-sm);">
                   <div style="flex:1;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;">
-                    <div style="height:100%;width:${pct}%;background:${teamColor};border-radius:3px;opacity:${idx === 0 ? 1 : 0.6}"></div>
+                    <div style="height:100%;width:${pct}%;background:${teamColor};border-radius:3px;opacity:${idx === 0 ? 1 : (idx === 1 ? 0.65 : 0.45)}"></div>
                   </div>
                   <span style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--text-secondary);font-weight:600;">${pct}%</span>
                 </div>
@@ -280,116 +284,160 @@ export function showTeamProfile(team, standings) {
     ? team.pointsHistory
     : [];
 
-  // Teammate Driver Duel (H2H finish battle between top 2 drivers for this team)
+  // Teammate Driver Duel — pair drivers who actually competed together for this constructor
+  // (prevents 0-0 H2H bugs when a team had 3+ drivers due to mid-season swaps or stand-ins)
   let duelHtml = '';
   if (teamDrivers.length >= 2) {
-    const d1 = teamDrivers[0];
-    const d2 = teamDrivers[1];
+    const roundPts = (val) => Math.round(((Number(val) || 0) + Number.EPSILON) * 100) / 100;
+    const activePairings = [];
 
-    let wins1 = 0, wins2 = 0;
-    let sprintWins1 = 0, sprintWins2 = 0;
+    for (let i = 0; i < teamDrivers.length; i++) {
+      for (let j = i + 1; j < teamDrivers.length; j++) {
+        const d1 = teamDrivers[i];
+        const d2 = teamDrivers[j];
+        let sharedGPs = 0;
+        let sharedSprints = 0;
+        let wins1 = 0, wins2 = 0;
+        let sprintWins1 = 0, sprintWins2 = 0;
+        let sharedPts1 = 0, sharedPts2 = 0;
 
-    // GP H2H count (only sessions where both competed for this constructor)
-    for (const result of d1.teamAllResults || []) {
-      if (result.isSprint) continue;
-      const tmResult = (d2.teamAllResults || []).find(
-        r => r.session_key === result.session_key && !r.isSprint
-      );
-      if (tmResult && !(result.status === 'DNS' && tmResult.status === 'DNS')) {
-        if (result.position < tmResult.position) wins1++;
-        else if (tmResult.position < result.position) wins2++;
+        for (const result of (d1.teamAllResults || [])) {
+          const tmResult = (d2.teamAllResults || []).find(
+            r => r.session_key === result.session_key && r.isSprint === result.isSprint
+          );
+          if (!tmResult) continue;
+
+          sharedPts1 = roundPts(sharedPts1 + (result.points || 0));
+          sharedPts2 = roundPts(sharedPts2 + (tmResult.points || 0));
+
+          if (result.isSprint) {
+            sharedSprints++;
+            if (!(result.status === 'DNS' && tmResult.status === 'DNS')) {
+              if (result.position < tmResult.position) sprintWins1++;
+              else if (tmResult.position < result.position) sprintWins2++;
+            }
+          } else {
+            sharedGPs++;
+            if (!(result.status === 'DNS' && tmResult.status === 'DNS')) {
+              if (result.position < tmResult.position) wins1++;
+              else if (tmResult.position < result.position) wins2++;
+            }
+          }
+        }
+
+        if (sharedGPs > 0 || sharedSprints > 0) {
+          activePairings.push({
+            d1,
+            d2,
+            sharedGPs,
+            sharedSprints,
+            wins1,
+            wins2,
+            sprintWins1,
+            sprintWins2,
+            sharedPts1,
+            sharedPts2
+          });
+        }
       }
     }
 
-    // Sprint H2H count
-    for (const result of d1.teamAllResults || []) {
-      if (!result.isSprint) continue;
-      const tmResult = (d2.teamAllResults || []).find(
-        r => r.session_key === result.session_key && r.isSprint
-      );
-      if (tmResult && !(result.status === 'DNS' && tmResult.status === 'DNS')) {
-        if (result.position < tmResult.position) sprintWins1++;
-        else if (tmResult.position < result.position) sprintWins2++;
-      }
-    }
+    activePairings.sort((a, b) => (b.sharedGPs - a.sharedGPs) || (b.sharedSprints - a.sharedSprints) || ((b.sharedPts1 + b.sharedPts2) - (a.sharedPts1 + a.sharedPts2)));
 
-    const hasSprints = (sprintWins1 + sprintWins2) > 0;
-    const gpTotal = wins1 + wins2 || 1;
-    const gpPct1 = (wins1 + wins2) > 0 ? Math.round((wins1 / gpTotal) * 100) : 50;
-    const gpPct2 = 100 - gpPct1;
+    if (activePairings.length > 0) {
+      const hasMultiPairings = activePairings.length > 1 || teamDrivers.length > 2;
+      const cardsHtml = activePairings.map(pair => {
+        const { d1, d2, sharedGPs, wins1, wins2, sprintWins1, sprintWins2 } = pair;
+        const pts1 = hasMultiPairings ? pair.sharedPts1 : d1.teamPoints;
+        const pts2 = hasMultiPairings ? pair.sharedPts2 : d2.teamPoints;
+        const ptsLabel = hasMultiPairings ? 'Shared Pts' : 'Points Share';
 
-    const ptsTotal = (d1.teamPoints + d2.teamPoints) || 1;
-    const ptsPct1 = (d1.teamPoints + d2.teamPoints) > 0 ? Math.round((d1.teamPoints / ptsTotal) * 100) : 50;
-    const ptsPct2 = 100 - ptsPct1;
+        const hasSprints = (sprintWins1 + sprintWins2) > 0;
+        const gpTotal = wins1 + wins2 || 1;
+        const gpPct1 = (wins1 + wins2) > 0 ? Math.round((wins1 / gpTotal) * 100) : 50;
+        const gpPct2 = 100 - gpPct1;
 
-    let sprintDuelBarHtml = '';
-    if (hasSprints) {
-      const sprintTotal = sprintWins1 + sprintWins2 || 1;
-      const sprintPct1 = Math.round((sprintWins1 / sprintTotal) * 100);
-      const sprintPct2 = 100 - sprintPct1;
+        const ptsTotal = (pts1 + pts2) || 1;
+        const ptsPct1 = (pts1 + pts2) > 0 ? Math.round((pts1 / ptsTotal) * 100) : 50;
+        const ptsPct2 = 100 - ptsPct1;
 
-      sprintDuelBarHtml = `
-        <div class="dm-duel-row">
-          <div class="dm-duel-label">Sprint H2H</div>
-          <div class="dm-duel-values">
-            <span style="color:${teamColor};font-weight:700;">${sprintWins1}</span>
-            <span>vs</span>
-            <span style="color:var(--text-secondary);font-weight:600;">${sprintWins2}</span>
+        let sprintDuelBarHtml = '';
+        if (hasSprints) {
+          const sprintTotal = sprintWins1 + sprintWins2 || 1;
+          const sprintPct1 = Math.round((sprintWins1 / sprintTotal) * 100);
+          const sprintPct2 = 100 - sprintPct1;
+
+          sprintDuelBarHtml = `
+            <div class="dm-duel-row">
+              <div class="dm-duel-label">Sprint H2H</div>
+              <div class="dm-duel-values">
+                <span style="color:${teamColor};font-weight:700;">${sprintWins1}</span>
+                <span>vs</span>
+                <span style="color:var(--text-secondary);font-weight:600;">${sprintWins2}</span>
+              </div>
+              <div class="dm-duel-bar-wrap">
+                <div class="dm-duel-bar-left" style="width:${sprintPct1}%;background:${teamColor};"></div>
+                <div class="dm-duel-bar-right" style="width:${sprintPct2}%;background:${teamColor};opacity:0.4;"></div>
+              </div>
+            </div>
+          `;
+        }
+
+        return `
+          <div class="dm-duel-card">
+            <div class="dm-duel-header">
+              <div class="dm-duel-driver">
+                <img src="${d1.headshot_url || ''}" alt="${d1.name_acronym}" class="dm-duel-img" style="border-color:${teamColor};" onerror="this.style.display='none'">
+                <div class="dm-duel-name" style="color:${teamColor};">${d1.name_acronym}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                <div class="dm-duel-vs">VS</div>
+                <span class="dm-stint-pill">${sharedGPs} Shared GP${sharedGPs !== 1 ? 's' : ''}</span>
+              </div>
+              <div class="dm-duel-driver">
+                <img src="${d2.headshot_url || ''}" alt="${d2.name_acronym}" class="dm-duel-img" style="border-color:var(--text-muted);" onerror="this.style.display='none'">
+                <div class="dm-duel-name" style="color:var(--text-secondary);">${d2.name_acronym}</div>
+              </div>
+            </div>
+            
+            <div class="dm-duel-body">
+              <div class="dm-duel-row">
+                <div class="dm-duel-label">Race H2H</div>
+                <div class="dm-duel-values">
+                  <span style="color:${teamColor};font-weight:700;">${wins1}</span>
+                  <span>vs</span>
+                  <span style="color:var(--text-secondary);font-weight:600;">${wins2}</span>
+                </div>
+                <div class="dm-duel-bar-wrap">
+                  <div class="dm-duel-bar-left" style="width:${gpPct1}%;background:${teamColor};"></div>
+                  <div class="dm-duel-bar-right" style="width:${gpPct2}%;background:${teamColor};opacity:0.4;"></div>
+                </div>
+              </div>
+
+              ${sprintDuelBarHtml}
+
+              <div class="dm-duel-row">
+                <div class="dm-duel-label">${ptsLabel}</div>
+                <div class="dm-duel-values">
+                  <span style="color:${teamColor};font-weight:700;">${pts1}</span>
+                  <span>vs</span>
+                  <span style="color:var(--text-secondary);font-weight:600;">${pts2}</span>
+                </div>
+                <div class="dm-duel-bar-wrap">
+                  <div class="dm-duel-bar-left" style="width:${ptsPct1}%;background:${teamColor};"></div>
+                  <div class="dm-duel-bar-right" style="width:${ptsPct2}%;background:${teamColor};opacity:0.4;"></div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="dm-duel-bar-wrap">
-            <div class="dm-duel-bar-left" style="width:${sprintPct1}%;background:${teamColor};"></div>
-            <div class="dm-duel-bar-right" style="width:${sprintPct2}%;background:${teamColor};opacity:0.4;"></div>
-          </div>
-        </div>
+        `;
+      }).join('');
+
+      duelHtml = `
+        <div class="dm-section-title">Teammate Duel — Head-to-Head</div>
+        ${cardsHtml}
       `;
     }
-
-    duelHtml = `
-      <div class="dm-section-title">Teammate Duel — Head-to-Head</div>
-      <div class="dm-duel-card">
-        <div class="dm-duel-header">
-          <div class="dm-duel-driver">
-            <img src="${d1.headshot_url || ''}" alt="${d1.name_acronym}" class="dm-duel-img" style="border-color:${teamColor};" onerror="this.style.display='none'">
-            <div class="dm-duel-name" style="color:${teamColor};">${d1.name_acronym}</div>
-          </div>
-          <div class="dm-duel-vs">VS</div>
-          <div class="dm-duel-driver">
-            <img src="${d2.headshot_url || ''}" alt="${d2.name_acronym}" class="dm-duel-img" style="border-color:var(--text-muted);" onerror="this.style.display='none'">
-            <div class="dm-duel-name" style="color:var(--text-secondary);">${d2.name_acronym}</div>
-          </div>
-        </div>
-        
-        <div class="dm-duel-body">
-          <div class="dm-duel-row">
-            <div class="dm-duel-label">Race H2H</div>
-            <div class="dm-duel-values">
-              <span style="color:${teamColor};font-weight:700;">${wins1}</span>
-              <span>vs</span>
-              <span style="color:var(--text-secondary);font-weight:600;">${wins2}</span>
-            </div>
-            <div class="dm-duel-bar-wrap">
-              <div class="dm-duel-bar-left" style="width:${gpPct1}%;background:${teamColor};"></div>
-              <div class="dm-duel-bar-right" style="width:${gpPct2}%;background:${teamColor};opacity:0.4;"></div>
-            </div>
-          </div>
-
-          ${sprintDuelBarHtml}
-
-          <div class="dm-duel-row">
-            <div class="dm-duel-label">Points Share</div>
-            <div class="dm-duel-values">
-              <span style="color:${teamColor};font-weight:700;">${d1.teamPoints}</span>
-              <span>vs</span>
-              <span style="color:var(--text-secondary);font-weight:600;">${d2.teamPoints}</span>
-            </div>
-            <div class="dm-duel-bar-wrap">
-              <div class="dm-duel-bar-left" style="width:${ptsPct1}%;background:${teamColor};"></div>
-              <div class="dm-duel-bar-right" style="width:${ptsPct2}%;background:${teamColor};opacity:0.4;"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
   }
 
   // Constructor Achievements (Constructor Milestones)

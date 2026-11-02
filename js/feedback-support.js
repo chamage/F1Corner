@@ -443,10 +443,44 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.8.1 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.8.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">November 2, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Temporary Reserve &amp; Dropped Driver DNS Bug: Resolved phantom DNS entries on Driver Profile modals for temporary replacement drivers (e.g. Bearman, Lawson) and mid-season dropped drivers across races where they were no longer participating.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>3+ Driver Teams &amp; Mid-Season Driver Swaps: Full multi-team stint support in Driver Profile (chronological team progression and per-stint team colors) and per-driver GP start counts on Team Profile.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Teammate Duel Pairing Accuracy: Fixed 3-driver constructors pairing two drivers who replaced each other and never raced together; Team Profile now pairs and displays head-to-head duels for drivers who actually shared track sessions.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Shared-GP Teammate Comparisons: The Driver Profile "vs Teammate" section now benchmarks drivers across their shared weekends with clear shared-GP badges and accurate shared-stint point and H2H metrics.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>H2H Quick Picks &amp; Alt History Lineups: Enabled H2H quick picks for 3rd drivers and real teammate pairs, and configured Alt History future simulation to initialize grids from the active race lineup rather than historical one-off drivers.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>PWA &amp; Race Cache Bump: Bumped service worker cache to v132 and compiler version to v28 to deliver clean invalidation and seamless updates.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.8.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.8.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.8.0</div>
               <div class="changelog-date">November 2, 2026</div>
             </div>
             <ul class="changelog-list">
