@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v134'; // v134: Standings after each race (round-by-round scrubber)
+const CACHE_NAME = 'pitcorner-shell-v138'; // v137: PitCorner 3.0.0 Major UI/UX Overhaul
 const STATIC_ASSETS = [
   './',
   './index.html',

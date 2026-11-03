@@ -61,11 +61,11 @@
       </a>
 
       <ul class="nav-links">
-        <li><a href="#dashboard">Dashboard</a></li>
-        <li><a href="#standings">Standings</a></li>
-        <li><a href="#calendar">Calendar</a></li>
-        <li><a href="#h2h">Head-to-Head</a></li>
-        <li><a href="#althistory">Alt History</a></li>
+        <li><a href="#dashboard"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></a></li>
+        <li><a href="#standings"><i class="fa-solid fa-trophy"></i><span>Standings</span></a></li>
+        <li><a href="#calendar"><i class="fa-solid fa-flag-checkered"></i><span>Calendar</span></a></li>
+        <li><a href="#h2h"><i class="fa-solid fa-bolt"></i><span>Head-to-Head</span></a></li>
+        <li><a href="#althistory"><i class="fa-solid fa-flask"></i><span>Alt History</span></a></li>
       </ul>
 
       <div class="nav-right">
@@ -91,73 +91,153 @@
 
   <!-- Mobile Menu -->
   <div class="mobile-menu" id="mobile-menu">
-    <a href="#dashboard">Dashboard</a>
-    <a href="#standings">Standings</a>
-    <a href="#calendar">Calendar</a>
-    <a href="#h2h">Head-to-Head</a>
-    <a href="#althistory">Alt History</a>
+    <a href="#dashboard"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></a>
+    <a href="#standings"><i class="fa-solid fa-trophy"></i><span>Standings</span></a>
+    <a href="#calendar"><i class="fa-solid fa-flag-checkered"></i><span>Calendar</span></a>
+    <a href="#h2h"><i class="fa-solid fa-bolt"></i><span>Head-to-Head</span></a>
+    <a href="#althistory"><i class="fa-solid fa-flask"></i><span>Alt History</span></a>
   </div>
 
   <!-- ── App Container ── -->
   <div class="app-container">
 
-    <!-- ══ SECTION 1: Hero Dashboard ══ -->
-    <section class="section hero" id="dashboard">
-      <div class="hero-content">
-        <div class="hero-badge">
-          <span class="dot"></span>
-          <span id="hero-badge-text">2026 SEASON</span>
-        </div>
-        <h1 class="hero-title">
-          Formula 1<br><span class="accent">Fan Corner</span>
-        </h1>
-        <p class="hero-description">
-          Your all-in-one destination for F1 season stats, race analytics, head-to-head comparisons, and everything a true F1 fan craves.
-        </p>
+    <!-- ══ SECTION 1: Season Command Center ══ -->
+    <section class="section hero cmd-section" id="dashboard">
+      <div class="hero-content cmd-shell">
 
-        <div id="latest-race-info" style="text-align:center;margin-bottom:24px;min-height:60px;"></div>
+        <!-- Compact Command Header Bar -->
+        <div class="cmd-header">
+          <div class="cmd-header-left">
+            <div class="hero-badge cmd-season-badge">
+              <span class="dot"></span>
+              <span id="hero-badge-text">2026 SEASON</span>
+            </div>
+            <div class="cmd-title-wrap">
+              <h1 class="cmd-title">Season <span class="accent">Command Center</span></h1>
+              <p class="cmd-subtitle">Live standings, race podiums, countdowns &amp; telemetry analytics</p>
+            </div>
+          </div>
 
-        <div class="hero-stats" id="hero-stats">
-          <div class="stat-card">
-            <div class="stat-value accent" id="stat-races">—</div>
-            <div class="stat-label">Races</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-sprints">—</div>
-            <div class="stat-label">Sprints</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-overtakes">—</div>
-            <div class="stat-label">Overtakes (last 3)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-fastest">—</div>
-            <div class="stat-label">Fastest Lap</div>
+          <div class="season-progress cmd-progress-card">
+            <div class="progress-label cmd-progress-label">
+              <span class="cmd-progress-tag"><i class="fa-solid fa-flag-checkered"></i> Season Progress</span>
+              <span id="progress-completed" class="cmd-progress-count">Loading...</span>
+            </div>
+            <div class="progress-bar cmd-progress-bar">
+              <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+            </div>
           </div>
         </div>
 
-        <div class="season-progress">
-          <div class="progress-label">
-            <span id="progress-completed">Loading...</span>
-            <span>Season Progress</span>
+        <!-- Primary 3-Column Bento Command Grid -->
+        <div class="cmd-bento-grid">
+
+          <!-- Bento Card 1: Race Center (Latest GP Podium + Next/Live GP Countdown) -->
+          <div class="cmd-bento-card cmd-race-card" id="cmd-race-center">
+            <div class="cmd-card-header">
+              <div class="cmd-card-title">
+                <span class="cmd-card-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
+                <span>Race Center</span>
+              </div>
+              <a href="#calendar" class="cmd-card-action">
+                <span>Calendar</span>
+                <i class="fa-solid fa-arrow-right"></i>
+              </a>
+            </div>
+            <div id="latest-race-info" class="cmd-race-body">
+              <div class="skeleton skeleton-row" style="height:68px;"></div>
+              <div class="skeleton skeleton-row" style="height:68px;"></div>
+            </div>
           </div>
-          <div class="progress-bar">
-            <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+
+          <!-- Bento Card 2: Drivers' Championship Top 3 -->
+          <div class="cmd-bento-card cmd-standings-card" id="cmd-wdc-card">
+            <div class="cmd-card-header">
+              <div class="cmd-card-title">
+                <span class="cmd-card-icon"><i class="fa-solid fa-trophy"></i></span>
+                <span>Drivers' Championship</span>
+              </div>
+              <button type="button" id="cmd-goto-drivers" class="cmd-card-action">
+                <span>Full Table</span>
+                <i class="fa-solid fa-arrow-right"></i>
+              </button>
+            </div>
+            <div id="cmd-wdc-list" class="cmd-leader-list">
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+            </div>
+          </div>
+
+          <!-- Bento Card 3: Constructors' Championship Top 3 -->
+          <div class="cmd-bento-card cmd-standings-card" id="cmd-wcc-card">
+            <div class="cmd-card-header">
+              <div class="cmd-card-title">
+                <span class="cmd-card-icon"><i class="fa-solid fa-shield-halved"></i></span>
+                <span>Constructors' Championship</span>
+              </div>
+              <button type="button" id="cmd-goto-constructors" class="cmd-card-action">
+                <span>Full Table</span>
+                <i class="fa-solid fa-arrow-right"></i>
+              </button>
+            </div>
+            <div id="cmd-wcc-list" class="cmd-leader-list">
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+              <div class="skeleton skeleton-row" style="height:54px;"></div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Compact Telemetry KPI Strip -->
+        <div class="hero-stats cmd-kpi-grid" id="hero-stats">
+          <div class="stat-card cmd-kpi-card">
+            <div class="cmd-kpi-icon accent"><i class="fa-solid fa-flag-checkered"></i></div>
+            <div class="cmd-kpi-meta">
+              <div class="stat-value accent" id="stat-races">—</div>
+              <div class="stat-label">Races Completed</div>
+            </div>
+          </div>
+          <div class="stat-card cmd-kpi-card">
+            <div class="cmd-kpi-icon sprint"><i class="fa-solid fa-bolt"></i></div>
+            <div class="cmd-kpi-meta">
+              <div class="stat-value" id="stat-sprints">—</div>
+              <div class="stat-label">Sprints Completed</div>
+            </div>
+          </div>
+          <div class="stat-card cmd-kpi-card">
+            <div class="cmd-kpi-icon overtake"><i class="fa-solid fa-arrows-left-right"></i></div>
+            <div class="cmd-kpi-meta">
+              <div class="stat-value" id="stat-overtakes">—</div>
+              <div class="stat-label">Overtakes (Last 3)</div>
+            </div>
+          </div>
+          <div class="stat-card cmd-kpi-card">
+            <div class="cmd-kpi-icon fastest"><i class="fa-solid fa-stopwatch"></i></div>
+            <div class="cmd-kpi-meta">
+              <div class="stat-value cmd-kpi-lap" id="stat-fastest">—</div>
+              <div class="stat-label">Season Fastest Lap</div>
+            </div>
           </div>
         </div>
 
+        <!-- Championship Battle — Points Tracker -->
         <div class="glass-card reveal points-tracker-card">
-          <div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:1.25rem;margin-bottom:20px;color:var(--text-primary);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-            <span>Championship Battle — Points Tracker</span>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <div class="chart-type-toggle" style="display:inline-flex;background:rgba(255,255,255,0.02);border:1px solid var(--border-subtle);border-radius:100px;padding:2px;">
+          <div class="points-tracker-header">
+            <div class="points-tracker-title">
+              <span class="cmd-card-icon"><i class="fa-solid fa-chart-line"></i></span>
+              <span>Championship Battle — Points Tracker</span>
+            </div>
+            <div class="points-tracker-controls">
+              <div class="chart-type-toggle">
                 <button id="chart-toggle-drivers" class="active">Drivers</button>
                 <button id="chart-toggle-constructors">Constructors</button>
               </div>
-              <select id="chart-drivers-count" style="font-family:inherit;font-size:0.75rem;padding:6px 12px;border-radius:100px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);color:var(--text-primary);cursor:pointer;outline:none;font-weight:600;transition:all 150ms ease;">
-                <option value="5" style="background:#1a1a2e;">Top 5 Display</option>
-                <option value="3" style="background:#1a1a2e;">Top 3 Display</option>
-                <option value="10" style="background:#1a1a2e;">Top 10 Display</option>
+              <select id="chart-drivers-count" class="tracker-count-select">
+                <option value="5">Top 5 Display</option>
+                <option value="3">Top 3 Display</option>
+                <option value="10">Top 10 Display</option>
               </select>
             </div>
           </div>
@@ -187,28 +267,47 @@
       <p class="section-subtitle">Computed from race results • Points, wins, podiums, and trends</p>
 
       <div class="standings-toolbar">
-        <div class="standings-toggle">
-          <button class="active" id="standings-drivers-btn">Drivers</button>
-          <button id="standings-constructors-btn">Constructors</button>
+        <div class="standings-toolbar-left">
+          <div class="standings-toggle">
+            <button class="active" id="standings-drivers-btn"><i class="fa-solid fa-helmet-un"></i> Drivers</button>
+            <button id="standings-constructors-btn"><i class="fa-solid fa-car-side"></i> Constructors</button>
+          </div>
+
+          <!-- Standings Table / Heatmap View Switcher -->
+          <div class="standings-view-toggle">
+            <button class="active" id="standings-view-table-btn" title="View Standings Table"><i class="fa-solid fa-table-list"></i> Table</button>
+            <button id="standings-view-heatmap-btn" title="View Finishing Positions Heatmap"><i class="fa-solid fa-fire"></i> Heatmap</button>
+          </div>
         </div>
 
-        <div class="standings-round-control" id="standings-round-control" style="display:none;">
-          <div class="round-control-label">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            <span>Standings after:</span>
+        <div class="standings-toolbar-right">
+          <!-- Standings Search / Filter Input -->
+          <div class="standings-search-box">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="standings-search-input" placeholder="Filter driver or team..." aria-label="Filter standings table">
+            <button type="button" id="standings-search-clear" aria-label="Clear filter" style="display:none;">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
           </div>
-          <div class="round-selector-group">
-            <button class="round-step-btn" id="standings-round-prev" title="Previous race" aria-label="Previous race">
-              <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            <select id="standings-round-select" class="standings-round-select" aria-label="Select championship round">
-            </select>
-            <button class="round-step-btn" id="standings-round-next" title="Next race" aria-label="Next race">
-              <i class="fa-solid fa-chevron-right"></i>
-            </button>
-            <button class="round-reset-btn" id="standings-round-reset" title="Jump to latest completed race" style="display:none;">
-              <i class="fa-solid fa-forward-step"></i> Latest
-            </button>
+
+          <div class="standings-round-control" id="standings-round-control" style="display:none;">
+            <div class="round-control-label">
+              <i class="fa-solid fa-clock-rotate-left"></i>
+              <span>Standings after:</span>
+            </div>
+            <div class="round-selector-group">
+              <button class="round-step-btn" id="standings-round-prev" title="Previous race" aria-label="Previous race">
+                <i class="fa-solid fa-chevron-left"></i>
+              </button>
+              <select id="standings-round-select" class="standings-round-select" aria-label="Select championship round">
+              </select>
+              <button class="round-step-btn" id="standings-round-next" title="Next race" aria-label="Next race">
+                <i class="fa-solid fa-chevron-right"></i>
+              </button>
+              <button class="round-reset-btn" id="standings-round-reset" title="Jump to latest completed race" style="display:none;">
+                <i class="fa-solid fa-forward-step"></i> Latest
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -235,8 +334,43 @@
 
     <!-- ══ SECTION 3: Race Calendar ══ -->
     <section class="section reveal" id="calendar">
-      <h2 class="section-title">Race Calendar</h2>
-      <p class="section-subtitle">Click any completed race for a deep-dive analysis</p>
+      <div class="calendar-header-bar">
+        <div>
+          <h2 class="section-title">Race Calendar</h2>
+          <p class="section-subtitle" style="margin-bottom:0;">Click any completed race for a deep-dive analysis, or upcoming GP for session times</p>
+        </div>
+        <div class="calendar-actions-wrap">
+          <!-- Filter Chips -->
+          <div class="calendar-filters" id="calendar-filters">
+            <button type="button" class="cal-filter-btn active" data-filter="all">All</button>
+            <button type="button" class="cal-filter-btn" data-filter="completed"><i class="fa-solid fa-check"></i> Completed</button>
+            <button type="button" class="cal-filter-btn" data-filter="upcoming"><i class="fa-regular fa-clock"></i> Upcoming</button>
+            <button type="button" class="cal-filter-btn" data-filter="sprint"><i class="fa-solid fa-bolt"></i> Sprint</button>
+          </div>
+
+          <!-- View Mode Toggle: Carousel vs Grid -->
+          <div class="calendar-view-toggle">
+            <button type="button" id="cal-view-carousel" class="active" title="Horizontal Carousel View" aria-label="Carousel view">
+              <i class="fa-solid fa-arrows-left-right"></i>
+            </button>
+            <button type="button" id="cal-view-grid" title="Responsive Grid View" aria-label="Grid view">
+              <i class="fa-solid fa-table-cells-large"></i>
+            </button>
+          </div>
+
+          <div class="calendar-nav-controls">
+            <button type="button" class="cal-step-btn" id="cal-scroll-prev" title="Scroll earlier races" aria-label="Scroll earlier races">
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <button type="button" class="cal-latest-btn" id="cal-jump-latest" title="Jump to current or latest race">
+              <i class="fa-solid fa-location-crosshairs"></i> Latest
+            </button>
+            <button type="button" class="cal-step-btn" id="cal-scroll-next" title="Scroll upcoming races" aria-label="Scroll upcoming races">
+              <i class="fa-solid fa-chevron-right"></i>
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div class="calendar-scroll" id="calendar-scroll">
         <div class="skeleton skeleton-card" style="flex:0 0 240px;height:260px;"></div>
@@ -283,17 +417,22 @@
       <p class="section-subtitle">Compare any two drivers across the season • Teammate battles included</p>
 
       <div id="h2h-content">
-        <div class="h2h-selectors">
-          <div class="h2h-driver-select">
+        <div class="h2h-selectors-cockpit">
+          <div class="h2h-driver-select" id="h2h-card-1">
             <img class="h2h-headshot" id="h2h-headshot1" src="" alt="Driver 1" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/></svg>'">
             <select class="h2h-select" id="h2h-driver1">
               <option>Loading...</option>
             </select>
           </div>
 
-          <div class="h2h-vs">VS</div>
+          <div class="h2h-vs-wrap">
+            <div class="h2h-vs">VS</div>
+            <button type="button" class="h2h-swap-btn" id="h2h-swap-btn" title="Swap drivers" aria-label="Swap drivers">
+              <i class="fa-solid fa-arrow-right-arrow-left"></i>
+            </button>
+          </div>
 
-          <div class="h2h-driver-select">
+          <div class="h2h-driver-select" id="h2h-card-2">
             <img class="h2h-headshot" id="h2h-headshot2" src="" alt="Driver 2" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/></svg>'">
             <select class="h2h-select" id="h2h-driver2">
               <option>Loading...</option>
@@ -323,8 +462,11 @@
           <div class="althistory-status-info">
             <span class="althistory-badge"><i class="fa-solid fa-flask"></i> Sandbox Active</span>
             <span id="althistory-sync-status" class="althistory-text-muted">Status: Synced with official calendar</span>
+            <span id="althistory-mod-counter" class="alt-mod-pill" style="display:none;"><i class="fa-solid fa-pen"></i> 0 modified</span>
           </div>
-          <button id="althistory-reset-btn" class="alt-btn-danger"><i class="fa-solid fa-arrow-rotate-left"></i> Reset to Official</button>
+          <div class="althistory-controls-actions">
+            <button id="althistory-reset-btn" class="alt-btn-danger"><i class="fa-solid fa-arrow-rotate-left"></i> Reset to Official</button>
+          </div>
         </div>
 
         <div class="althistory-workspace">
@@ -572,6 +714,15 @@
       <button id="clear-cache-btn" style="background:var(--bg-glass);border:1px solid var(--border-subtle);color:var(--text-muted);padding:3px 10px;border-radius:100px;font-size:0.65rem;cursor:pointer;font-family:inherit;transition:all 150ms ease;">Clear Cache</button>
     </div>
   </footer>
+
+  <!-- Mobile Bottom Quick-Access Dock (< 900px) -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="Mobile Quick Navigation">
+    <a href="#dashboard" class="active"><i class="fa-solid fa-gauge-high"></i><span>Command</span></a>
+    <a href="#standings"><i class="fa-solid fa-trophy"></i><span>Standings</span></a>
+    <a href="#calendar"><i class="fa-solid fa-flag-checkered"></i><span>Calendar</span></a>
+    <a href="#h2h"><i class="fa-solid fa-bolt"></i><span>H2H</span></a>
+    <a href="#althistory"><i class="fa-solid fa-flask"></i><span>Sandbox</span></a>
+  </nav>
 
   <!-- Floating Back to Top Button -->
   <button id="back-to-top-btn" class="back-to-top-btn" aria-label="Back to Top">

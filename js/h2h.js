@@ -113,6 +113,17 @@ export async function initH2H(year) {
 
     renderTeammatePicks();
 
+    // Wire Driver Swap button
+    const swapBtn = document.getElementById('h2h-swap-btn');
+    if (swapBtn) {
+      swapBtn.onclick = () => {
+        if (!selectedDriver1 || !selectedDriver2 || selectedDriver1 === selectedDriver2) return;
+        const temp = selectedDriver1;
+        selectDriver(selectedDriver2, true);
+        selectDriver(temp, false);
+      };
+    }
+
   } catch (err) {
     console.error('H2H init failed:', err);
     container.innerHTML = '<div class="no-data"><div class="no-data-text">Failed to load H2H data</div></div>';
@@ -297,6 +308,35 @@ function renderTeammatePicks() {
   }
 }
 
+/**
+ * Calculate a distinguished, high-contrast teammate shade when comparing two drivers
+ * from the same constructor so the duel bars and cards show a clear visual split.
+ */
+function getTeammateVariantColor(baseHex) {
+  let hex = (baseHex || '#e10600').replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(x => x + x).join('');
+  let r = parseInt(hex.substring(0, 2), 16) || 0;
+  let g = parseInt(hex.substring(2, 4), 16) || 0;
+  let b = parseInt(hex.substring(4, 6), 16) || 0;
+
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+
+  if (brightness > 135) {
+    // If team color is light/pastel (Williams light blue, RB white), darken Driver 2
+    r = Math.max(25, Math.round(r * 0.52));
+    g = Math.max(25, Math.round(g * 0.52));
+    b = Math.max(25, Math.round(b * 0.52));
+  } else {
+    // If team color is medium/dark (Ferrari red, Red Bull navy, Aston green), lighten/tint Driver 2
+    r = Math.min(255, Math.round(r + (255 - r) * 0.55));
+    g = Math.min(255, Math.round(g + (255 - g) * 0.55));
+    b = Math.min(255, Math.round(b + (255 - b) * 0.55));
+  }
+
+  const toHex = n => n.toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 async function runComparison() {
   const dn1 = selectedDriver1;
   const dn2 = selectedDriver2;
@@ -312,7 +352,17 @@ async function runComparison() {
   const d1 = h2hDrivers.find(d => d.name_acronym === dn1);
   const d2 = h2hDrivers.find(d => d.name_acronym === dn2);
   const c1 = getTeamColor(d1?.team_colour);
-  const c2 = getTeamColor(d2?.team_colour);
+  let c2 = getTeamColor(d2?.team_colour);
+
+  // If comparing teammates with identical team colors, calculate a distinguished shade for Driver 2
+  const isTeammateSameColor = c1.toLowerCase() === c2.toLowerCase();
+  if (isTeammateSameColor) {
+    c2 = getTeammateVariantColor(c1);
+    const triggerLine2 = $('#h2h-trigger-line-2');
+    if (triggerLine2) triggerLine2.style.background = c2;
+    const img2 = $('#h2h-headshot2');
+    if (img2) img2.style.borderColor = c2;
+  }
 
   try {
     // Use compiled race results (zero API calls for this part)
@@ -402,7 +452,52 @@ async function runComparison() {
       { label: 'Avg Pit Time', v1: avgPit1, v2: avgPit2, lowerBetter: true, rawV1: pitCount1 > 0 ? pitTotal1 / pitCount1 : 999, rawV2: pitCount2 > 0 ? pitTotal2 / pitCount2 : 999 },
     ];
 
-    let html = '';
+    let score1 = 0;
+    let score2 = 0;
+
+    stats.forEach(stat => {
+      const val1 = stat.rawV1 ?? (parseFloat(stat.v1) || 0);
+      const val2 = stat.rawV2 ?? (parseFloat(stat.v2) || 0);
+      if (stat.lowerBetter) {
+        if (val1 < val2 && val1 > 0 && val1 < 99) score1++;
+        else if (val2 < val1 && val2 > 0 && val2 < 99) score2++;
+      } else {
+        if (val1 > val2) score1++;
+        else if (val2 > val1) score2++;
+      }
+    });
+
+    const teammateBadge = isTeammateSameColor
+      ? `<span class="h2h-teammate-tag"><i class="fa-solid fa-people-arrows"></i> Teammates Duel</span>`
+      : '';
+
+    let winnerBanner = '';
+    if (score1 > score2) {
+      winnerBanner = `
+        <div class="h2h-battle-banner" style="border-left-color:${c1};">
+          <span class="h2h-banner-crown" style="color:#ffd700;"><i class="fa-solid fa-crown"></i></span>
+          <span><strong>${d1?.full_name || dn1}</strong> leads duel <strong>${score1} – ${score2}</strong> across ${stats.length} categories</span>
+          ${teammateBadge}
+        </div>
+      `;
+    } else if (score2 > score1) {
+      winnerBanner = `
+        <div class="h2h-battle-banner" style="border-right-color:${c2};">
+          <span><strong>${d2?.full_name || dn2}</strong> leads duel <strong>${score2} – ${score1}</strong> across ${stats.length} categories</span>
+          <span class="h2h-banner-crown" style="color:#ffd700;"><i class="fa-solid fa-crown"></i></span>
+          ${teammateBadge}
+        </div>
+      `;
+    } else {
+      winnerBanner = `
+        <div class="h2h-battle-banner tied">
+          <span>Tied duel <strong>${score1} – ${score2}</strong> across ${stats.length} metrics</span>
+          ${teammateBadge}
+        </div>
+      `;
+    }
+
+    let html = winnerBanner;
     for (const stat of stats) {
       const val1 = stat.rawV1 ?? (parseFloat(stat.v1) || 0);
       const val2 = stat.rawV2 ?? (parseFloat(stat.v2) || 0);
@@ -410,13 +505,13 @@ async function runComparison() {
       const pct1 = (val1 / total) * 100;
       const pct2 = (val2 / total) * 100;
 
-      let highlight1 = '', highlight2 = '';
+      let isWin1 = false, isWin2 = false;
       if (stat.lowerBetter) {
-        if (val1 < val2 && val1 > 0 && val1 < 99) highlight1 = 'color:var(--text-primary);font-weight:700;';
-        else if (val2 < val1 && val2 > 0 && val2 < 99) highlight2 = 'color:var(--text-primary);font-weight:700;';
+        if (val1 < val2 && val1 > 0 && val1 < 99) isWin1 = true;
+        else if (val2 < val1 && val2 > 0 && val2 < 99) isWin2 = true;
       } else {
-        if (val1 > val2) highlight1 = 'color:var(--text-primary);font-weight:700;';
-        else if (val2 > val1) highlight2 = 'color:var(--text-primary);font-weight:700;';
+        if (val1 > val2) isWin1 = true;
+        else if (val2 > val1) isWin2 = true;
       }
 
       let barPct1 = pct1, barPct2 = pct2;
@@ -428,9 +523,13 @@ async function runComparison() {
       html += `
         <div class="h2h-stat">
           <div class="h2h-stat-header">
-            <span class="h2h-stat-values" style="${highlight1}">${stat.v1}</span>
+            <span class="h2h-stat-values ${isWin1 ? 'win' : ''}">
+              ${isWin1 ? '<i class="fa-solid fa-check h2h-win-icon"></i>' : ''}${stat.v1}
+            </span>
             <span class="h2h-stat-label">${stat.label}</span>
-            <span class="h2h-stat-values" style="${highlight2}">${stat.v2}</span>
+            <span class="h2h-stat-values ${isWin2 ? 'win' : ''}">
+              ${stat.v2}${isWin2 ? '<i class="fa-solid fa-check h2h-win-icon"></i>' : ''}
+            </span>
           </div>
           <div class="h2h-bar-container">
             <div class="h2h-bar-left" style="width:${barPct1}%;background:${c1}"></div>

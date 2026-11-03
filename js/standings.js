@@ -412,27 +412,113 @@ function renderStandingsForCurrentState() {
       renderFinishingHeatmap(standings, heatmapContainer, 'drivers');
     }
   }
+
+  // Re-apply active search filter if any
+  if (currentSearchQuery) {
+    const input = $('#standings-search-input');
+    if (input) input.dispatchEvent(new Event('input'));
+  }
 }
+
+let searchWired = false;
+let currentSearchQuery = '';
 
 function setupToggleButtons() {
   const driversBtn = $('#standings-drivers-btn');
   const constructorsBtn = $('#standings-constructors-btn');
-  if (!driversBtn || !constructorsBtn) return;
+  const tableBtn = $('#standings-view-table-btn');
+  const heatmapBtn = $('#standings-view-heatmap-btn');
 
-  driversBtn.classList.toggle('active', currentView === 'drivers');
-  constructorsBtn.classList.toggle('active', currentView === 'constructors');
+  if (driversBtn && constructorsBtn) {
+    driversBtn.classList.toggle('active', currentView === 'drivers');
+    constructorsBtn.classList.toggle('active', currentView === 'constructors');
 
-  driversBtn.onclick = () => {
-    if (currentView === 'drivers') return;
-    currentView = 'drivers';
-    renderStandingsForCurrentState();
+    driversBtn.onclick = () => {
+      if (currentView === 'drivers') return;
+      currentView = 'drivers';
+      renderStandingsForCurrentState();
+    };
+
+    constructorsBtn.onclick = () => {
+      if (currentView === 'constructors') return;
+      currentView = 'constructors';
+      renderStandingsForCurrentState();
+    };
+  }
+
+  // Standings Table vs Heatmap View Switcher
+  if (tableBtn && heatmapBtn) {
+    tableBtn.onclick = () => {
+      tableBtn.classList.add('active');
+      heatmapBtn.classList.remove('active');
+      const tableCard = $('#standings-content')?.closest('.glass-card');
+      if (tableCard) {
+        tableCard.style.display = 'block';
+        tableCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      const heatmapCard = $('#standings-heatmap-content')?.closest('.glass-card');
+      if (heatmapCard) heatmapCard.style.display = 'block';
+    };
+
+    heatmapBtn.onclick = () => {
+      heatmapBtn.classList.add('active');
+      tableBtn.classList.remove('active');
+      const heatmapCard = $('#standings-heatmap-content')?.closest('.glass-card');
+      if (heatmapCard) {
+        heatmapCard.style.display = 'block';
+        heatmapCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+  }
+
+  setupSearchFilter();
+}
+
+function setupSearchFilter() {
+  if (searchWired) return;
+  const input = $('#standings-search-input');
+  const clearBtn = $('#standings-search-clear');
+  if (!input) return;
+
+  searchWired = true;
+
+  const applyFilter = (q) => {
+    currentSearchQuery = q.trim().toLowerCase();
+    if (clearBtn) {
+      clearBtn.style.display = currentSearchQuery.length > 0 ? 'inline-flex' : 'none';
+    }
+
+    const container = $('#standings-content');
+    const heatmapContainer = $('#standings-heatmap-content');
+
+    const filterRows = (parentEl) => {
+      if (!parentEl) return;
+      const rows = parentEl.querySelectorAll('tbody tr');
+      rows.forEach(tr => {
+        if (!currentSearchQuery) {
+          tr.style.display = '';
+          return;
+        }
+        const text = tr.textContent.toLowerCase();
+        tr.style.display = text.includes(currentSearchQuery) ? '' : 'none';
+      });
+    };
+
+    filterRows(container);
+    filterRows(heatmapContainer);
   };
 
-  constructorsBtn.onclick = () => {
-    if (currentView === 'constructors') return;
-    currentView = 'constructors';
-    renderStandingsForCurrentState();
-  };
+  input.addEventListener('input', (e) => {
+    applyFilter(e.target.value);
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      applyFilter('');
+      input.focus();
+    });
+  }
 }
 
 function setupRoundSelector(standings) {
@@ -506,6 +592,15 @@ function setupRoundSelector(standings) {
 
 export function getStandingsData() {
   return cachedStandings;
+}
+
+/**
+ * Switch the active standings table/heatmap view ('drivers' or 'constructors')
+ */
+export function setStandingsView(view) {
+  if (view !== 'drivers' && view !== 'constructors') return;
+  currentView = view;
+  renderStandingsForCurrentState();
 }
 
 /**

@@ -239,11 +239,24 @@ function showLoadingStates() {
     h2hComparison.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
   }
 
-  // Reset hero stats
+  // Reset hero stats & Command Center bento cards
   const statIds = ['stat-races', 'stat-sprints', 'stat-overtakes', 'stat-fastest'];
   for (const id of statIds) {
     const el = document.getElementById(id);
     if (el) el.textContent = '…';
+  }
+
+  const wdcList = document.getElementById('cmd-wdc-list');
+  if (wdcList) {
+    wdcList.innerHTML = Array(3).fill('<div class="skeleton skeleton-row" style="height:54px;"></div>').join('');
+  }
+  const wccList = document.getElementById('cmd-wcc-list');
+  if (wccList) {
+    wccList.innerHTML = Array(3).fill('<div class="skeleton skeleton-row" style="height:54px;"></div>').join('');
+  }
+  const latestRaceInfo = document.getElementById('latest-race-info');
+  if (latestRaceInfo) {
+    latestRaceInfo.innerHTML = Array(2).fill('<div class="skeleton skeleton-row" style="height:68px;"></div>').join('');
   }
 }
 
@@ -355,8 +368,8 @@ function switchTab(tabId) {
     }
   }
 
-  // Update active links on nav/mobile menu
-  const navLinks = document.querySelectorAll('.nav-links a, .mobile-menu a');
+  // Update active links on nav, mobile menu, and mobile bottom dock
+  const navLinks = document.querySelectorAll('.nav-links a, .mobile-menu a, .mobile-bottom-nav a');
   navLinks.forEach(link => {
     const href = link.getAttribute('href');
     link.classList.toggle('active', href === `#${tabId}`);

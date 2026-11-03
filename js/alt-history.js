@@ -284,7 +284,7 @@ async function loadAltData() {
       };
     }
 
-    // Update status bar label
+    // Update status bar label & mod counter pill
     const modCount = Object.keys(userModifications).length;
     const syncStatusEl = $('#althistory-sync-status');
     if (syncStatusEl) {
@@ -292,6 +292,15 @@ async function loadAltData() {
         syncStatusEl.textContent = 'Status: Cloned from official standings (no modifications)';
       } else {
         syncStatusEl.textContent = `Status: Sandbox active with ${modCount} simulated race${modCount > 1 ? 's' : ''}`;
+      }
+    }
+    const modCounterEl = $('#althistory-mod-counter');
+    if (modCounterEl) {
+      if (modCount > 0) {
+        modCounterEl.style.display = 'inline-flex';
+        modCounterEl.innerHTML = `<i class="fa-solid fa-pen"></i> ${modCount} modified`;
+      } else {
+        modCounterEl.style.display = 'none';
       }
     }
 

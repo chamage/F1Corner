@@ -1,19 +1,420 @@
 // =============================================
-// PITCORNER — Hero Dashboard Section
+// PITCORNER — Season Command Center Dashboard
 // Uses compiled season data (shared)
 // =============================================
 
 import { getMeetings, getOvertakes } from './api.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
-import { isPast, isThisWeek, formatDateRange, formatLapTime, getTeamColor, getPointsForPosition, $ } from './utils.js';
+import { isPast, isThisWeek, formatDateRange, formatLapTime, getTeamColor, $ } from './utils.js';
 import { drawLineChart } from './charts.js';
-import { showFutureRaceSchedule, loadRaceDetail } from './race-detail.js';
+import { showFutureRaceSchedule } from './race-detail.js';
+import { showDriverProfile } from './driver-profile.js';
+import { showTeamProfile } from './team-profile.js';
+import { setStandingsView } from './standings.js';
+import { selectCalendarMeeting } from './calendar.js';
+
+let dashboardCountdownInterval = null;
+let quickLinksWired = false;
+
+function wireCommandQuickLinks() {
+  if (quickLinksWired) return;
+  const gotoDrivers = document.getElementById('cmd-goto-drivers');
+  const gotoConstructors = document.getElementById('cmd-goto-constructors');
+  if (!gotoDrivers && !gotoConstructors) return;
+
+  quickLinksWired = true;
+
+  gotoDrivers?.addEventListener('click', () => {
+    setStandingsView('drivers');
+    window.location.hash = '#standings';
+  });
+
+  gotoConstructors?.addEventListener('click', () => {
+    setStandingsView('constructors');
+    window.location.hash = '#standings';
+  });
+}
+
+function formatPointsDiff(leaderPts, pts) {
+  const diff = Math.round(((leaderPts - pts) + Number.EPSILON) * 100) / 100;
+  return diff === 0 ? 'Equal' : `-${diff} pts`;
+}
+
+function getPosDeltaBadge(change) {
+  if (!change) return '';
+  if (change > 0) {
+    return `<span class="cmd-pos-delta up" title="Up ${change} since previous round"><i class="fa-solid fa-caret-up"></i>${change}</span>`;
+  }
+  const abs = Math.abs(change);
+  return `<span class="cmd-pos-delta down" title="Down ${abs} since previous round"><i class="fa-solid fa-caret-down"></i>${abs}</span>`;
+}
+
+function renderCommandStandings(standings, year) {
+  const wdcEl = document.getElementById('cmd-wdc-list');
+  const wccEl = document.getElementById('cmd-wcc-list');
+
+  // 1. Drivers Top 3
+  if (wdcEl) {
+    const topDrivers = (standings.drivers || []).slice(0, 3);
+    if (topDrivers.length === 0) {
+      wdcEl.innerHTML = `
+        <div class="cmd-empty-state">
+          <i class="fa-solid fa-flag-checkered"></i>
+          <span>Standings open after Round 1</span>
+        </div>
+      `;
+    } else {
+      const leaderPts = topDrivers[0].points || 0;
+      wdcEl.innerHTML = topDrivers.map((d, idx) => {
+        const pos = idx + 1;
+        const teamColor = getTeamColor(d.team_colour);
+        const isChamp = idx === 0 && (standings.isFinished || standings.driverClinched);
+        const gapHtml = idx === 0
+          ? (isChamp ? '<span class="cmd-gap-pill champ"><i class="fa-solid fa-crown"></i> Champion</span>' : '<span class="cmd-gap-pill leader">Leader</span>')
+          : `<span class="cmd-gap-pill">${formatPointsDiff(leaderPts, d.points)}</span>`;
+
+        const avatarHtml = d.headshot_url
+          ? `<img class="cmd-driver-avatar" src="${d.headshot_url}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="cmd-driver-monogram" style="display:none;border-color:${teamColor};color:${teamColor};">${d.name_acronym}</span>`
+          : `<span class="cmd-driver-monogram" style="border-color:${teamColor};color:${teamColor};">${d.name_acronym}</span>`;
+
+        return `
+          <button type="button" class="cmd-leader-row" data-driver="${d.name_acronym}" title="Inspect ${d.full_name} season telemetry">
+            <div class="cmd-leader-rank-wrap">
+              <span class="cmd-leader-rank p${pos}">${pos}</span>
+              ${getPosDeltaBadge(d.positionChange)}
+            </div>
+            <span class="cmd-team-bar" style="background:${teamColor};"></span>
+            ${avatarHtml}
+            <div class="cmd-leader-info">
+              <div class="cmd-leader-name">${d.full_name}</div>
+              <div class="cmd-leader-sub">${d.team_name || 'Formula 1'} • ${d.wins || 0}W ${d.podiums || 0}P</div>
+            </div>
+            <div class="cmd-leader-pts-col">
+              <div class="cmd-leader-pts">${d.points}<span> pts</span></div>
+              ${gapHtml}
+            </div>
+          </button>
+        `;
+      }).join('');
+
+      wdcEl.querySelectorAll('.cmd-leader-row[data-driver]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const acronym = btn.dataset.driver;
+          const driver = standings.drivers.find(d => d.name_acronym === acronym);
+          if (driver) {
+            showDriverProfile(driver, standings, standings.raceSessions || []);
+          }
+        });
+      });
+    }
+  }
+
+  // 2. Constructors Top 3
+  if (wccEl) {
+    const topTeams = (standings.constructors || []).slice(0, 3);
+    if (topTeams.length === 0) {
+      const pre1958 = Number(year) < 1958;
+      wccEl.innerHTML = `
+        <div class="cmd-empty-state">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span>${pre1958 ? "Constructors' title began in 1958" : 'Standings open after Round 1'}</span>
+        </div>
+      `;
+    } else {
+      const leaderPts = topTeams[0].points || 0;
+      wccEl.innerHTML = topTeams.map((t, idx) => {
+        const pos = idx + 1;
+        const teamColor = getTeamColor(t.team_colour);
+        const isChamp = idx === 0 && (standings.isFinished || standings.constructorClinched);
+        const gapHtml = idx === 0
+          ? (isChamp ? '<span class="cmd-gap-pill champ"><i class="fa-solid fa-trophy"></i> Champion</span>' : '<span class="cmd-gap-pill leader">Leader</span>')
+          : `<span class="cmd-gap-pill">${formatPointsDiff(leaderPts, t.points)}</span>`;
+
+        const driverCodes = (t.drivers || []).map(dr => dr.name).join(' · ');
+
+        return `
+          <button type="button" class="cmd-leader-row" data-team="${t.team_name}" title="Inspect ${t.team_name} constructor profile">
+            <div class="cmd-leader-rank-wrap">
+              <span class="cmd-leader-rank p${pos}">${pos}</span>
+              ${getPosDeltaBadge(t.positionChange)}
+            </div>
+            <span class="cmd-team-bar" style="background:${teamColor};"></span>
+            <span class="cmd-team-emblem" style="background:${teamColor}1a;border-color:${teamColor}55;color:${teamColor};">
+              <i class="fa-solid fa-car-side"></i>
+            </span>
+            <div class="cmd-leader-info">
+              <div class="cmd-leader-name">${t.team_name}</div>
+              <div class="cmd-leader-sub">${driverCodes ? `${driverCodes} • ` : ''}${t.wins || 0} win${t.wins !== 1 ? 's' : ''}</div>
+            </div>
+            <div class="cmd-leader-pts-col">
+              <div class="cmd-leader-pts">${t.points}<span> pts</span></div>
+              ${gapHtml}
+            </div>
+          </button>
+        `;
+      }).join('');
+
+      wccEl.querySelectorAll('.cmd-leader-row[data-team]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const teamName = btn.dataset.team;
+          const team = standings.constructors.find(c => c.team_name === teamName);
+          if (team) {
+            showTeamProfile(team, standings);
+          }
+        });
+      });
+    }
+  }
+}
+
+function renderRaceCenter({
+  latestRaceEl,
+  gps,
+  fullRaces,
+  sprintRaces,
+  lastCompiledRace,
+  currentWeekend,
+  seasonData,
+  standings,
+  year
+}) {
+  if (!latestRaceEl) return;
+  if (dashboardCountdownInterval) {
+    clearInterval(dashboardCountdownInterval);
+    dashboardCountdownInterval = null;
+  }
+
+  // Reset legacy inline handlers if any
+  latestRaceEl.style.cursor = '';
+  latestRaceEl.onclick = null;
+  latestRaceEl.onmouseenter = null;
+  latestRaceEl.onmouseleave = null;
+
+  const cwRace = currentWeekend ? fullRaces.find(s => s.meeting_key === currentWeekend.meeting_key) : null;
+  const isLiveWeekend = Boolean(currentWeekend && (!cwRace || !isPast(cwRace.date_end)));
+
+  const nextUpcoming = isLiveWeekend
+    ? currentWeekend
+    : gps.find(m => {
+        const r = fullRaces.find(s => s.meeting_key === m.meeting_key);
+        return r ? !isPast(r.date_end) : !isPast(m.date_end);
+      });
+
+  let html = '';
+
+  // Part A: Latest Completed GP + Podium
+  let lastMeeting = null;
+  if (lastCompiledRace && lastCompiledRace.results && lastCompiledRace.results.length > 0) {
+    lastMeeting = gps.find(m => m.meeting_key === lastCompiledRace.meeting_key) || null;
+    const roundNum = lastMeeting ? gps.indexOf(lastMeeting) + 1 : (standings.totalRounds || 1);
+    const raceTitle = (lastMeeting?.meeting_name || lastCompiledRace.circuit_short_name || 'Grand Prix').replace(' Grand Prix', ' GP');
+    const flagImg = lastMeeting?.country_flag
+      ? `<img class="cmd-gp-flag" src="${lastMeeting.country_flag}" alt="${lastMeeting.country_code || ''}">`
+      : '';
+
+    const podiumRows = lastCompiledRace.results.slice(0, 3).map((res, idx) => {
+      const pos = idx + 1;
+      const raceDriver = (lastCompiledRace.drivers || []).find(d => d.driver_number === res.driver_number);
+      const acronym = raceDriver?.name_acronym || null;
+      const seasonDriver = acronym ? seasonData.drivers.get(acronym) : null;
+      const standingDriver = acronym ? (standings.drivers || []).find(d => d.name_acronym === acronym) : null;
+      const roundEntry = standingDriver?.allResults?.find(ar => !ar.isSprint && ar.meeting_key === lastCompiledRace.meeting_key);
+
+      const resolvedColor = getTeamColor(
+        roundEntry?.team_colour ||
+        (raceDriver?.team_name && raceDriver.team_name !== 'Unknown' ? raceDriver.team_colour : null) ||
+        seasonDriver?.team_colour
+      );
+      const resolvedTeam = roundEntry?.team_name ||
+        (raceDriver?.team_name && raceDriver.team_name !== 'Unknown' ? raceDriver.team_name : null) ||
+        seasonDriver?.team_name ||
+        '';
+      const displayName = seasonDriver?.full_name || raceDriver?.full_name || acronym || `#${res.driver_number}`;
+      const shortCode = acronym || displayName.slice(0, 3).toUpperCase();
+
+      return `
+        <div class="cmd-podium-item p${pos}">
+          <span class="cmd-podium-pos p${pos}">P${pos}</span>
+          <span class="cmd-podium-bar" style="background:${resolvedColor};"></span>
+          <span class="cmd-podium-driver" title="${displayName}${resolvedTeam ? ' • ' + resolvedTeam : ''}">
+            <strong class="cmd-podium-full">${displayName}</strong>
+            <strong class="cmd-podium-code">${shortCode}</strong>
+          </span>
+          <span class="cmd-podium-team">${resolvedTeam}</span>
+        </div>
+      `;
+    }).join('');
+
+    html += `
+      <div class="cmd-race-subcard latest">
+        <div class="cmd-subcard-top">
+          <div class="cmd-subcard-meta">
+            <span class="cmd-status-tag completed">Round ${roundNum} Result</span>
+            <div class="cmd-gp-title-row">
+              ${flagImg}
+              <span class="cmd-gp-name">${raceTitle}</span>
+            </div>
+          </div>
+          <button type="button" class="cmd-inline-cta primary" id="cmd-analyze-race-btn">
+            <i class="fa-solid fa-chart-simple"></i>
+            <span>Analyze</span>
+          </button>
+        </div>
+        <div class="cmd-podium-list">
+          ${podiumRows}
+        </div>
+      </div>
+    `;
+  }
+
+  // Part B: Next / Live GP Countdown OR Season Concluded Summary
+  if (nextUpcoming) {
+    const nextRound = gps.indexOf(nextUpcoming) + 1;
+    const nextRaceSession = fullRaces.find(s => s.meeting_key === nextUpcoming.meeting_key);
+    const hasSprint = sprintRaces.some(s => s.meeting_key === nextUpcoming.meeting_key);
+    const nextTitle = nextUpcoming.meeting_name.replace(' Grand Prix', ' GP');
+    const flagImg = nextUpcoming.country_flag
+      ? `<img class="cmd-gp-flag" src="${nextUpcoming.country_flag}" alt="${nextUpcoming.country_code || ''}">`
+      : '';
+
+    const statusBadge = isLiveWeekend
+      ? `<span class="cmd-status-tag live"><span class="live-dot"></span> Race Weekend Live</span>`
+      : `<span class="cmd-status-tag upcoming">Next • Round ${nextRound}</span>`;
+
+    const sprintTag = hasSprint
+      ? `<span class="cmd-sprint-tag"><i class="fa-solid fa-bolt"></i> Sprint</span>`
+      : '';
+
+    html += `
+      <div class="cmd-race-subcard upcoming ${isLiveWeekend ? 'is-live' : ''}">
+        <div class="cmd-subcard-top">
+          <div class="cmd-subcard-meta">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              ${statusBadge}
+              ${sprintTag}
+            </div>
+            <div class="cmd-gp-title-row">
+              ${flagImg}
+              <span class="cmd-gp-name">${nextTitle}</span>
+            </div>
+            <div class="cmd-gp-loc">${nextUpcoming.circuit_short_name || nextUpcoming.location} • ${formatDateRange(nextUpcoming.date_start, nextUpcoming.date_end)}</div>
+          </div>
+          <button type="button" class="cmd-inline-cta" id="cmd-schedule-btn">
+            <i class="fa-regular fa-clock"></i>
+            <span>Schedule</span>
+          </button>
+        </div>
+        <div class="cmd-countdown-strip" id="cmd-countdown-strip">
+          <span class="cmd-countdown-label" id="cmd-countdown-label">Lights out in</span>
+          <span class="cmd-countdown-timer" id="cmd-countdown-timer">--d --h --m --s</span>
+        </div>
+      </div>
+    `;
+  } else if (lastCompiledRace) {
+    const champDriver = standings.drivers?.[0];
+    const champTeam = standings.constructors?.[0];
+    html += `
+      <div class="cmd-race-subcard concluded">
+        <div class="cmd-concluded-row">
+          <span class="cmd-status-tag concluded-tag"><i class="fa-solid fa-flag-checkered"></i> ${year} Season Complete</span>
+          <span class="cmd-concluded-count">${gps.length || standings.totalRounds} Grands Prix</span>
+        </div>
+        ${champDriver ? `
+          <div class="cmd-concluded-champs">
+            <span><i class="fa-solid fa-crown" style="color:#ffd700;"></i> <strong>${champDriver.full_name}</strong> (${champDriver.points} pts)</span>
+            ${champTeam ? `<span><i class="fa-solid fa-trophy" style="color:#ffd700;"></i> <strong>${champTeam.team_name}</strong></span>` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  } else {
+    html = `
+      <div class="cmd-empty-state">
+        <i class="fa-solid fa-calendar-xmark"></i>
+        <span>No race sessions scheduled yet for ${year}</span>
+      </div>
+    `;
+  }
+
+  latestRaceEl.innerHTML = html;
+
+  // Wire "Analyze" button -> jump to Calendar + Race Deep-Dive
+  const analyzeBtn = document.getElementById('cmd-analyze-race-btn');
+  if (analyzeBtn && lastCompiledRace) {
+    analyzeBtn.addEventListener('click', () => {
+      const fallbackMeeting = lastMeeting || {
+        meeting_key: lastCompiledRace.meeting_key,
+        meeting_name: `${lastCompiledRace.circuit_short_name || ''} Grand Prix`.trim(),
+        circuit_short_name: lastCompiledRace.circuit_short_name,
+        year
+      };
+      selectCalendarMeeting(lastCompiledRace.meeting_key, lastCompiledRace.session_key, fallbackMeeting);
+    });
+  }
+
+  // Wire "Schedule" button -> open Weekend Schedule modal
+  const scheduleBtn = document.getElementById('cmd-schedule-btn');
+  if (scheduleBtn && nextUpcoming) {
+    scheduleBtn.addEventListener('click', () => {
+      showFutureRaceSchedule(nextUpcoming);
+    });
+  }
+
+  // Start live ticking countdown if upcoming/live GP exists
+  if (nextUpcoming) {
+    const nextRaceSession = fullRaces.find(s => s.meeting_key === nextUpcoming.meeting_key);
+    const labelEl = document.getElementById('cmd-countdown-label');
+    const timerEl = document.getElementById('cmd-countdown-timer');
+
+    const updateTick = () => {
+      if (!timerEl || !labelEl) return;
+      const now = Date.now();
+      const raceStartMs = nextRaceSession?.date_start ? new Date(nextRaceSession.date_start).getTime() : null;
+      const raceEndMs = nextRaceSession?.date_end ? new Date(nextRaceSession.date_end).getTime() : null;
+      const weekendStartMs = new Date(nextUpcoming.date_start).getTime();
+
+      if (raceStartMs && raceEndMs && now >= raceStartMs && now <= raceEndMs) {
+        labelEl.textContent = 'Grand Prix Status';
+        timerEl.innerHTML = '<span class="cmd-live-now">RACE LIVE NOW</span>';
+        return;
+      }
+
+      const targetMs = (raceStartMs && raceStartMs > now) ? raceStartMs : weekendStartMs;
+      const isRaceTarget = Boolean(raceStartMs && raceStartMs > now);
+
+      if (targetMs > now) {
+        const diff = targetMs - now;
+        const d = Math.floor(diff / 86400000);
+        const h = Math.floor((diff % 86400000) / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        const pad = n => String(n).padStart(2, '0');
+
+        labelEl.textContent = isRaceTarget ? 'Race lights out' : 'Weekend starts';
+        timerEl.textContent = `${d > 0 ? d + 'd ' : ''}${pad(h)}h ${pad(m)}m ${pad(s)}s`;
+      } else {
+        labelEl.textContent = 'Weekend Status';
+        timerEl.innerHTML = '<span class="cmd-live-now">IN PROGRESS</span>';
+      }
+    };
+
+    updateTick();
+    dashboardCountdownInterval = setInterval(updateTick, 1000);
+  }
+}
 
 export async function initDashboard(year, forceResetChart = false) {
   const heroBadge = $('#hero-badge-text');
   const latestRaceEl = $('#latest-race-info');
   const progressFill = $('#progress-fill');
   const progressLabel = $('#progress-completed');
+
+  wireCommandQuickLinks();
+
+  if (dashboardCountdownInterval) {
+    clearInterval(dashboardCountdownInterval);
+    dashboardCountdownInterval = null;
+  }
 
   heroBadge.textContent = `${year} SEASON`;
 
@@ -22,7 +423,6 @@ export async function initDashboard(year, forceResetChart = false) {
   document.getElementById('stat-sprints').textContent = '…';
   document.getElementById('stat-overtakes').textContent = '…';
   document.getElementById('stat-fastest').textContent = '…';
-  latestRaceEl.innerHTML = '';
 
   try {
     const [meetings, seasonData] = await Promise.all([
@@ -46,31 +446,18 @@ export async function initDashboard(year, forceResetChart = false) {
     const completedCount = completedRaces.length;
     const progressPct = totalRaces > 0 ? (completedCount / totalRaces) * 100 : 0;
     progressFill.style.width = `${progressPct}%`;
-    progressLabel.textContent = `${completedCount} of ${totalRaces} races completed`;
+    progressLabel.textContent = `${completedCount} / ${totalRaces} Races (${Math.round(progressPct)}%)`;
 
     // Update basic stat cards immediately
-    document.getElementById('stat-races').textContent = completedCount;
-    document.getElementById('stat-sprints').textContent = completedSprints.length;
+    document.getElementById('stat-races').textContent = `${completedCount}/${totalRaces}`;
+    document.getElementById('stat-sprints').textContent = sprintRaces.length > 0
+      ? `${completedSprints.length}/${sprintRaces.length}`
+      : '0';
 
-    // Find current/next race
+    // Find current weekend & latest compiled race
     const currentWeekend = gps.find(m => isThisWeek(m.date_start, m.date_end));
-    const nextRace = gps.find(m => !isPast(m.date_end));
-
-    // Get winner from compiled season data (zero API calls)
     const compiledRaces = seasonData.races || [];
     const lastCompiledRace = compiledRaces.filter(r => r.session_name === 'Race').pop();
-
-    let lastWinner = '';
-    let lastRaceName = '';
-    if (lastCompiledRace && lastCompiledRace.results.length > 0) {
-      const winnerNum = lastCompiledRace.results[0].driver_number;
-      const raceDriver = lastCompiledRace.drivers ? lastCompiledRace.drivers.find(d => d.driver_number === winnerNum) : null;
-      const winnerAcronym = raceDriver ? raceDriver.name_acronym : null;
-      const winnerInfo = winnerAcronym ? seasonData.drivers.get(winnerAcronym) : null;
-      lastWinner = winnerInfo ? winnerInfo.full_name : `#${winnerNum}`;
-      const meeting = gps.find(m => m.meeting_key === lastCompiledRace.meeting_key);
-      lastRaceName = meeting ? meeting.meeting_name : lastCompiledRace.circuit_short_name;
-    }
 
     // Find the overall fastest lap of the season
     let overallFastestLap = null;
@@ -89,7 +476,7 @@ export async function initDashboard(year, forceResetChart = false) {
       const driverAcronym = raceDriver ? raceDriver.name_acronym : null;
       const driverInfo = driverAcronym ? seasonData.drivers.get(driverAcronym) : null;
       const driverName = driverInfo ? driverInfo.name_acronym : `#${overallFastestDriver}`;
-      document.getElementById('stat-fastest').textContent = `${formatLapTime(overallFastestLap)} (${driverName})`;
+      document.getElementById('stat-fastest').innerHTML = `<span class="kpi-lap-time">${formatLapTime(overallFastestLap)}</span><span class="kpi-lap-driver">${driverName}</span>`;
       document.getElementById('stat-fastest').title = `${driverInfo?.full_name || driverName} at ${overallFastestRace.circuit_short_name}`;
     } else {
       document.getElementById('stat-fastest').textContent = '—';
@@ -110,63 +497,27 @@ export async function initDashboard(year, forceResetChart = false) {
       document.getElementById('stat-overtakes').textContent = totalOvertakes > 0 ? `${totalOvertakes}+` : '—';
     })();
 
-    // Show latest race or current weekend
-    if (currentWeekend) {
-      latestRaceEl.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px;justify-content:center;">
-          <span style="width:8px;height:8px;background:var(--f1-red);border-radius:50%;animation:pulse 2s ease-in-out infinite;display:inline-block;"></span>
-          <span style="color:var(--f1-red);font-weight:600;">RACE WEEKEND LIVE</span>
-        </div>
-        <div style="font-family:'Outfit',sans-serif;font-size:1.2rem;font-weight:700;margin-top:4px;">${currentWeekend.meeting_name}</div>
-        <div style="color:var(--text-muted);font-size:0.85rem;">${currentWeekend.location} • ${formatDateRange(currentWeekend.date_start, currentWeekend.date_end)}</div>
-      `;
-    } else if (lastWinner) {
-      latestRaceEl.innerHTML = `
-        <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Latest Result</div>
-        <div style="font-family:'Outfit',sans-serif;font-size:1.1rem;font-weight:700;margin-top:4px;">${lastRaceName}</div>
-        <div style="color:var(--text-secondary);font-size:0.9rem;margin-top:2px;display:flex;align-items:center;justify-content:center;gap:6px;"><i class="fa-solid fa-trophy" style="color: #ffd700;"></i> <span>${lastWinner}</span></div>
-      `;
-    } else if (nextRace) {
-      latestRaceEl.innerHTML = `
-        <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Next Race</div>
-        <div style="font-family:'Outfit',sans-serif;font-size:1.1rem;font-weight:700;margin-top:4px;">${nextRace.meeting_name}</div>
-        <div style="color:var(--text-muted);font-size:0.85rem;">${formatDateRange(nextRace.date_start, nextRace.date_end)}</div>
-      `;
-    }
+    // Compute season standings once and share across WDC/WCC Bento cards + Race Center + Points Tracker
+    const standings = computeStandingsFromSeason(seasonData);
 
-    // Make latestRaceEl visually interactive if clickable
-    if (currentWeekend || nextRace || lastCompiledRace) {
-      latestRaceEl.style.cursor = 'pointer';
-      latestRaceEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
-      
-      latestRaceEl.onmouseenter = () => { latestRaceEl.style.transform = 'scale(1.02)'; };
-      latestRaceEl.onmouseleave = () => { latestRaceEl.style.transform = 'scale(1.0)'; };
-      
-      latestRaceEl.onclick = () => {
-        if (currentWeekend) {
-          showFutureRaceSchedule(currentWeekend);
-        } else if (nextRace) {
-          showFutureRaceSchedule(nextRace);
-        } else if (lastCompiledRace) {
-          const meeting = gps.find(m => m.meeting_key === lastCompiledRace.meeting_key);
-          if (meeting) {
-            showFutureRaceSchedule(meeting);
-          }
-        }
-      };
-    } else {
-      latestRaceEl.style.cursor = '';
-      latestRaceEl.onclick = null;
-      latestRaceEl.onmouseenter = null;
-      latestRaceEl.onmouseleave = null;
-    }
-
+    renderCommandStandings(standings, year);
+    renderRaceCenter({
+      latestRaceEl,
+      gps,
+      fullRaces,
+      sprintRaces,
+      lastCompiledRace,
+      currentWeekend,
+      seasonData,
+      standings,
+      year
+    });
 
     // ── Championship Battle Points Tracker ──
     currentSeasonData = seasonData;
     const selectEl = document.getElementById('chart-drivers-count');
     const defaultCount = selectEl ? parseInt(selectEl.value, 10) : 5;
-    drawChampionshipBattle(seasonData, defaultCount, forceResetChart);
+    drawChampionshipBattle(seasonData, defaultCount, forceResetChart, standings);
 
     if (selectEl && !changeListenerAdded) {
       selectEl.addEventListener('change', (e) => {
@@ -210,8 +561,8 @@ function resetChartSelections(standings, count) {
   topConstructors.forEach(c => chartSelectedConstructors.add(c.team_name));
 }
 
-function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
-  const standings = computeStandingsFromSeason(seasonData);
+function drawChampionshipBattle(seasonData, presetCount, forceReset = false, precomputedStandings = null) {
+  const standings = precomputedStandings || computeStandingsFromSeason(seasonData);
 
   const needsReset = lastLoadedSeasonYear !== seasonData.year || 
                      forceReset || 
@@ -679,5 +1030,3 @@ function drawChampionshipBattle(seasonData, presetCount, forceReset = false) {
     }
   }
 }
-
-

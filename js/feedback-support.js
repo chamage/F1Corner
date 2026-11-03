@@ -443,10 +443,48 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v3.0.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v3.0.0 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Major Release</span></div>
+              <div class="changelog-date">November 3, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Season Command Center Bento Grid: Complete homepage modernization featuring live/upcoming Grand Prix countdown, latest race podium preview with 1-click analysis, top-3 Drivers and Constructors championship cards with clickable profile modals, and a refined season telemetry KPI strip.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Mobile Quick-Access Navigation Dock: Sleek sticky bottom dock on phones (&lt;900px) with dedicated icons for instantaneous 1-tap switching between Command, Standings, Calendar, H2H, and Sandbox.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Calendar Grid vs Carousel View &amp; Event Filters: Full-season 24-race responsive card grid toggle so users can see the entire season at a glance without side-scrolling, plus quick filters for Completed, Upcoming, and Sprint weekends.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Standings Live Search &amp; View Switcher: Instant search filtering across drivers, teams, and finishing position heatmaps, with a 1-click Table/Heatmap segmented view switcher.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Head-to-Head Duel Cockpit &amp; Teammate Shade Distinction: 1-tap "Swap Drivers" button, battle score banner, and intelligent color contrast shading when comparing teammates who share the same constructor colors.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Universal Modal &amp; Mobile Responsive Polish: Overhauled Driver Profile, Team Profile, Race Schedule, Season Picker, and Feedback modals with a unified frosted-glass telemetry theme; fixed mobile viewport overflow bugs for ultra-clean phone browsing.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>PWA Cache Bump: Upgraded Service Worker cache to v137 for immediate delivery of the complete PitCorner v3.0 experience.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.8.5 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.8.5 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.8.5</div>
               <div class="changelog-date">November 3, 2026</div>
             </div>
             <ul class="changelog-list">
