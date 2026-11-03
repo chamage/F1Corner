@@ -7,6 +7,7 @@ import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceCo
 import { getSeasonData, getResultsForSession, clearMeetingCompilerCache } from './season-data.js';
 import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
+import { setStandingsRound } from './standings.js';
 
 let currentTab = 'results';
 let raceDataCache = null;
@@ -435,6 +436,10 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
             <button id="race-detail-schedule-btn" style="display:none; background:none; border:none; color:var(--f1-red); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
               <i class="fa-regular fa-calendar-days"></i> View Weekend Schedule
             </button>
+            <span id="race-standings-divider" style="color:rgba(255,255,255,0.06); display:none;">|</span>
+            <button id="race-detail-standings-btn" style="display:none; background:none; border:none; color:var(--text-secondary); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
+              <i class="fa-solid fa-trophy"></i> Standings After Race
+            </button>
             <span id="race-clear-cache-divider" style="color:rgba(255,255,255,0.06); display:none;">|</span>
             <button id="race-detail-clear-cache-btn" style="display:none; background:none; border:none; color:var(--text-muted); font-family:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; padding:0; align-items:center; gap:4px; outline:none; transition:color var(--transition-fast);">
               <i class="fa-solid fa-arrows-rotate"></i> Clear Cache
@@ -454,6 +459,33 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
 
       scheduleBtn.addEventListener('click', () => {
         showFutureRaceSchedule(meetingInfo);
+      });
+    }
+
+    // Wire up standings after race button
+    const standingsBtn = document.getElementById('race-detail-standings-btn');
+    const standingsDivider = document.getElementById('race-standings-divider');
+
+    if (standingsBtn && completedSessions.length > 0) {
+      if (standingsDivider) standingsDivider.style.display = 'inline';
+      standingsBtn.style.display = 'inline-flex';
+
+      standingsBtn.addEventListener('click', () => {
+        const completedRaces = (seasonData.races || []).filter(r => r.results && r.results.length > 0);
+        const meetingsMap = new Map();
+        for (const r of completedRaces) {
+          if (!meetingsMap.has(r.meeting_key)) {
+            meetingsMap.set(r.meeting_key, { meeting_key: r.meeting_key, date_end: r.date_end });
+          }
+        }
+        const sorted = Array.from(meetingsMap.values()).sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
+        const roundIdx = sorted.findIndex(m => String(m.meeting_key) === String(meetingInfo.meeting_key));
+        const roundNum = roundIdx !== -1 ? roundIdx + 1 : null;
+
+        window.location.hash = '#standings';
+        if (roundNum) {
+          setStandingsRound(roundNum);
+        }
       });
     }
 

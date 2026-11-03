@@ -186,9 +186,31 @@
       <h2 class="section-title">Championship Standings</h2>
       <p class="section-subtitle">Computed from race results • Points, wins, podiums, and trends</p>
 
-      <div class="standings-toggle">
-        <button class="active" id="standings-drivers-btn">Drivers</button>
-        <button id="standings-constructors-btn">Constructors</button>
+      <div class="standings-toolbar">
+        <div class="standings-toggle">
+          <button class="active" id="standings-drivers-btn">Drivers</button>
+          <button id="standings-constructors-btn">Constructors</button>
+        </div>
+
+        <div class="standings-round-control" id="standings-round-control" style="display:none;">
+          <div class="round-control-label">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span>Standings after:</span>
+          </div>
+          <div class="round-selector-group">
+            <button class="round-step-btn" id="standings-round-prev" title="Previous race" aria-label="Previous race">
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <select id="standings-round-select" class="standings-round-select" aria-label="Select championship round">
+            </select>
+            <button class="round-step-btn" id="standings-round-next" title="Next race" aria-label="Next race">
+              <i class="fa-solid fa-chevron-right"></i>
+            </button>
+            <button class="round-reset-btn" id="standings-round-reset" title="Jump to latest completed race" style="display:none;">
+              <i class="fa-solid fa-forward-step"></i> Latest
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="glass-card" style="margin-bottom: var(--space-lg);">

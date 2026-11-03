@@ -1093,7 +1093,7 @@ function computeMathematicalPositionRanges({
  * Build computed standings from compiled season data.
  * Zero API calls — everything from already-compiled race results.
  */
-export function computeStandingsFromSeason(seasonData, excludeLastMeeting = false, customSandboxSettings = null) {
+export function computeStandingsFromSeason(seasonData, roundOrExcludeLast = false, customSandboxSettings = null) {
   const driverStats = new Map(); // key: name_acronym
   const constructorStats = new Map(); // teamName -> { team_name, team_colour, points, wins, driverPoints }
   const completedRaces = seasonData.races.filter(r => r.results.length > 0);
@@ -1199,10 +1199,29 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
   }
 
   // Sort meetings chronologically by their end date
-  let sortedMeetings = Array.from(meetingsMap.values())
+  const allChronologicalMeetings = Array.from(meetingsMap.values())
     .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
 
-  if (excludeLastMeeting && sortedMeetings.length > 0) {
+  const totalCompletedMeetings = allChronologicalMeetings.length;
+
+  const allCompletedMeetingsList = allChronologicalMeetings.map((m, idx) => ({
+    round: idx + 1,
+    meeting_key: m.meeting_key,
+    circuit_short_name: m.circuit_short_name,
+    date_end: m.date_end,
+    session_count: m.sessions.length,
+    hasSprint: m.sessions.some(s => s.session_name === 'Sprint')
+  }));
+
+  let isSpecificRound = false;
+  let targetRound = totalCompletedMeetings;
+  let sortedMeetings = allChronologicalMeetings.slice();
+
+  if (typeof roundOrExcludeLast === 'number') {
+    isSpecificRound = true;
+    targetRound = Math.max(1, Math.min(Math.floor(roundOrExcludeLast), totalCompletedMeetings));
+    sortedMeetings = sortedMeetings.slice(0, targetRound);
+  } else if (roundOrExcludeLast === true && sortedMeetings.length > 0) {
     sortedMeetings.pop();
   }
 
@@ -1473,7 +1492,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
   }
 
   // Process qualifying sessions to extract GP and Sprint Quali stats
-  const maxEvaluatedDate = (excludeLastMeeting && sortedMeetings.length > 0)
+  const maxEvaluatedDate = (sortedMeetings.length > 0 && sortedMeetings.length < totalCompletedMeetings)
     ? new Date(sortedMeetings[sortedMeetings.length - 1].date_end)
     : null;
 
@@ -1617,7 +1636,8 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     });
 
   const allRaceSessions = seasonData.totalRaceSessions || [];
-  const completedSessionKeys = new Set(completedRaces.map(r => String(r.session_key)));
+  const evaluatedRaceSessions = sortedMeetings.flatMap(m => m.sessions);
+  const completedSessionKeys = new Set(evaluatedRaceSessions.map(r => String(r.session_key)));
 
   const gpSessions = [...allRaceSessions.filter(s => s.session_name === 'Race')]
     .sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
@@ -1643,7 +1663,7 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
 
   const isPrelim = !!seasonData.is_preliminary;
 
-  if (!excludeLastMeeting) {
+  if (roundOrExcludeLast !== true) {
     computeMathematicalPositionRanges({
       driverStandings,
       constructorStandings,
@@ -1658,13 +1678,13 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
   }
 
   const driverClinched = !isPrelim && driverStandings.length >= 2 && (
-    !excludeLastMeeting
+    roundOrExcludeLast !== true
       ? driverStandings[0].worstPos === 1
       : (driverStandings[0].points - driverStandings[1].points) > maxRemainingPoints
   );
 
   const constructorClinched = !isPrelim && constructorStandings.length >= 2 && (
-    !excludeLastMeeting
+    roundOrExcludeLast !== true
       ? constructorStandings[0].worstPos === 1
       : (constructorStandings[0].points - constructorStandings[1].points) > maxConstructorRemainingPoints
   );
@@ -1786,9 +1806,10 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
 
   // ── Calculate position changes compared to the previous GP weekend ──
   let prevStandings = null;
-  if (!excludeLastMeeting && sortedMeetings.length > 1) {
+  if (roundOrExcludeLast !== true && sortedMeetings.length > 1) {
     try {
-      prevStandings = computeStandingsFromSeason(seasonData, true, customSandboxSettings);
+      const prevRound = isSpecificRound ? (targetRound - 1) : true;
+      prevStandings = computeStandingsFromSeason(seasonData, prevRound, customSandboxSettings);
     } catch (e) {
       console.warn('[Season] Failed to compute previous standings for position changes:', e);
     }
@@ -1819,12 +1840,26 @@ export function computeStandingsFromSeason(seasonData, excludeLastMeeting = fals
     constructorStandings.forEach(c => { c.positionChange = 0; });
   }
 
+  const selectedMeeting = sortedMeetings.length > 0 ? sortedMeetings[sortedMeetings.length - 1] : null;
+
   return {
     year: seasonData.year,
+    currentRound: sortedMeetings.length,
+    totalRounds: totalCompletedMeetings,
+    selectedRound: isSpecificRound ? targetRound : totalCompletedMeetings,
+    availableRounds: allCompletedMeetingsList,
+    selectedMeeting: selectedMeeting ? {
+      round: sortedMeetings.length,
+      meeting_key: selectedMeeting.meeting_key,
+      circuit_short_name: selectedMeeting.circuit_short_name,
+      date_end: selectedMeeting.date_end,
+      hasSprint: selectedMeeting.sessions.some(s => s.session_name === 'Sprint')
+    } : null,
+    isHistoricalRound: isSpecificRound && targetRound < totalCompletedMeetings,
     drivers: driverStandings,
     constructors: constructorStandings,
-    raceCount: completedRaces.filter(r => r.session_name === 'Race').length,
-    raceSessions: completedRaces,
+    raceCount: evaluatedRaceSessions.filter(r => r.session_name === 'Race').length,
+    raceSessions: evaluatedRaceSessions,
     isPreliminary: isPrelim,
     isFinished: isFinished && !isPrelim,
     totalGPs: gpSessions.length,

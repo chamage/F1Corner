@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v133'; // v133: Dynamic API & grid constructor resolution for reserve/stand-in drivers
+const CACHE_NAME = 'pitcorner-shell-v134'; // v134: Standings after each race (round-by-round scrubber)
 const STATIC_ASSETS = [
   './',
   './index.html',

@@ -443,10 +443,32 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v2.8.5 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v2.8.5 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-date">November 3, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Championship Standings After Each Race: Integrated a round-by-round championship scrubber in the Standings tab. Select any completed Grand Prix (e.g. half-season or specific round) to view how the Drivers and Constructors championship tables, points, position changes, sparklines, and heatmaps looked at that exact point in time.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Race-to-Standings Navigation: Added a "Standings After Race" shortcut directly in Race Detail so you can immediately see the updated title battle right after analyzing any Grand Prix.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>PWA Cache Bump: Bumped service worker cache to v134 for immediate seamless delivery of round-by-round standings.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v2.8.1 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v2.8.1 <span class="new-badge" style="background: rgba(46, 204, 113, 0.15); border-color: rgba(46, 204, 113, 0.25); color: #2ecc71;">Active</span></div>
+              <div class="changelog-version">v2.8.1</div>
               <div class="changelog-date">November 2, 2026</div>
             </div>
             <ul class="changelog-list">

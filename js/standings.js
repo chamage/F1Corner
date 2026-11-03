@@ -10,6 +10,27 @@ import { showTeamProfile } from './team-profile.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
 
 let cachedStandings = null;
+let activeSeasonData = null;
+let activeYear = null;
+let selectedRound = null; // null = latest completed round; number = specific round 1..N
+let currentView = 'drivers'; // 'drivers' or 'constructors'
+
+function buildHistoricalNoticeBannerHTML(standings) {
+  if (!standings || !standings.isHistoricalRound || !standings.selectedMeeting) return '';
+  const m = standings.selectedMeeting;
+  const circuit = m.circuit_short_name || 'Grand Prix';
+  return `
+    <div class="standings-historical-banner">
+      <div class="historical-banner-left">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <span>Standings as of <strong>Round ${standings.currentRound}: ${circuit} GP</strong> (${standings.currentRound} of ${standings.totalRounds} completed races)</span>
+      </div>
+      <button class="historical-reset-btn" id="standings-historical-banner-reset" title="Show current/latest standings">
+        <i class="fa-solid fa-forward-step"></i> View Latest Standings
+      </button>
+    </div>
+  `;
+}
 
 function getPositionChangeHTML(change) {
   if (change > 0) {
@@ -98,7 +119,8 @@ export function renderDriverStandings(standings, container) {
   const maxPoints = standings.drivers.length > 0 ? standings.drivers[0].points : 1;
   const showRange = !standings.isFinished && !standings.isPreliminary && (standings.maxRemainingDriverPoints || 0) > 0;
 
-  let html = buildStandingsOutlookBannerHTML(standings, false);
+  let html = buildHistoricalNoticeBannerHTML(standings);
+  html += buildStandingsOutlookBannerHTML(standings, false);
   html += `
     <div style="overflow-x:auto;">
     <table class="standings-table drivers-standings-table" id="drivers-standings-table">
@@ -166,6 +188,11 @@ export function renderDriverStandings(standings, container) {
   html += '</tbody></table></div>';
   container.innerHTML = html;
 
+  const historicalResetBtn = container.querySelector('#standings-historical-banner-reset');
+  if (historicalResetBtn) {
+    historicalResetBtn.addEventListener('click', () => setStandingsRound(null));
+  }
+
   // Draw sparklines after DOM is painted
   requestAnimationFrame(() => {
     drawStandingsSparklines(standings, container);
@@ -221,7 +248,8 @@ export function renderConstructorStandings(standings, container) {
   const maxPoints = standings.constructors.length > 0 ? standings.constructors[0].points : 1;
   const showRange = !standings.isFinished && !standings.isPreliminary && (standings.maxRemainingConstructorPoints || 0) > 0;
 
-  let html = buildStandingsOutlookBannerHTML(standings, true);
+  let html = buildHistoricalNoticeBannerHTML(standings);
+  html += buildStandingsOutlookBannerHTML(standings, true);
   html += `
     <div style="overflow-x:auto;">
     <table class="standings-table constructors-standings-table" id="constructors-standings-table">
@@ -293,6 +321,11 @@ export function renderConstructorStandings(standings, container) {
   html += '</tbody></table></div>';
   container.innerHTML = html;
 
+  const historicalResetBtn = container.querySelector('#standings-historical-banner-reset');
+  if (historicalResetBtn) {
+    historicalResetBtn.addEventListener('click', () => setStandingsRound(null));
+  }
+
   // Click-to-open team profile
   container.querySelectorAll('tr[data-team]').forEach(row => {
     row.addEventListener('click', () => {
@@ -306,71 +339,169 @@ export function renderConstructorStandings(standings, container) {
 }
 
 /**
+ * Set and switch standings to a specific round (or null for latest)
+ */
+export function setStandingsRound(round) {
+  selectedRound = (round === null || round === 'latest' || round === undefined)
+    ? null
+    : (parseInt(round, 10) || null);
+  renderStandingsForCurrentState();
+}
+
+/**
  * Initialize standings section
  */
 export async function initStandings(year) {
   const container = $('#standings-content');
-  container.innerHTML = Array(10).fill('<div class="skeleton skeleton-row"></div>').join('');
+  if (container) {
+    container.innerHTML = Array(10).fill('<div class="skeleton skeleton-row"></div>').join('');
+  }
+
+  if (activeYear !== year) {
+    selectedRound = null;
+    currentView = 'drivers';
+  }
+  activeYear = year;
 
   try {
-    // Get compiled season data (shared with calendar, H2H, dashboard)
     const seasonData = await getSeasonData(year);
+    activeSeasonData = seasonData;
 
-    // Compute standings from compiled data (zero API calls)
-    const standings = computeStandingsFromSeason(seasonData);
-    cachedStandings = standings;
-
-    if (standings.drivers.length === 0) {
-      container.innerHTML = `
-        <div class="no-data">
-          <div class="no-data-icon"><i class="fa-solid fa-flag-checkered fa-2x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
-          <div class="no-data-text">No race results yet for ${year}</div>
-          <div class="no-data-subtext">Standings will appear once races are completed</div>
-        </div>
-      `;
-      return;
+    renderStandingsForCurrentState();
+  } catch (err) {
+    console.error('Standings init failed:', err);
+    if (container) {
+      container.innerHTML = '<div class="no-data"><div class="no-data-text">Failed to load standings</div></div>';
     }
+  }
+}
 
+function renderStandingsForCurrentState() {
+  const container = $('#standings-content');
+  const heatmapContainer = $('#standings-heatmap-content');
+  const roundControl = $('#standings-round-control');
+
+  if (!activeSeasonData || !container) return;
+
+  const standings = computeStandingsFromSeason(activeSeasonData, selectedRound);
+  cachedStandings = standings;
+
+  if (standings.drivers.length === 0) {
+    if (roundControl) roundControl.style.display = 'none';
+    container.innerHTML = `
+      <div class="no-data">
+        <div class="no-data-icon"><i class="fa-solid fa-flag-checkered fa-2x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
+        <div class="no-data-text">No race results yet for ${activeYear}</div>
+        <div class="no-data-subtext">Standings will appear once races are completed</div>
+      </div>
+    `;
+    return;
+  }
+
+  setupRoundSelector(standings);
+  setupToggleButtons();
+
+  if (currentView === 'constructors') {
+    renderConstructorStandings(standings, container);
+    if (heatmapContainer) {
+      renderFinishingHeatmap(standings, heatmapContainer, 'constructors');
+    }
+  } else {
     renderDriverStandings(standings, container);
-
-    const heatmapContainer = $('#standings-heatmap-content');
     if (heatmapContainer) {
       renderFinishingHeatmap(standings, heatmapContainer, 'drivers');
     }
-
-    const driversBtn = $('#standings-drivers-btn');
-    const constructorsBtn = $('#standings-constructors-btn');
-
-    // Reset active state + clone to remove old event listeners
-    const newDriversBtn = driversBtn.cloneNode(true);
-    const newConstructorsBtn = constructorsBtn.cloneNode(true);
-    newDriversBtn.classList.add('active');
-    newConstructorsBtn.classList.remove('active');
-    driversBtn.parentNode.replaceChild(newDriversBtn, driversBtn);
-    constructorsBtn.parentNode.replaceChild(newConstructorsBtn, constructorsBtn);
-
-    newDriversBtn.addEventListener('click', () => {
-      newDriversBtn.classList.add('active');
-      newConstructorsBtn.classList.remove('active');
-      renderDriverStandings(standings, container);
-      if (heatmapContainer) {
-        renderFinishingHeatmap(standings, heatmapContainer, 'drivers');
-      }
-    });
-
-    newConstructorsBtn.addEventListener('click', () => {
-      newConstructorsBtn.classList.add('active');
-      newDriversBtn.classList.remove('active');
-      renderConstructorStandings(standings, container);
-      if (heatmapContainer) {
-        renderFinishingHeatmap(standings, heatmapContainer, 'constructors');
-      }
-    });
-
-  } catch (err) {
-    console.error('Standings init failed:', err);
-    container.innerHTML = '<div class="no-data"><div class="no-data-text">Failed to load standings</div></div>';
   }
+}
+
+function setupToggleButtons() {
+  const driversBtn = $('#standings-drivers-btn');
+  const constructorsBtn = $('#standings-constructors-btn');
+  if (!driversBtn || !constructorsBtn) return;
+
+  driversBtn.classList.toggle('active', currentView === 'drivers');
+  constructorsBtn.classList.toggle('active', currentView === 'constructors');
+
+  driversBtn.onclick = () => {
+    if (currentView === 'drivers') return;
+    currentView = 'drivers';
+    renderStandingsForCurrentState();
+  };
+
+  constructorsBtn.onclick = () => {
+    if (currentView === 'constructors') return;
+    currentView = 'constructors';
+    renderStandingsForCurrentState();
+  };
+}
+
+function setupRoundSelector(standings) {
+  const roundControl = $('#standings-round-control');
+  const select = $('#standings-round-select');
+  const prevBtn = $('#standings-round-prev');
+  const nextBtn = $('#standings-round-next');
+  const resetBtn = $('#standings-round-reset');
+
+  if (!roundControl || !select) return;
+
+  const available = standings.availableRounds || [];
+  if (available.length <= 1) {
+    roundControl.style.display = 'none';
+    return;
+  }
+
+  roundControl.style.display = 'flex';
+
+  const totalRounds = standings.totalRounds;
+  const currentRound = standings.selectedRound || totalRounds;
+  const isHistorical = !!standings.isHistoricalRound;
+
+  // Build select options
+  const isSeasonCompleted = !!standings.isFinished && !standings.isPreliminary;
+  const latestLabel = isSeasonCompleted
+    ? `End of Season (Round ${totalRounds} • ${available[totalRounds - 1]?.circuit_short_name || 'Final'} GP)`
+    : `Latest (Round ${totalRounds} • ${available[totalRounds - 1]?.circuit_short_name || 'Latest'} GP)`;
+
+  let optionsHtml = `<option value="latest" ${!isHistorical ? 'selected' : ''}>${latestLabel}</option>`;
+  for (let i = 0; i < available.length; i++) {
+    const r = available[i];
+    const isSelected = isHistorical && currentRound === r.round;
+    const sprintBadge = r.hasSprint ? ' (+Sprint)' : '';
+    optionsHtml += `<option value="${r.round}" ${isSelected ? 'selected' : ''}>Round ${r.round}: ${r.circuit_short_name} GP${sprintBadge}</option>`;
+  }
+  select.innerHTML = optionsHtml;
+
+  if (prevBtn) {
+    prevBtn.disabled = currentRound <= 1;
+    prevBtn.onclick = () => {
+      const target = Math.max(1, currentRound - 1);
+      setStandingsRound(target);
+    };
+  }
+  if (nextBtn) {
+    nextBtn.disabled = !isHistorical || currentRound >= totalRounds;
+    nextBtn.onclick = () => {
+      const target = currentRound + 1;
+      if (target >= totalRounds) {
+        setStandingsRound(null);
+      } else {
+        setStandingsRound(target);
+      }
+    };
+  }
+  if (resetBtn) {
+    resetBtn.style.display = isHistorical ? 'inline-flex' : 'none';
+    resetBtn.onclick = () => setStandingsRound(null);
+  }
+
+  select.onchange = (e) => {
+    const val = e.target.value;
+    if (val === 'latest') {
+      setStandingsRound(null);
+    } else {
+      setStandingsRound(parseInt(val, 10));
+    }
+  };
 }
 
 export function getStandingsData() {
