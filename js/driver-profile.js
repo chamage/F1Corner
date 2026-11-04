@@ -6,6 +6,7 @@
 
 import { getTeamColor, getPointsForPosition, getDriverFlagImg, DRIVER_NATIONALITY, formatRoundRanges, $ } from './utils.js';
 import { drawSparkline } from './charts.js';
+import { isFavoriteDriver, toggleFavoriteDriver } from './favorites.js';
 
 let overlay = null;
 
@@ -920,6 +921,8 @@ export function showDriverProfile(driver, standings, raceSessions) {
     `;
   }
 
+  const isPinnedFav = isFavoriteDriver(driver.name_acronym);
+
   modal.innerHTML = `
     <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
     <div class="dm-header" style="color:${teamColor}">
@@ -929,9 +932,12 @@ export function showDriverProfile(driver, standings, raceSessions) {
       <div class="dm-header-info">
         <div class="dm-driver-name">${driver.full_name || driver.name_acronym}</div>
         <div class="dm-driver-team" style="color:${teamColor};font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">${hasMultipleTeams ? driverTeams.map(t => `<span style="color:${getTeamColor(t.team_colour)};">${t.team_name}</span>`).join(' <span style="color:var(--text-muted);font-weight:400;">→</span> ') : driver.team_name}</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;display:flex;align-items:center;gap:6px;">
-          ${flagHtml}
-          <span>${nat.country}</span>
+        <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="display:inline-flex;align-items:center;gap:6px;">${flagHtml}<span>${nat.country}</span></span>
+          <button type="button" class="modal-fav-pin-btn ${isPinnedFav ? 'active' : ''}" id="dm-fav-pin-btn">
+            <i class="fa-${isPinnedFav ? 'solid' : 'regular'} fa-star"></i>
+            <span>${isPinnedFav ? 'Pinned Driver' : 'Pin Driver'}</span>
+          </button>
         </div>
       </div>
       <div class="dm-driver-number">${driver.driver_number}</div>
@@ -948,8 +954,16 @@ export function showDriverProfile(driver, standings, raceSessions) {
     </div>
   `;
 
-  // Attach close handler
+  // Attach close & favorite pin handlers
   document.getElementById('dm-close').addEventListener('click', closeModal);
+  const favPinBtn = document.getElementById('dm-fav-pin-btn');
+  if (favPinBtn) {
+    favPinBtn.addEventListener('click', () => {
+      const nowPinned = toggleFavoriteDriver(driver.name_acronym);
+      favPinBtn.classList.toggle('active', nowPinned);
+      favPinBtn.innerHTML = `<i class="fa-${nowPinned ? 'solid' : 'regular'} fa-star"></i><span>${nowPinned ? 'Pinned Driver' : 'Pin Driver'}</span>`;
+    });
+  }
 
   // Attach tab switching handlers
   if (hasSprints) {

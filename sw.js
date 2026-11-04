@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v138'; // v137: PitCorner 3.0.0 Major UI/UX Overhaul
+const CACHE_NAME = 'pitcorner-shell-v140'; // v139: Favorites Pinning & Enhanced Race Telemetry Suite
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const STATIC_ASSETS = [
   './js/utils.js',
   './js/season-data.js',
   './js/db.js',
+  './js/favorites.js',
   './js/dashboard.js',
   './js/standings.js',
   './js/calendar.js',

@@ -8,12 +8,66 @@ import { drawSparkline } from './charts.js';
 import { showDriverProfile } from './driver-profile.js';
 import { showTeamProfile } from './team-profile.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
+import { isFavoriteDriver, isFavoriteTeam, toggleFavoriteDriver, toggleFavoriteTeam } from './favorites.js';
 
 let cachedStandings = null;
 let activeSeasonData = null;
 let activeYear = null;
 let selectedRound = null; // null = latest completed round; number = specific round 1..N
 let currentView = 'drivers'; // 'drivers' or 'constructors'
+let favStandingsListenerWired = false;
+
+function buildPinnedStandingsBarHTML(standings, isConstructors = false) {
+  if (!standings) return '';
+  if (!isConstructors) {
+    const idx = (standings.drivers || []).findIndex(d => isFavoriteDriver(d.name_acronym));
+    if (idx === -1) return '';
+    const d = standings.drivers[idx];
+    const pos = idx + 1;
+    const leaderPts = standings.drivers[0]?.points || 0;
+    const diff = Math.round(((leaderPts - d.points) + Number.EPSILON) * 100) / 100;
+    const gapText = pos === 1 ? 'Championship Leader' : `-${diff} pts to P1`;
+    const color = getTeamColor(d.team_colour);
+    return `
+      <div class="standings-pinned-bar" data-pinned-driver="${d.name_acronym}" style="--pinned-color:${color}" title="Click to inspect ${d.full_name}">
+        <div class="pinned-bar-left">
+          <i class="fa-solid fa-star pinned-star"></i>
+          <span class="pinned-tag">Pinned Driver</span>
+          <strong>P${pos} ${d.full_name}</strong>
+          <span class="pinned-team">(${d.team_name})</span>
+        </div>
+        <div class="pinned-bar-right">
+          <span class="pinned-stat"><strong>${d.points}</strong> pts</span>
+          <span class="pinned-stat muted">${gapText}</span>
+          <span class="pinned-stat hide-xs"><strong>${d.wins}</strong>W · <strong>${d.podiums}</strong>P</span>
+        </div>
+      </div>
+    `;
+  } else {
+    const idx = (standings.constructors || []).findIndex(t => isFavoriteTeam(t.team_name));
+    if (idx === -1) return '';
+    const t = standings.constructors[idx];
+    const pos = idx + 1;
+    const leaderPts = standings.constructors[0]?.points || 0;
+    const diff = Math.round(((leaderPts - t.points) + Number.EPSILON) * 100) / 100;
+    const gapText = pos === 1 ? 'Constructors Leader' : `-${diff} pts to P1`;
+    const color = getTeamColor(t.team_colour);
+    return `
+      <div class="standings-pinned-bar" data-pinned-team="${t.team_name}" style="--pinned-color:${color}" title="Click to inspect ${t.team_name}">
+        <div class="pinned-bar-left">
+          <i class="fa-solid fa-star pinned-star"></i>
+          <span class="pinned-tag">Pinned Team</span>
+          <strong>P${pos} ${t.team_name}</strong>
+        </div>
+        <div class="pinned-bar-right">
+          <span class="pinned-stat"><strong>${t.points}</strong> pts</span>
+          <span class="pinned-stat muted">${gapText}</span>
+          <span class="pinned-stat hide-xs"><strong>${t.wins}</strong> Wins</span>
+        </div>
+      </div>
+    `;
+  }
+}
 
 function buildHistoricalNoticeBannerHTML(standings) {
   if (!standings || !standings.isHistoricalRound || !standings.selectedMeeting) return '';
@@ -121,6 +175,7 @@ export function renderDriverStandings(standings, container) {
 
   let html = buildHistoricalNoticeBannerHTML(standings);
   html += buildStandingsOutlookBannerHTML(standings, false);
+  html += buildPinnedStandingsBarHTML(standings, false);
   html += `
     <div style="overflow-x:auto;">
     <table class="standings-table drivers-standings-table" id="drivers-standings-table">
@@ -146,10 +201,15 @@ export function renderDriverStandings(standings, container) {
     const teamColor = getTeamColor(d.team_colour);
     const sparkId = `sparkline-driver-${d.name_acronym}`;
     const isChampion = i === 0 && (standings.isFinished || standings.driverClinched);
-    const champClass = isChampion ? 'champion-row' : '';
+    const isFavDriver = isFavoriteDriver(d.name_acronym);
+    const isFavTeamMember = isFavoriteTeam(d.team_name);
+    const rowClasses = [
+      isChampion ? 'champion-row' : '',
+      isFavDriver ? 'fav-pinned-row' : (isFavTeamMember ? 'fav-team-member-row' : '')
+    ].filter(Boolean).join(' ');
 
     html += `
-      <tr data-driver="${d.name_acronym}" class="${champClass}" style="cursor:pointer;">
+      <tr data-driver="${d.name_acronym}" class="${rowClasses}" style="cursor:pointer;">
         <td>
           <div class="pos-cell-container">
             <span class="position-badge ${posClass}">${pos}</span>
@@ -165,6 +225,9 @@ export function renderDriverStandings(standings, container) {
                 ${getDriverFlagImg(d.name_acronym, 'width:15px;box-shadow:none;border-radius:1px;flex-shrink:0;')}
                 <span class="driver-name-full">${d.full_name || d.name_acronym}</span>
                 <span class="driver-name-acronym">${d.name_acronym}</span>
+                <button type="button" class="row-fav-star-btn ${isFavDriver ? 'active' : ''}" data-fav-driver-btn="${d.name_acronym}" title="${isFavDriver ? 'Unpin Favorite Driver' : 'Pin as Favorite Driver'}" aria-label="Toggle favorite driver">
+                  <i class="fa-${isFavDriver ? 'solid' : 'regular'} fa-star"></i>
+                </button>
                 ${isChampion ? `<span class="champion-badge ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-crown"></i> <span class="badge-text">${standings.isFinished ? 'Champion' : 'Clinched'}</span></span>` : ''}
               </div>
               <div class="driver-team">${d.team_name}</div>
@@ -192,6 +255,19 @@ export function renderDriverStandings(standings, container) {
   if (historicalResetBtn) {
     historicalResetBtn.addEventListener('click', () => setStandingsRound(null));
   }
+
+  container.querySelector('[data-pinned-driver]')?.addEventListener('click', (e) => {
+    const acr = e.currentTarget.dataset.pinnedDriver;
+    const driver = standings.drivers.find(d => d.name_acronym === acr);
+    if (driver) showDriverProfile(driver, standings, standings.raceSessions || []);
+  });
+
+  container.querySelectorAll('[data-fav-driver-btn]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFavoriteDriver(btn.dataset.favDriverBtn);
+    });
+  });
 
   // Draw sparklines after DOM is painted
   requestAnimationFrame(() => {
@@ -250,6 +326,7 @@ export function renderConstructorStandings(standings, container) {
 
   let html = buildHistoricalNoticeBannerHTML(standings);
   html += buildStandingsOutlookBannerHTML(standings, true);
+  html += buildPinnedStandingsBarHTML(standings, true);
   html += `
     <div style="overflow-x:auto;">
     <table class="standings-table constructors-standings-table" id="constructors-standings-table">
@@ -273,7 +350,8 @@ export function renderConstructorStandings(standings, container) {
     const teamColor = getTeamColor(t.team_colour);
     const barWidth = maxPoints > 0 ? (t.points / maxPoints) * 100 : 0;
     const isChampion = i === 0 && (standings.isFinished || standings.constructorClinched);
-    const champClass = isChampion ? 'champion-row' : '';
+    const isFavConstructor = isFavoriteTeam(t.team_name);
+    const champClass = [isChampion ? 'champion-row' : '', isFavConstructor ? 'fav-pinned-row' : ''].filter(Boolean).join(' ');
 
     const driverCount = Math.max(t.drivers.length, 1);
     const driverBars = t.drivers.map((d, idx) => {
@@ -295,6 +373,9 @@ export function renderConstructorStandings(standings, container) {
             <div class="driver-info">
               <div class="driver-name" style="display:flex;align-items:center;gap:8px;">
                 <span>${t.team_name}</span>
+                <button type="button" class="row-fav-star-btn ${isFavConstructor ? 'active' : ''}" data-fav-team-btn="${t.team_name}" title="${isFavConstructor ? 'Unpin Favorite Team' : 'Pin as Favorite Team'}" aria-label="Toggle favorite constructor">
+                  <i class="fa-${isFavConstructor ? 'solid' : 'regular'} fa-star"></i>
+                </button>
                 ${isChampion ? `<span class="champion-badge constructor ${!standings.isFinished ? 'clinched' : ''}" title="${standings.isFinished ? 'World Constructor Champion' : 'Mathematically Secured Title'}"><i class="fa-solid fa-trophy"></i> <span class="badge-text">${standings.isFinished ? 'Champion' : 'Clinched'}</span></span>` : ''}
               </div>
             </div>
@@ -326,6 +407,19 @@ export function renderConstructorStandings(standings, container) {
     historicalResetBtn.addEventListener('click', () => setStandingsRound(null));
   }
 
+  container.querySelector('[data-pinned-team]')?.addEventListener('click', (e) => {
+    const tName = e.currentTarget.dataset.pinnedTeam;
+    const team = standings.constructors.find(t => t.team_name === tName);
+    if (team) showTeamProfile(team, standings);
+  });
+
+  container.querySelectorAll('[data-fav-team-btn]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFavoriteTeam(btn.dataset.favTeamBtn);
+    });
+  });
+
   // Click-to-open team profile
   container.querySelectorAll('tr[data-team]').forEach(row => {
     row.addEventListener('click', () => {
@@ -355,6 +449,15 @@ export async function initStandings(year) {
   const container = $('#standings-content');
   if (container) {
     container.innerHTML = Array(10).fill('<div class="skeleton skeleton-row"></div>').join('');
+  }
+
+  if (!favStandingsListenerWired) {
+    favStandingsListenerWired = true;
+    window.addEventListener('pitcorner:favorites-changed', () => {
+      if (activeSeasonData) {
+        renderStandingsForCurrentState();
+      }
+    });
   }
 
   if (activeYear !== year) {
@@ -797,8 +900,10 @@ export function renderFinishingHeatmap(standings, container, type = 'drivers') {
       </td>`;
     };
 
+    const isHeatFav = isDrivers ? isFavoriteDriver(item.name_acronym) : isFavoriteTeam(item.team_name);
+    const heatStar = isHeatFav ? ' <i class="fa-solid fa-star fav-inline-star" title="Pinned Favorite"></i>' : '';
     html += `
-      <tr ${isDrivers ? `data-driver="${item.name_acronym}"` : `data-team="${item.team_name}"`}>
+      <tr ${isDrivers ? `data-driver="${item.name_acronym}"` : `data-team="${item.team_name}"`} class="${isHeatFav ? 'fav-pinned-row' : ''}">
         <td style="text-align:center;">
           <span class="position-badge" style="width:22px; height:22px; font-size:0.7rem; border-radius:50%;">${item.rank}</span>
         </td>
@@ -809,9 +914,9 @@ export function renderFinishingHeatmap(standings, container, type = 'drivers') {
               <div class="driver-name" style="display:flex;align-items:center;gap:6px;font-size:0.85rem;font-weight:700;">
                 ${isDrivers ? `
                   <span class="driver-name-full">${item.name}</span>
-                  <span class="driver-name-acronym">${item.name_acronym}</span>
+                  <span class="driver-name-acronym">${item.name_acronym}</span>${heatStar}
                 ` : `
-                  <span>${item.team_name}</span>
+                  <span>${item.team_name}</span>${heatStar}
                 `}
               </div>
               ${isDrivers ? `<div class="driver-team" style="font-size:0.68rem;opacity:0.75;">${item.team_name}</div>` : ''}

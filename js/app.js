@@ -13,6 +13,7 @@ import { setupRevealAnimations, $ } from './utils.js';
 import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
 import { openSeasonPickerModal } from './season-picker.js';
 import { initAltHistory } from './alt-history.js';
+import { updateNavFavoritesBadge, openFavoritesModal } from './favorites.js';
 
 // Available years (1950-2022 Jolpi Ergast mirror, 2023+ OpenF1)
 const MAX_SEASON_YEAR = Math.max(2026, new Date().getFullYear());
@@ -64,6 +65,15 @@ async function init() {
 
   // Setup feedback & support event listeners
   initFeedbackSupport();
+
+  // Setup Favorite Driver & Team navbar trigger
+  updateNavFavoritesBadge();
+  const favBtn = document.getElementById('nav-favorites-btn');
+  if (favBtn) {
+    favBtn.addEventListener('click', () => {
+      openFavoritesModal(currentYear);
+    });
+  }
 
   // Setup race select callback
   setRaceSelectHandler((sessionKey, meetingInfo) => {

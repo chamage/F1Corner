@@ -443,6 +443,28 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v3.1.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v3.1.0 <span class="new-badge" style="background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.35); color: #ffd700;">Current</span></div>
+              <div class="changelog-date">November 4, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Favorite Driver &amp; Team Pinning: Pin your favorite driver and constructor via the navbar picker, standings star buttons, or profile modals — unlocking live spotlight cards in the Command Center, highlighted rows across Standings &amp; Race Telemetry, automatic championship chart inclusion, and smart Head-to-Head preselection.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Enhanced Visual Tyre Stint &amp; Pit Strategy Suite: Upgraded the Race Detail Strategy tab with a lap-scale ruler, pit stop markers, fresh vs scrubbed/used tyre striping, interactive stint pace &amp; degradation hover tooltips, a Fastest Pit Stops Leaderboard, and a Compound Performance Telemetry breakdown.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Full Race Detail Telemetry Overhaul: Upgraded Results (Starting Grid +/- deltas, Biggest Mover badges, Qualifying Q1/Q2/Q3 purple segment highlights, knockout cutoffs &amp; 107% rule), Lap Times (Clean Pace outlier filter, quick-pick presets &amp; Consistency σ ranking table), Positions (Laps Led distribution strip &amp; Biggest Climber/Dropper KPIs), Overtakes (Overtake King, Net Balance chips &amp; zone filters), and Race Control Incidents (instant search &amp; category filter pills).</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v3.0.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
@@ -1464,6 +1486,20 @@ export function showRoadmapModal() {
               <div class="changelog-date" style="color: #2ecc71;">Done</div>
             </div>
             <ul class="changelog-list" style="gap: 16px;">
+              <li class="changelog-item">
+                <span class="roadmap-tag completed">Released</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Favorite Driver &amp; Constructor Pinning</strong>
+                  <span>Persistent favorite driver &amp; constructor pinning with Command Center spotlight cards, standings &amp; heatmap highlights, and smart H2H defaults.</span>
+                </div>
+              </li>
+              <li class="changelog-item">
+                <span class="roadmap-tag completed">Released</span>
+                <div>
+                  <strong style="color: var(--text-primary); display: block; font-size: 0.85rem; margin-bottom: 2px;">Visual Tyre Strategy &amp; Deep-Dive Race Telemetry</strong>
+                  <span>Enhanced Strategy stint timeline with used-tyre striping, stint pace/degradation tooltips, Fastest Pit Stops leaderboard, Compound Breakdown, and upgraded analytics across all Race Detail tabs.</span>
+                </div>
+              </li>
               <li class="changelog-item">
                 <span class="roadmap-tag completed">Released</span>
                 <div>

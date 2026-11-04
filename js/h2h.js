@@ -6,6 +6,7 @@
 import { getOvertakes, getPits } from './api.js';
 import { getSeasonData, computeStandingsFromSeason } from './season-data.js';
 import { getTeamColor, isPast, getPointsForPosition, $, $$ } from './utils.js';
+import { getFavorites, isFavoriteDriver, isFavoriteTeam } from './favorites.js';
 
 let h2hDrivers = [];
 let h2hYear = null;
@@ -14,6 +15,7 @@ let h2hSeasonData = null;
 
 let selectedDriver1 = null;
 let selectedDriver2 = null;
+let h2hFavListenerWired = false;
 
 // Global listener to close custom selects when clicking elsewhere
 document.addEventListener('click', () => {
@@ -61,8 +63,8 @@ export async function initH2H(year) {
     // Rebuild the entire H2H content with custom glassmorphic select triggers
     const defaultImg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect fill='%231a1a25' width='80' height='80'/%3E%3C/svg%3E";
     container.innerHTML = `
-      <div class="h2h-selectors">
-        <div class="h2h-driver-select">
+      <div class="h2h-selectors h2h-selectors-cockpit">
+        <div class="h2h-driver-select" id="h2h-card-1">
           <img class="h2h-headshot" id="h2h-headshot1" src="${defaultImg}" alt="Driver 1" onerror="this.src='${defaultImg}'">
           
           <div class="custom-select-container" id="h2h-select-container-1">
@@ -75,9 +77,14 @@ export async function initH2H(year) {
           </div>
         </div>
         
-        <div class="h2h-vs">VS</div>
+        <div class="h2h-vs-wrap">
+          <div class="h2h-vs">VS</div>
+          <button type="button" class="h2h-swap-btn" id="h2h-swap-btn" title="Swap drivers" aria-label="Swap drivers">
+            <i class="fa-solid fa-arrow-right-arrow-left"></i>
+          </button>
+        </div>
         
-        <div class="h2h-driver-select">
+        <div class="h2h-driver-select" id="h2h-card-2">
           <img class="h2h-headshot" id="h2h-headshot2" src="${defaultImg}" alt="Driver 2" onerror="this.src='${defaultImg}'">
           
           <div class="custom-select-container" id="h2h-select-container-2">
@@ -105,13 +112,53 @@ export async function initH2H(year) {
     setupCustomDropdown('#h2h-select-container-1', '#h2h-trigger-1', '#h2h-trigger-text-1', '#h2h-trigger-line-1', '#h2h-options-1', true);
     setupCustomDropdown('#h2h-select-container-2', '#h2h-trigger-2', '#h2h-trigger-text-2', '#h2h-trigger-line-2', '#h2h-options-2', false);
 
-    // Initial driver selections (top 2 drivers on the grid)
-    if (h2hDrivers.length >= 2) {
+    const pairs = renderTeammatePicks();
+
+    // Smart initial selection: prioritize Pinned Favorite Driver (vs teammate/rival) or Favorite Team
+    const applySmartInitialSelection = () => {
+      if (h2hDrivers.length < 2) return;
+      const fav = getFavorites();
+      const favDrv = fav.driver ? h2hDrivers.find(d => isFavoriteDriver(d.name_acronym)) : null;
+
+      if (favDrv) {
+        // Find primary teammate pair if available
+        const matePair = pairs.find(([a, b]) => a === favDrv.name_acronym || b === favDrv.name_acronym);
+        let opponent = matePair ? (matePair[0] === favDrv.name_acronym ? matePair[1] : matePair[0]) : null;
+        if (!opponent) {
+          const sameTeam = h2hDrivers.find(d => d.name_acronym !== favDrv.name_acronym && d.team_name === favDrv.team_name);
+          opponent = sameTeam ? sameTeam.name_acronym : (h2hDrivers.find(d => d.name_acronym !== favDrv.name_acronym)?.name_acronym);
+        }
+        selectDriver(favDrv.name_acronym, true);
+        if (opponent) selectDriver(opponent, false);
+        return;
+      }
+
+      if (fav.team) {
+        const teamDrivers = h2hDrivers.filter(d => isFavoriteTeam(d.team_name));
+        if (teamDrivers.length >= 2) {
+          selectDriver(teamDrivers[0].name_acronym, true);
+          selectDriver(teamDrivers[1].name_acronym, false);
+          return;
+        }
+      }
+
       selectDriver(h2hDrivers[0].name_acronym, true);
       selectDriver(h2hDrivers[1].name_acronym, false);
-    }
+    };
 
-    renderTeammatePicks();
+    applySmartInitialSelection();
+
+    if (!h2hFavListenerWired) {
+      h2hFavListenerWired = true;
+      window.addEventListener('pitcorner:favorites-changed', () => {
+        if (!h2hDrivers || h2hDrivers.length < 2) return;
+        if ($('#h2h-select-container-1')) {
+          setupCustomDropdown('#h2h-select-container-1', '#h2h-trigger-1', '#h2h-trigger-text-1', '#h2h-trigger-line-1', '#h2h-options-1', true);
+          setupCustomDropdown('#h2h-select-container-2', '#h2h-trigger-2', '#h2h-trigger-text-2', '#h2h-trigger-line-2', '#h2h-options-2', false);
+          renderTeammatePicks();
+        }
+      });
+    }
 
     // Wire Driver Swap button
     const swapBtn = document.getElementById('h2h-swap-btn');
@@ -168,7 +215,8 @@ function setupCustomDropdown(containerSel, triggerSel, textSel, lineSel, options
       const opt = document.createElement('div');
       opt.className = 'custom-option';
       opt.dataset.value = d.name_acronym;
-      opt.innerHTML = `${d.name_acronym} — ${d.full_name}`;
+      const favStar = isFavoriteDriver(d.name_acronym) ? ' <i class="fa-solid fa-star" style="color:#ffd700;font-size:0.7rem;margin-left:4px;"></i>' : '';
+      opt.innerHTML = `${d.name_acronym} — ${d.full_name}${favStar}`;
       
       opt.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -295,9 +343,11 @@ function renderTeammatePicks() {
 
   container.innerHTML = '';
   for (const [acr1, acr2] of pairs) {
+    const dObj1 = h2hDrivers.find(d => d.name_acronym === acr1);
+    const isFavPair = isFavoriteDriver(acr1) || isFavoriteDriver(acr2) || (dObj1 && isFavoriteTeam(dObj1.team_name));
     const btn = document.createElement('button');
-    btn.className = 'teammate-btn';
-    btn.textContent = `${acr1} vs ${acr2}`;
+    btn.className = `teammate-btn ${isFavPair ? 'fav-teammate-btn' : ''}`;
+    btn.innerHTML = `${isFavPair ? '<i class="fa-solid fa-star" style="color:#ffd700;font-size:0.65rem;margin-right:4px;"></i>' : ''}${acr1} vs ${acr2}`;
     btn.addEventListener('click', () => {
       selectDriver(acr1, true);
       selectDriver(acr2, false);
@@ -306,6 +356,7 @@ function renderTeammatePicks() {
     });
     container.appendChild(btn);
   }
+  return pairs;
 }
 
 /**

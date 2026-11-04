@@ -6,6 +6,7 @@
 
 import { getTeamColor, formatRoundRanges, $ } from './utils.js';
 import { drawSparkline } from './charts.js';
+import { isFavoriteTeam, toggleFavoriteTeam } from './favorites.js';
 
 let overlay = null;
 
@@ -539,7 +540,13 @@ export function showTeamProfile(team, standings) {
       <div class="team-color-bar" style="background:${teamColor};width:6px;height:48px;border-radius:3px;margin-right:var(--space-md);"></div>
       <div class="dm-header-info">
         <div class="dm-driver-name">${team.team_name}</div>
-        <div class="dm-driver-team" style="color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">F1 Constructor</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;">
+          <div class="dm-driver-team" style="color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">F1 Constructor</div>
+          <button type="button" class="modal-fav-pin-btn ${isFavoriteTeam(team.team_name) ? 'active' : ''}" id="tm-fav-pin-btn">
+            <i class="fa-${isFavoriteTeam(team.team_name) ? 'solid' : 'regular'} fa-star"></i>
+            <span>${isFavoriteTeam(team.team_name) ? 'Pinned Team' : 'Pin Team'}</span>
+          </button>
+        </div>
       </div>
       <div class="dm-driver-number" style="font-size:1.8rem;top:28px;">${team.team_name.substring(0, 3).toUpperCase()}</div>
     </div>
@@ -592,8 +599,16 @@ export function showTeamProfile(team, standings) {
     </div>
   `;
 
-  // Attach close handler
+  // Attach close & favorite pin handlers
   document.getElementById('dm-close').addEventListener('click', closeModal);
+  const tmFavBtn = document.getElementById('tm-fav-pin-btn');
+  if (tmFavBtn) {
+    tmFavBtn.addEventListener('click', () => {
+      const nowPinned = toggleFavoriteTeam(team.team_name);
+      tmFavBtn.classList.toggle('active', nowPinned);
+      tmFavBtn.innerHTML = `<i class="fa-${nowPinned ? 'solid' : 'regular'} fa-star"></i><span>${nowPinned ? 'Pinned Team' : 'Pin Team'}</span>`;
+    });
+  }
 
   // Open modal
   document.body.style.overflow = 'hidden';

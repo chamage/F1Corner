@@ -12,9 +12,175 @@ import { showDriverProfile } from './driver-profile.js';
 import { showTeamProfile } from './team-profile.js';
 import { setStandingsView } from './standings.js';
 import { selectCalendarMeeting } from './calendar.js';
+import { getFavorites, isFavoriteDriver, isFavoriteTeam, openFavoritesModal } from './favorites.js';
 
 let dashboardCountdownInterval = null;
 let quickLinksWired = false;
+let favoritesListenerWired = false;
+let lastDashboardRenderCtx = null;
+
+function renderCommandFavorites(ctx) {
+  const strip = document.getElementById('cmd-favorites-strip');
+  if (!strip || !ctx || !ctx.standings) return;
+
+  const { standings, lastCompiledRace, gps, year } = ctx;
+  const fav = getFavorites();
+  const hasFav = Boolean(fav.driver || fav.team);
+
+  strip.style.display = 'block';
+
+  if (!hasFav) {
+    strip.innerHTML = `
+      <div class="cmd-fav-prompt">
+        <div class="cmd-fav-prompt-left">
+          <span class="cmd-fav-prompt-icon"><i class="fa-regular fa-star"></i></span>
+          <span><strong>Personalize PitCorner:</strong> Pin your Favorite Driver &amp; Constructor for live spotlight telemetry across all tabs.</span>
+        </div>
+        <button type="button" class="cmd-fav-manage-btn" id="cmd-open-fav-picker">
+          <i class="fa-solid fa-thumbtack"></i> Pin Favorites
+        </button>
+      </div>
+    `;
+    document.getElementById('cmd-open-fav-picker')?.addEventListener('click', () => openFavoritesModal(year));
+    return;
+  }
+
+  const cards = [];
+
+  if (fav.driver) {
+    const dIdx = (standings.drivers || []).findIndex(d => isFavoriteDriver(d.name_acronym));
+    if (dIdx !== -1) {
+      const d = standings.drivers[dIdx];
+      const pos = dIdx + 1;
+      const leaderPts = standings.drivers[0]?.points || 0;
+      const color = getTeamColor(d.team_colour);
+      const gapStr = pos === 1 ? 'Championship Leader' : formatPointsDiff(leaderPts, d.points);
+
+      let lastResText = 'No GP yet';
+      if (lastCompiledRace && lastCompiledRace.results) {
+        const lastMeeting = (gps || []).find(m => m.meeting_key === lastCompiledRace.meeting_key);
+        const gpShort = lastMeeting?.circuit_short_name || lastCompiledRace.circuit_short_name || 'Last GP';
+        const rEntry = (d.allResults || []).find(ar => !ar.isSprint && ar.meeting_key === lastCompiledRace.meeting_key);
+        if (rEntry && rEntry.status !== 'ABSENT') {
+          const st = rEntry.status === 'FINISHED' ? `P${rEntry.position}` : rEntry.status;
+          lastResText = `${st} • ${gpShort}`;
+        }
+      }
+
+      const avatar = d.headshot_url
+        ? `<img class="cmd-fav-avatar" src="${d.headshot_url}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'">`
+        : `<span class="cmd-driver-monogram" style="border-color:${color};color:${color};">${d.name_acronym}</span>`;
+
+      cards.push(`
+        <div class="cmd-fav-card" data-fav-open-driver="${d.name_acronym}" style="--fav-accent:${color}" title="Click to open ${d.full_name} profile">
+          <div class="cmd-fav-card-glow" style="background:${color}"></div>
+          ${avatar}
+          <div class="cmd-fav-card-main">
+            <div class="cmd-fav-tag"><i class="fa-solid fa-star"></i> Favorite Driver</div>
+            <div class="cmd-fav-name">${d.full_name} <span class="cmd-fav-team-sub">• ${d.team_name}</span></div>
+            <div class="cmd-fav-metrics">
+              <span><strong>${d.wins || 0}</strong> Wins</span>
+              <span><strong>${d.podiums || 0}</strong> Podiums</span>
+              <span>Last: <strong>${lastResText}</strong></span>
+            </div>
+          </div>
+          <div class="cmd-fav-card-right">
+            <div class="cmd-fav-rank" style="color:${pos <= 3 ? color : 'var(--text-primary)'}">P${pos}</div>
+            <div class="cmd-fav-pts">${d.points} <span>pts</span></div>
+            <div class="cmd-fav-gap">${gapStr}</div>
+          </div>
+        </div>
+      `);
+    } else {
+      cards.push(`
+        <div class="cmd-fav-card inactive" data-fav-edit="drivers">
+          <div class="cmd-fav-card-main">
+            <div class="cmd-fav-tag"><i class="fa-solid fa-star"></i> Favorite Driver</div>
+            <div class="cmd-fav-name">${fav.driver} <span class="cmd-fav-team-sub">not on ${year} grid</span></div>
+          </div>
+          <span class="cmd-fav-change-pill">Change</span>
+        </div>
+      `);
+    }
+  }
+
+  if (fav.team) {
+    const tIdx = (standings.constructors || []).findIndex(t => isFavoriteTeam(t.team_name));
+    if (tIdx !== -1) {
+      const t = standings.constructors[tIdx];
+      const pos = tIdx + 1;
+      const leaderPts = standings.constructors[0]?.points || 0;
+      const color = getTeamColor(t.team_colour);
+      const gapStr = pos === 1 ? 'Constructors Leader' : formatPointsDiff(leaderPts, t.points);
+      const driversLine = (t.drivers || []).map(dr => `${dr.name} (${dr.points})`).join(' · ');
+
+      cards.push(`
+        <div class="cmd-fav-card" data-fav-open-team="${t.team_name}" style="--fav-accent:${color}" title="Click to open ${t.team_name} profile">
+          <div class="cmd-fav-card-glow" style="background:${color}"></div>
+          <span class="cmd-fav-team-emblem" style="background:${color}20;border-color:${color}66;color:${color}">
+            <i class="fa-solid fa-shield-halved"></i>
+          </span>
+          <div class="cmd-fav-card-main">
+            <div class="cmd-fav-tag"><i class="fa-solid fa-star"></i> Favorite Team</div>
+            <div class="cmd-fav-name">${t.team_name}</div>
+            <div class="cmd-fav-metrics">
+              <span><strong>${t.wins || 0}</strong> Wins</span>
+              ${driversLine ? `<span>${driversLine}</span>` : ''}
+            </div>
+          </div>
+          <div class="cmd-fav-card-right">
+            <div class="cmd-fav-rank" style="color:${pos <= 3 ? color : 'var(--text-primary)'}">P${pos}</div>
+            <div class="cmd-fav-pts">${t.points} <span>pts</span></div>
+            <div class="cmd-fav-gap">${gapStr}</div>
+          </div>
+        </div>
+      `);
+    } else {
+      cards.push(`
+        <div class="cmd-fav-card inactive" data-fav-edit="teams">
+          <div class="cmd-fav-card-main">
+            <div class="cmd-fav-tag"><i class="fa-solid fa-star"></i> Favorite Team</div>
+            <div class="cmd-fav-name">${fav.team} <span class="cmd-fav-team-sub">not in ${year} constructors</span></div>
+          </div>
+          <span class="cmd-fav-change-pill">Change</span>
+        </div>
+      `);
+    }
+  }
+
+  strip.innerHTML = `
+    <div class="cmd-fav-Spotlight-wrap">
+      <div class="cmd-fav-cards-grid ${cards.length === 1 ? 'single' : ''}">
+        ${cards.join('')}
+      </div>
+      <button type="button" class="cmd-fav-edit-icon-btn" id="cmd-edit-favorites-btn" title="Manage Pinned Driver &amp; Team" aria-label="Manage Pinned Favorites">
+        <i class="fa-solid fa-sliders"></i>
+      </button>
+    </div>
+  `;
+
+  document.getElementById('cmd-edit-favorites-btn')?.addEventListener('click', () => openFavoritesModal(year));
+
+  strip.querySelectorAll('[data-fav-open-driver]').forEach(el => {
+    el.addEventListener('click', () => {
+      const acr = el.dataset.favOpenDriver;
+      const driver = standings.drivers.find(d => d.name_acronym === acr);
+      if (driver) showDriverProfile(driver, standings, standings.raceSessions || []);
+    });
+  });
+
+  strip.querySelectorAll('[data-fav-open-team]').forEach(el => {
+    el.addEventListener('click', () => {
+      const tName = el.dataset.favOpenTeam;
+      const team = standings.constructors.find(c => c.team_name === tName);
+      if (team) showTeamProfile(team, standings);
+    });
+  });
+
+  strip.querySelectorAll('[data-fav-edit]').forEach(el => {
+    el.addEventListener('click', () => openFavoritesModal(year, el.dataset.favEdit));
+  });
+}
 
 function wireCommandQuickLinks() {
   if (quickLinksWired) return;
@@ -77,8 +243,10 @@ function renderCommandStandings(standings, year) {
           ? `<img class="cmd-driver-avatar" src="${d.headshot_url}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="cmd-driver-monogram" style="display:none;border-color:${teamColor};color:${teamColor};">${d.name_acronym}</span>`
           : `<span class="cmd-driver-monogram" style="border-color:${teamColor};color:${teamColor};">${d.name_acronym}</span>`;
 
+        const isFavD = isFavoriteDriver(d.name_acronym) || isFavoriteTeam(d.team_name);
+        const favStarD = isFavoriteDriver(d.name_acronym) ? ' <i class="fa-solid fa-star fav-inline-star" title="Pinned Favorite Driver"></i>' : '';
         return `
-          <button type="button" class="cmd-leader-row" data-driver="${d.name_acronym}" title="Inspect ${d.full_name} season telemetry">
+          <button type="button" class="cmd-leader-row ${isFavD ? 'fav-pinned-bento-row' : ''}" data-driver="${d.name_acronym}" title="Inspect ${d.full_name} season telemetry">
             <div class="cmd-leader-rank-wrap">
               <span class="cmd-leader-rank p${pos}">${pos}</span>
               ${getPosDeltaBadge(d.positionChange)}
@@ -86,7 +254,7 @@ function renderCommandStandings(standings, year) {
             <span class="cmd-team-bar" style="background:${teamColor};"></span>
             ${avatarHtml}
             <div class="cmd-leader-info">
-              <div class="cmd-leader-name">${d.full_name}</div>
+              <div class="cmd-leader-name">${d.full_name}${favStarD}</div>
               <div class="cmd-leader-sub">${d.team_name || 'Formula 1'} • ${d.wins || 0}W ${d.podiums || 0}P</div>
             </div>
             <div class="cmd-leader-pts-col">
@@ -132,8 +300,10 @@ function renderCommandStandings(standings, year) {
 
         const driverCodes = (t.drivers || []).map(dr => dr.name).join(' · ');
 
+        const isFavT = isFavoriteTeam(t.team_name);
+        const favStarT = isFavT ? ' <i class="fa-solid fa-star fav-inline-star" title="Pinned Favorite Team"></i>' : '';
         return `
-          <button type="button" class="cmd-leader-row" data-team="${t.team_name}" title="Inspect ${t.team_name} constructor profile">
+          <button type="button" class="cmd-leader-row ${isFavT ? 'fav-pinned-bento-row' : ''}" data-team="${t.team_name}" title="Inspect ${t.team_name} constructor profile">
             <div class="cmd-leader-rank-wrap">
               <span class="cmd-leader-rank p${pos}">${pos}</span>
               ${getPosDeltaBadge(t.positionChange)}
@@ -143,7 +313,7 @@ function renderCommandStandings(standings, year) {
               <i class="fa-solid fa-car-side"></i>
             </span>
             <div class="cmd-leader-info">
-              <div class="cmd-leader-name">${t.team_name}</div>
+              <div class="cmd-leader-name">${t.team_name}${favStarT}</div>
               <div class="cmd-leader-sub">${driverCodes ? `${driverCodes} • ` : ''}${t.wins || 0} win${t.wins !== 1 ? 's' : ''}</div>
             </div>
             <div class="cmd-leader-pts-col">
@@ -500,7 +670,30 @@ export async function initDashboard(year, forceResetChart = false) {
     // Compute season standings once and share across WDC/WCC Bento cards + Race Center + Points Tracker
     const standings = computeStandingsFromSeason(seasonData);
 
+    lastDashboardRenderCtx = { standings, lastCompiledRace, gps, seasonData, year };
+    renderCommandFavorites(lastDashboardRenderCtx);
     renderCommandStandings(standings, year);
+
+    if (!favoritesListenerWired) {
+      favoritesListenerWired = true;
+      window.addEventListener('pitcorner:favorites-changed', () => {
+        if (!lastDashboardRenderCtx) return;
+        renderCommandFavorites(lastDashboardRenderCtx);
+        renderCommandStandings(lastDashboardRenderCtx.standings, lastDashboardRenderCtx.year);
+        const fav = getFavorites();
+        if (fav.driver && lastDashboardRenderCtx.standings.drivers.some(d => isFavoriteDriver(d.name_acronym))) {
+          chartSelectedDrivers.add(fav.driver.toUpperCase());
+        }
+        if (fav.team) {
+          const matchT = lastDashboardRenderCtx.standings.constructors.find(c => isFavoriteTeam(c.team_name));
+          if (matchT) chartSelectedConstructors.add(matchT.team_name);
+        }
+        if (currentSeasonData) {
+          const sel = document.getElementById('chart-drivers-count');
+          drawChampionshipBattle(currentSeasonData, sel ? parseInt(sel.value, 10) : 5, false, lastDashboardRenderCtx.standings);
+        }
+      });
+    }
     renderRaceCenter({
       latestRaceEl,
       gps,
@@ -559,6 +752,17 @@ function resetChartSelections(standings, count) {
 
   const topConstructors = standings.constructors.slice(0, count);
   topConstructors.forEach(c => chartSelectedConstructors.add(c.team_name));
+
+  // Ensure pinned favorite driver & constructor are automatically tracked on chart
+  const fav = getFavorites();
+  if (fav.driver) {
+    const matchD = standings.drivers.find(d => isFavoriteDriver(d.name_acronym));
+    if (matchD) chartSelectedDrivers.add(matchD.name_acronym);
+  }
+  if (fav.team) {
+    const matchT = standings.constructors.find(c => isFavoriteTeam(c.team_name));
+    if (matchT) chartSelectedConstructors.add(matchT.team_name);
+  }
 }
 
 function drawChampionshipBattle(seasonData, presetCount, forceReset = false, precomputedStandings = null) {
