@@ -76,6 +76,139 @@ function isDriverOrTeamFavorite(d) {
   };
 }
 
+/**
+ * OpenF1 /overtakes records contain ISO timestamps (`date`) without `lap_number`.
+ * Correlates each overtake timestamp against driver & session /laps start times
+ * (including backward interpolation for Lap 1 where OpenF1 leaves `date_start: null`).
+ */
+export function enrichOvertakesWithLaps(overtakes, laps) {
+  if (!Array.isArray(overtakes) || overtakes.length === 0) return overtakes;
+  if (!Array.isArray(laps) || laps.length === 0) return overtakes;
+  if (overtakes.every(o => typeof o.lap_number === 'number' && o.lap_number > 0)) {
+    return overtakes;
+  }
+
+  // 1. Group laps by driver_number
+  const byDriver = new Map();
+  for (const l of laps) {
+    if (!l || typeof l.lap_number !== 'number') continue;
+    if (!byDriver.has(l.driver_number)) byDriver.set(l.driver_number, []);
+    byDriver.get(l.driver_number).push({
+      lap_number: l.lap_number,
+      startMs: l.date_start ? Date.parse(l.date_start) : NaN,
+      durMs: (typeof l.lap_duration === 'number' && l.lap_duration > 0) ? l.lap_duration * 1000 : null
+    });
+  }
+
+  const driverTimelines = new Map();
+  const startsByLap = new Map();
+
+  for (const [dn, list] of byDriver.entries()) {
+    // Deduplicate by lap_number & sort ascending
+    const dedupMap = new Map();
+    for (const item of list) {
+      const existing = dedupMap.get(item.lap_number);
+      if (!existing || (isNaN(existing.startMs) && !isNaN(item.startMs))) {
+        dedupMap.set(item.lap_number, item);
+      }
+    }
+    const sorted = Array.from(dedupMap.values()).sort((a, b) => a.lap_number - b.lap_number);
+
+    // Ensure Lap 1 entry exists if Lap 2+ exists (OpenF1 often omits or nulls Lap 1 date_start)
+    if (sorted.length > 0 && sorted[0].lap_number > 1 && sorted[0].lap_number <= 3) {
+      for (let missingLap = sorted[0].lap_number - 1; missingLap >= 1; missingLap--) {
+        sorted.unshift({ lap_number: missingLap, startMs: NaN, durMs: 105000 });
+      }
+    }
+
+    // Forward pass: interpolate missing startMs from previous lap start + duration
+    for (let i = 1; i < sorted.length; i++) {
+      if (isNaN(sorted[i].startMs) && !isNaN(sorted[i - 1].startMs)) {
+        const prevDur = sorted[i - 1].durMs || 98000;
+        const lapGap = Math.max(1, sorted[i].lap_number - sorted[i - 1].lap_number);
+        sorted[i].startMs = sorted[i - 1].startMs + prevDur * lapGap;
+      }
+    }
+
+    // Backward pass: interpolate missing early startMs (especially Lap 1!) from next lap start
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      if (isNaN(sorted[i].startMs) && !isNaN(sorted[i + 1].startMs)) {
+        const curDur = sorted[i].durMs || 105000;
+        const lapGap = Math.max(1, sorted[i + 1].lap_number - sorted[i].lap_number);
+        sorted[i].startMs = sorted[i + 1].startMs - curDur * lapGap;
+      }
+    }
+
+    const valid = sorted
+      .filter(x => !isNaN(x.startMs))
+      .sort((a, b) => a.startMs - b.startMs);
+
+    if (valid.length > 0) {
+      driverTimelines.set(dn, valid);
+      for (const v of valid) {
+        if (!startsByLap.has(v.lap_number)) startsByLap.set(v.lap_number, []);
+        startsByLap.get(v.lap_number).push(v.startMs);
+      }
+    }
+  }
+
+  // 2. Build session-wide leader lap timeline (robust against single-car timestamp outliers)
+  const sessionTimeline = [];
+  const lapNums = Array.from(startsByLap.keys()).sort((a, b) => a - b);
+  for (const ln of lapNums) {
+    const times = startsByLap.get(ln).sort((a, b) => a - b);
+    const median = times[Math.floor(times.length / 2)];
+    const clean = times.filter(t => Math.abs(t - median) <= 5 * 60 * 1000);
+    const refStart = clean.length > 0 ? clean[0] : times[0];
+    sessionTimeline.push({ lap_number: ln, startMs: refStart, durMs: 120000 });
+  }
+  sessionTimeline.sort((a, b) => a.startMs - b.startMs);
+
+  const findLapAt = (timeline, tMs, enforceEndBound = true) => {
+    if (!timeline || timeline.length === 0 || isNaN(tMs)) return null;
+    if (tMs < timeline[0].startMs) {
+      // Overtakes moments after lights out if Lap 1 start estimate was slightly late
+      if (timeline[0].lap_number <= 2 && (timeline[0].startMs - tMs) <= 4 * 60 * 1000) {
+        return 1;
+      }
+      return null;
+    }
+    let lo = 0;
+    let hi = timeline.length - 1;
+    let bestIdx = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (timeline[mid].startMs <= tMs) {
+        bestIdx = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const chosen = timeline[bestIdx];
+    if (enforceEndBound && bestIdx === timeline.length - 1) {
+      const maxWindow = (chosen.durMs || 150000) + 90000;
+      if (tMs > chosen.startMs + maxWindow) {
+        return null;
+      }
+    }
+    return chosen.lap_number;
+  };
+
+  return overtakes.map(ot => {
+    if (typeof ot.lap_number === 'number' && ot.lap_number > 0) return ot;
+    const tMs = ot.date ? Date.parse(ot.date) : NaN;
+    if (isNaN(tMs)) return ot;
+
+    const resolvedLap =
+      findLapAt(driverTimelines.get(ot.overtaking_driver_number), tMs, true) ??
+      findLapAt(driverTimelines.get(ot.overtaken_driver_number), tMs, true) ??
+      findLapAt(sessionTimeline, tMs, false);
+
+    return resolvedLap ? { ...ot, lap_number: resolvedLap } : ot;
+  });
+}
+
 // Short display labels for session pills
 const SESSION_LABELS = {
   'Practice 1': 'FP1',
@@ -646,7 +779,7 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       if (raceDataCache && raceDataCache.sessionKey === activeSessionKey) {
         raceDataCache.laps = laps;
         raceDataCache.pits = pits;
-        raceDataCache.overtakes = overtakes;
+        raceDataCache.overtakes = enrichOvertakesWithLaps(overtakes, laps);
         raceDataCache.intervals = intervals;
         
         // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
@@ -665,9 +798,11 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
           raceDataCache.order = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
         }
         
-        // Dynamic pop-in: re-render results tab if active
+        // Dynamic pop-in: re-render results or overtakes tab if active
         if (currentTab === 'results') {
           renderResults(content);
+        } else if (currentTab === 'overtakes') {
+          renderOvertakes(content);
         }
       }
     }).catch(err => {
@@ -1268,14 +1403,19 @@ async function loadAndRenderStrategy(container) {
 }
 
 async function loadAndRenderOvertakes(container) {
-  if (raceDataCache.overtakes) {
+  if (raceDataCache.overtakes && raceDataCache.laps) {
+    raceDataCache.overtakes = enrichOvertakesWithLaps(raceDataCache.overtakes, raceDataCache.laps);
     renderOvertakes(container);
     return;
   }
   container.innerHTML = Array(4).fill('<div class="skeleton skeleton-row"></div>').join('');
   try {
-    const overtakes = await getOvertakes({ session_key: raceDataCache.sessionKey });
-    raceDataCache.overtakes = overtakes;
+    const [overtakes, laps] = await Promise.all([
+      raceDataCache.overtakes ? Promise.resolve(raceDataCache.overtakes) : getOvertakes({ session_key: raceDataCache.sessionKey }),
+      raceDataCache.laps ? Promise.resolve(raceDataCache.laps) : getLaps({ session_key: raceDataCache.sessionKey })
+    ]);
+    raceDataCache.laps = laps;
+    raceDataCache.overtakes = enrichOvertakesWithLaps(overtakes, laps);
     renderOvertakes(container);
   } catch (e) {
     container.innerHTML = '<div class="no-data"><div class="no-data-text">Failed to load overtakes feed. Please try again.</div></div>';
@@ -2730,6 +2870,9 @@ function renderStrategy(container) {
 }
 
 function renderOvertakes(container) {
+  if (raceDataCache.overtakes && raceDataCache.laps) {
+    raceDataCache.overtakes = enrichOvertakesWithLaps(raceDataCache.overtakes, raceDataCache.laps);
+  }
   const { overtakes, driverMap } = raceDataCache;
 
   if (!overtakes || overtakes.length === 0) {
@@ -2881,7 +3024,10 @@ function renderOvertakes(container) {
       html += `
         <div class="overtake-item ${isFavO || isFavT ? 'fav-pinned-strat' : ''}" style="border-left: 4px solid ${oColor}; background: var(--bg-card); padding: 12px 16px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--border-subtle); border-left-color: ${oColor};">
           <div style="display: flex; flex-direction: column; gap: 4px;">
-            <div style="font-size: 0.72rem; color: var(--f1-red); font-family: 'JetBrains Mono', monospace; font-weight: 600;">LAP ${ot.lap_number || '—'}</div>
+            <div style="font-size: 0.72rem; color: var(--f1-red); font-family: 'JetBrains Mono', monospace; font-weight: 600; display:flex; align-items:center; gap:8px;">
+              <span>${ot.lap_number ? `LAP ${ot.lap_number}` : 'RACE PASS'}</span>
+              ${ot.date ? `<span style="color:var(--text-muted);font-weight:500;font-size:0.66rem;">${new Date(ot.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>` : ''}
+            </div>
             <div style="font-size: 0.85rem; color: var(--text-primary); line-height: 1.4;">
               <strong>${oName}${isFavO ? ' ★' : ''}</strong> overtook <strong>${tName}${isFavT ? ' ★' : ''}</strong>
             </div>
@@ -3131,9 +3277,10 @@ function renderIncidents(container) {
   }
 }
 
-// ── Grand Prix Driver Deep-Dive Modal Setup ──
+// ── Grand Prix Driver Deep-Dive Modal Setup (v3.2 Telemetry Edition) ──
 
 let overlay = null;
+let activeDriverModalReqId = 0;
 
 function ensureOverlay() {
   if (overlay) return overlay;
@@ -3145,16 +3292,35 @@ function ensureOverlay() {
     overlay.innerHTML = '<div class="driver-modal" id="driver-modal"></div>';
     document.body.appendChild(overlay);
   }
-  
-  // Close on backdrop click
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal();
-  });
 
-  // Close on Escape key press
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) closeModal();
-  });
+  overlay._onCloseCleanup = () => {
+    if (scheduleInterval) {
+      clearInterval(scheduleInterval);
+      scheduleInterval = null;
+    }
+  };
+
+  if (!overlay.dataset.boundClose) {
+    overlay.dataset.boundClose = 'true';
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (!overlay.classList.contains('open')) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Escape') {
+        closeModal();
+      } else if (e.key === 'ArrowLeft' && typeof overlay._onKeyNav === 'function') {
+        e.preventDefault();
+        overlay._onKeyNav(-1);
+      } else if (e.key === 'ArrowRight' && typeof overlay._onKeyNav === 'function') {
+        e.preventDefault();
+        overlay._onKeyNav(1);
+      }
+    });
+  }
 
   return overlay;
 }
@@ -3162,26 +3328,34 @@ function ensureOverlay() {
 function closeModal() {
   if (overlay) {
     overlay.classList.remove('open');
+    overlay._onKeyNav = null;
     document.body.style.overflow = '';
-    if (scheduleInterval) {
-      clearInterval(scheduleInterval);
-      scheduleInterval = null;
+    if (typeof overlay._onCloseCleanup === 'function') {
+      overlay._onCloseCleanup();
     }
   }
 }
 
 /**
- * Show a highly personalized Grand Prix Driver Deep-Dive modal containing:
- * - Starting vs. Finishing positions (movement indicators)
- * - Chronological tyre compound stints timeline
- * - Exact pit stop durations
- * - Best sector times (Sector 1, Sector 2, Sector 3, Best Lap)
- * - Steward decisions and race control events filtered by acronym/number
+ * Show a comprehensive Grand Prix Driver Deep-Dive modal with:
+ * - Prev / Next classified driver quick navigation (+ keyboard arrows)
+ * - Accurate grid vs finish movement, points earned & gap to leader
+ * - Session-relative sector telemetry (Purple vs Green), Optimal Lap & Clean Consistency
+ * - Interactive Clean Lap Pace Trace canvas chart
+ * - Proportional Tyre Strategy Strip + Stint Pace & Degradation cards + Pit Stop Telemetry
+ * - Filterable Lap-by-Lap Telemetry table (with speed trap & tyre compound)
+ * - Driver Track Battles (Overtakes Made / Conceded) + FIA Stewards log
  */
 export async function showRaceDriverDetail(driverNumber) {
-  ensureOverlay();
+  const activeOverlay = ensureOverlay();
   const modal = document.getElementById('driver-modal');
-  const d = raceDataCache.driverMap.get(driverNumber) || {
+  if (!raceDataCache) return;
+
+  const reqId = ++activeDriverModalReqId;
+  const order = raceDataCache.order || [];
+  const driverMap = raceDataCache.driverMap || new Map();
+
+  const d = driverMap.get(driverNumber) || {
     name_acronym: `#${driverNumber}`,
     team_name: 'Unknown',
     team_colour: '666666',
@@ -3190,41 +3364,70 @@ export async function showRaceDriverDetail(driverNumber) {
   };
   const teamColor = getTeamColor(d.team_colour);
 
+  // Prev / Next Driver in Session Classification
+  const orderIdx = order.findIndex(o => o.driver_number === driverNumber);
+  const prevEntry = orderIdx > 0 ? order[orderIdx - 1] : null;
+  const nextEntry = (orderIdx >= 0 && orderIdx < order.length - 1) ? order[orderIdx + 1] : null;
+  const prevDrv = prevEntry ? (driverMap.get(prevEntry.driver_number) || { name_acronym: `#${prevEntry.driver_number}` }) : null;
+  const nextDrv = nextEntry ? (driverMap.get(nextEntry.driver_number) || { name_acronym: `#${nextEntry.driver_number}` }) : null;
+
+  activeOverlay._onKeyNav = (dir) => {
+    if (dir < 0 && prevEntry) showRaceDriverDetail(prevEntry.driver_number);
+    else if (dir > 0 && nextEntry) showRaceDriverDetail(nextEntry.driver_number);
+  };
+
   const sessionType = raceDataCache.currentSessionType;
   const isRace = isRaceSession(sessionType);
   const isQuali = isQualifyingSession(sessionType);
+  const circuitName = raceDataCache.meetingInfo?.circuit_short_name || raceDataCache.meetingInfo?.country_name || 'Grand Prix';
 
-  let loadingLabel = 'Analyzing GP Telemetry...';
-  if (isQuali) {
-    loadingLabel = 'Analyzing Qualifying Telemetry...';
-  } else if (!isRace) {
-    loadingLabel = 'Analyzing Practice Telemetry...';
-  }
+  const loadingLabel = isQuali
+    ? 'Compiling Qualifying Sector & Stint Telemetry...'
+    : (isRace ? 'Compiling Race Pace, Strategy & Battle Telemetry...' : 'Compiling Practice Run Telemetry...');
 
-  // Render a glassmorphic loader skeleton
+  // Glassmorphic loader with topbar preserved for smooth entity switching
   modal.innerHTML = `
-    <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
-    <div style="padding: 32px 24px; text-align: center; font-family:'Outfit',sans-serif;">
-      <div style="position: relative; width: 80px; height: 80px; border-radius: 50%; background: rgba(255,255,255,0.03); border: 2px solid ${teamColor}; margin: 0 auto 16px auto; overflow: hidden;">
+    <div class="pm-topbar">
+      <div class="pm-nav-group">
+        <button type="button" class="pm-nav-btn" id="rd-prev-drv-loading" ${!prevEntry ? 'disabled' : ''}>
+          <i class="fa-solid fa-chevron-left"></i>
+          <span>${prevEntry ? `P${prevEntry.position || orderIdx} ${prevDrv.name_acronym}` : 'Prev'}</span>
+        </button>
+        <span class="pm-nav-indicator">${circuitName} · ${sessionType}</span>
+        <button type="button" class="pm-nav-btn" id="rd-next-drv-loading" ${!nextEntry ? 'disabled' : ''}>
+          <span>${nextEntry ? `P${nextEntry.position || (orderIdx + 2)} ${nextDrv.name_acronym}` : 'Next'}</span>
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+      <button class="driver-modal-close pm-inline-close" id="dm-close" aria-label="Close">✕</button>
+    </div>
+    <div style="padding: 36px 24px; text-align: center; font-family:'Outfit',sans-serif;">
+      <div style="position: relative; width: 76px; height: 76px; border-radius: 50%; background: rgba(255,255,255,0.03); border: 2px solid ${teamColor}; margin: 0 auto 14px auto; overflow: hidden;">
         <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" style="width: 100%; height: auto; object-fit: cover;" onerror="this.style.display='none'">
       </div>
-      <div style="font-family:'Outfit',sans-serif; font-weight:700; font-size:1.15rem; color:var(--text-primary); margin-bottom:4px;">${d.full_name}</div>
-      <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; font-weight:600; margin-bottom:24px;">${d.team_name}</div>
-      
-      <div style="display:flex; flex-direction:column; gap:12px; max-width:320px; margin: 0 auto;">
-        <div class="skeleton skeleton-row" style="height:14px; width:100%;"></div>
-        <div class="skeleton skeleton-row" style="height:14px; width:85%;"></div>
-        <div class="skeleton skeleton-row" style="height:14px; width:95%;"></div>
+      <div style="font-family:'Outfit',sans-serif; font-weight:800; font-size:1.15rem; color:var(--text-primary); margin-bottom:2px;">${d.full_name}</div>
+      <div style="font-size:0.74rem; color:${teamColor}; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; margin-bottom:22px;">${d.team_name}</div>
+      <div style="display:flex; flex-direction:column; gap:10px; max-width:320px; margin: 0 auto;">
+        <div class="skeleton skeleton-row" style="height:12px; width:100%;"></div>
+        <div class="skeleton skeleton-row" style="height:12px; width:84%;"></div>
+        <div class="skeleton skeleton-row" style="height:12px; width:92%;"></div>
       </div>
-      <div style="font-size:0.8rem; color:var(--text-muted); margin-top:20px; font-weight:600;">${loadingLabel}</div>
+      <div style="font-size:0.78rem; color:var(--text-muted); margin-top:18px; font-weight:600;">${loadingLabel}</div>
     </div>
   `;
-  document.getElementById('dm-close').addEventListener('click', closeModal);
-  overlay.classList.add('open');
+  document.getElementById('dm-close')?.addEventListener('click', closeModal);
+  document.getElementById('rd-prev-drv-loading')?.addEventListener('click', () => {
+    if (prevEntry) showRaceDriverDetail(prevEntry.driver_number);
+  });
+  document.getElementById('rd-next-drv-loading')?.addEventListener('click', () => {
+    if (nextEntry) showRaceDriverDetail(nextEntry.driver_number);
+  });
+
+  activeOverlay.classList.add('open');
   document.body.style.overflow = 'hidden';
 
   try {
-    // Parallel driver-filtered loading to reduce payload size by 30x, bypass API 429 errors, and load instantly!
+    const activeSessionKey = raceDataCache.sessionKey;
     raceDataCache.driverTelemetry = raceDataCache.driverTelemetry || {};
     let stints, pits, laps, positions;
 
@@ -3236,461 +3439,721 @@ export async function showRaceDriverDetail(driverNumber) {
       positions = cached.positions;
     } else {
       const results = await Promise.all([
-        getStints({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
-        getPits({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
-        getLaps({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
-        getPositions({ session_key: raceDataCache.sessionKey, driver_number: driverNumber }),
-        (!raceDataCache.laps && isQuali) ? getLaps({ session_key: raceDataCache.sessionKey }) : Promise.resolve(null)
+        getStints({ session_key: activeSessionKey, driver_number: driverNumber }),
+        getPits({ session_key: activeSessionKey, driver_number: driverNumber }),
+        getLaps({ session_key: activeSessionKey, driver_number: driverNumber }),
+        getPositions({ session_key: activeSessionKey, driver_number: driverNumber }),
+        (!raceDataCache.laps && isQuali) ? getLaps({ session_key: activeSessionKey }) : Promise.resolve(null),
       ]);
-      stints = results[0];
-      pits = results[1];
-      laps = results[2];
-      positions = results[3];
-
-      if (results[4]) {
+      stints = results[0] || [];
+      pits = results[1] || [];
+      laps = results[2] || [];
+      positions = results[3] || [];
+      if (results[4] && raceDataCache && raceDataCache.sessionKey === activeSessionKey) {
         raceDataCache.laps = results[4];
       }
-
-      // Save in driver-specific cache
-      raceDataCache.driverTelemetry[driverNumber] = { stints, pits, laps, positions };
+      if (raceDataCache && raceDataCache.sessionKey === activeSessionKey) {
+        raceDataCache.driverTelemetry[driverNumber] = { stints, pits, laps, positions };
+      }
     }
 
-    // Incidents (session-wide, lightweight)
-    const incidents = raceDataCache.incidents || await getRaceControl({ session_key: raceDataCache.sessionKey });
-    raceDataCache.incidents = incidents;
+    // Fetch lightweight session incidents & (for races) overtakes if not yet cached
+    const [incidents, overtakesRaw] = await Promise.all([
+      raceDataCache.incidents ? Promise.resolve(raceDataCache.incidents) : getRaceControl({ session_key: activeSessionKey }),
+      (isRace && !raceDataCache.overtakes) ? getOvertakes({ session_key: activeSessionKey }).catch(() => []) : Promise.resolve(raceDataCache.overtakes || []),
+    ]);
 
-    const driverStints = stints.sort((a, b) => a.stint_number - b.stint_number);
-    const driverPits = pits.sort((a, b) => a.lap_number - b.lap_number);
-    const driverLaps = laps.sort((a, b) => a.lap_number - b.lap_number);
-
-
-
-    // Calculate grid starting position from chronological positions telemetry (only for races)
-    let startPos = '—';
-    let gainLossText = '';
-    let gainLossClass = '';
-    
-    if (isRace) {
-      const sortedPositions = [...positions].sort((a, b) => new Date(a.date) - new Date(b.date));
-      startPos = sortedPositions.length > 0 ? sortedPositions[0].position : '—';
+    if (reqId !== activeDriverModalReqId || !raceDataCache || raceDataCache.sessionKey !== activeSessionKey) {
+      return; // Superseded by another user navigation
     }
 
-    const finishEntry = raceDataCache.order.find(o => o.driver_number === driverNumber);
+    raceDataCache.incidents = incidents || [];
+    if (isRace && overtakesRaw) {
+      raceDataCache.overtakes = enrichOvertakesWithLaps(overtakesRaw, raceDataCache.laps || laps);
+    }
+
+    const driverStints = [...stints].sort((a, b) => (a.stint_number || 0) - (b.stint_number || 0));
+    const driverPits = [...pits].sort((a, b) => (a.lap_number || 0) - (b.lap_number || 0));
+    const driverLaps = [...laps].sort((a, b) => (a.lap_number || 0) - (b.lap_number || 0));
+
+    // ── Grid, Finish, Points & Gap to Winner ──
+    const finishEntry = order.find(o => o.driver_number === driverNumber);
     const finishPos = finishEntry ? finishEntry.position : '—';
-    const finishStatus = finishEntry ? finishEntry.status : '—';
+    const finishStatus = finishEntry ? (finishEntry.status || 'FINISHED') : 'FINISHED';
+    const isDNS = finishStatus === 'DNS';
+    const isDSQ = finishStatus === 'DSQ';
+    const isDNF = finishStatus === 'DNF';
 
+    let startPos = '—';
     if (isRace) {
-      if (typeof startPos === 'number' && typeof finishPos === 'number') {
+      const gridMap = computeStartingGridMap();
+      if (gridMap.has(driverNumber)) {
+        startPos = gridMap.get(driverNumber);
+      } else if (positions.length > 0) {
+        const sortedPositions = [...positions].sort((a, b) => new Date(a.date) - new Date(b.date));
+        startPos = sortedPositions[0].position ?? '—';
+      }
+    }
+
+    let gainLossBadgeHtml = '';
+    if (isRace) {
+      if (isDNS) {
+        gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-ban"></i> Did Not Start (DNS)</span>`;
+      } else if (isDSQ) {
+        gainLossBadgeHtml = `<span class="pm-hero-delta down"><i class="fa-solid fa-gavel"></i> Disqualified (DSQ)</span>`;
+      } else if (isDNF) {
+        gainLossBadgeHtml = `<span class="pm-hero-delta down"><i class="fa-solid fa-triangle-exclamation"></i> Retired on Lap ${driverLaps.length || '—'} (Started P${startPos})</span>`;
+      } else if (typeof startPos === 'number' && typeof finishPos === 'number') {
         const diff = startPos - finishPos;
         if (diff > 0) {
-          gainLossText = `<i class="fa-solid fa-circle-up" style="color:var(--f1-green); margin-right:6px;"></i>Gained ${diff} position${diff > 1 ? 's' : ''} from starting grid`;
-          gainLossClass = 'style="color:var(--f1-green); font-weight:700; display:flex; align-items:center;"';
+          gainLossBadgeHtml = `<span class="pm-hero-delta up"><i class="fa-solid fa-circle-up"></i> +${diff} Pos Gained (P${startPos} → P${finishPos})</span>`;
         } else if (diff < 0) {
-          gainLossText = `<i class="fa-solid fa-circle-down" style="color:var(--f1-red); margin-right:6px;"></i>Lost ${Math.abs(diff)} position${Math.abs(diff) > 1 ? 's' : ''} from starting grid`;
-          gainLossClass = 'style="color:var(--f1-red); font-weight:700; display:flex; align-items:center;"';
+          gainLossBadgeHtml = `<span class="pm-hero-delta down"><i class="fa-solid fa-circle-down"></i> ${diff} Pos Lost (P${startPos} → P${finishPos})</span>`;
         } else {
-          gainLossText = `<i class="fa-solid fa-circle-right" style="color:var(--text-muted); margin-right:6px;"></i>Maintained grid position`;
-          gainLossClass = 'style="color:var(--text-muted); font-weight:700; display:flex; align-items:center;"';
+          gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-circle-right"></i> Held Grid Position (P${finishPos})</span>`;
         }
       }
+    } else if (isQuali) {
+      gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-stopwatch"></i> Qualified P${finishPos}</span>`;
     } else {
-      if (isQuali) {
-        gainLossText = `<i class="fa-solid fa-flag-checkered" style="color:var(--text-secondary); margin-right:6px;"></i>Qualified P${finishPos}`;
-      } else {
-        gainLossText = `<i class="fa-solid fa-gauge-high" style="color:var(--text-secondary); margin-right:6px;"></i>Finished P${finishPos} in classification`;
-      }
-      gainLossClass = 'style="color:var(--text-secondary); font-weight:700; display:flex; align-items:center;"';
+      gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-gauge-high"></i> Classified P${finishPos} in ${sessionType}</span>`;
     }
 
-    // Extract fastest sector times and lap markers
+    // Session-wide benchmarks (purple lap & sectors) when raceDataCache.laps is available
+    const sessionLaps = raceDataCache.laps || [];
+    let sessBestLap = Infinity, sessBestLapDrv = null;
+    let sessBestS1 = Infinity, sessBestS2 = Infinity, sessBestS3 = Infinity;
+    let maxSessionLap = driverLaps.length;
+
+    for (const sl of sessionLaps) {
+      if (sl.lap_number && sl.lap_number > maxSessionLap) maxSessionLap = sl.lap_number;
+      const validRaceLap = isRace ? (sl.lap_number > 1 && !sl.is_pit_out_lap) : !sl.is_pit_out_lap;
+      if (sl.lap_duration && validRaceLap && sl.lap_duration < sessBestLap) {
+        sessBestLap = sl.lap_duration;
+        sessBestLapDrv = sl.driver_number;
+      }
+      if (sl.duration_sector_1 && sl.duration_sector_1 > 0 && sl.duration_sector_1 < sessBestS1) sessBestS1 = sl.duration_sector_1;
+      if (sl.duration_sector_2 && sl.duration_sector_2 > 0 && sl.duration_sector_2 < sessBestS2) sessBestS2 = sl.duration_sector_2;
+      if (sl.duration_sector_3 && sl.duration_sector_3 > 0 && sl.duration_sector_3 < sessBestS3) sessBestS3 = sl.duration_sector_3;
+    }
+
+    // Personal Best Lap, Sectors & Clean Pace Analytics
     let bestLap = Infinity, bestS1 = Infinity, bestS2 = Infinity, bestS3 = Infinity;
     let bestLapNum = '—', bestS1Num = '—', bestS2Num = '—', bestS3Num = '—';
+    let topSpeed = 0, topSpeedLap = '—';
+
+    const pitLapSet = new Set(driverPits.map(p => p.lap_number));
+    const rawValidDurations = [];
 
     driverLaps.forEach(l => {
-      if (l.lap_duration && !l.is_pit_out_lap && l.lap_number > 1 && l.lap_duration < bestLap) {
+      const validForBest = isRace ? (!l.is_pit_out_lap && l.lap_number > 1) : !l.is_pit_out_lap;
+      if (l.lap_duration && validForBest && l.lap_duration < bestLap) {
         bestLap = l.lap_duration;
         bestLapNum = l.lap_number;
       }
-      if (l.duration_sector_1 && l.duration_sector_1 < bestS1) {
+      if (l.duration_sector_1 && l.duration_sector_1 > 0 && l.duration_sector_1 < bestS1) {
         bestS1 = l.duration_sector_1;
         bestS1Num = l.lap_number;
       }
-      if (l.duration_sector_2 && l.duration_sector_2 < bestS2) {
+      if (l.duration_sector_2 && l.duration_sector_2 > 0 && l.duration_sector_2 < bestS2) {
         bestS2 = l.duration_sector_2;
         bestS2Num = l.lap_number;
       }
-      if (l.duration_sector_3 && l.duration_sector_3 < bestS3) {
+      if (l.duration_sector_3 && l.duration_sector_3 > 0 && l.duration_sector_3 < bestS3) {
         bestS3 = l.duration_sector_3;
         bestS3Num = l.lap_number;
       }
+      const spd = l.st_speed || l.i2_speed || l.i1_speed || 0;
+      if (spd > topSpeed) {
+        topSpeed = spd;
+        topSpeedLap = l.lap_number;
+      }
+      if (l.lap_duration && !l.is_pit_out_lap && !pitLapSet.has(l.lap_number) && (!isRace || l.lap_number > 1)) {
+        rawValidDurations.push({ lap: l.lap_number, dur: l.lap_duration });
+      }
     });
+
+    // Filter out safety-car / cooldown outliers (> 108% of personal best in Race, > 107% in Practice/Quali)
+    const cleanThreshold = bestLap < Infinity ? bestLap * (isRace ? 1.085 : 1.07) : Infinity;
+    const cleanLapObjs = rawValidDurations.filter(item => item.dur <= cleanThreshold);
+    const cleanDurs = cleanLapObjs.map(item => item.dur).sort((a, b) => a - b);
+
+    let medianCleanPace = null;
+    let cleanPaceStdDev = null;
+    if (cleanDurs.length > 0) {
+      const mid = Math.floor(cleanDurs.length / 2);
+      medianCleanPace = cleanDurs.length % 2 === 0 ? (cleanDurs[mid - 1] + cleanDurs[mid]) / 2 : cleanDurs[mid];
+      if (cleanDurs.length >= 3) {
+        const mean = cleanDurs.reduce((a, b) => a + b, 0) / cleanDurs.length;
+        const variance = cleanDurs.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / cleanDurs.length;
+        cleanPaceStdDev = Math.sqrt(variance);
+      }
+    }
 
     const theoreticalBest = (bestS1 < Infinity && bestS2 < Infinity && bestS3 < Infinity)
       ? (bestS1 + bestS2 + bestS3)
       : null;
+    const potentialGain = (bestLap < Infinity && theoreticalBest !== null && bestLap >= theoreticalBest)
+      ? (bestLap - theoreticalBest)
+      : null;
 
-    // Helper for mini tyre badges in laps list
-    const getMiniTyreBadge = (comp) => {
+    const hasSessionFastestLap = sessBestLap < Infinity && bestLap < Infinity && (sessBestLapDrv === driverNumber || Math.abs(bestLap - sessBestLap) < 0.0005);
+
+    // Points & Gap computation for Race/Sprint
+    let driverPts = 0;
+    let gapDisplayStr = '—';
+    if (isRace && finishEntry) {
+      const isSprintSession = sessionType === 'Sprint';
+      const awardFL = !isSprintSession && (raceDataCache.meetingInfo?.year || 2025) < 2025;
+      if (finishEntry.points !== undefined) {
+        driverPts = finishEntry.points;
+      } else if (!isDNS && !isDSQ && typeof finishPos === 'number') {
+        driverPts = getPointsForPosition(finishPos, isSprintSession);
+        if (awardFL && hasSessionFastestLap && finishPos <= 10 && finishStatus === 'FINISHED') {
+          driverPts += 1;
+        }
+      }
+
+      if (isDNS || isDSQ || isDNF) {
+        gapDisplayStr = finishStatus;
+      } else if (finishPos === 1) {
+        gapDisplayStr = 'WINNER';
+      } else {
+        let latestInt = null;
+        if (raceDataCache.intervals && raceDataCache.intervals.length > 0) {
+          for (const ie of raceDataCache.intervals) {
+            if (ie.driver_number === driverNumber) {
+              if (!latestInt || new Date(ie.date) > new Date(latestInt.date)) latestInt = ie;
+            }
+          }
+        }
+        const lapsDiff = maxSessionLap - driverLaps.length;
+        if (maxSessionLap > 0 && lapsDiff > 0 && lapsDiff < 15) {
+          gapDisplayStr = `+${lapsDiff} Lap${lapsDiff > 1 ? 's' : ''}`;
+        } else if (latestInt && latestInt.gap_to_leader != null) {
+          const gVal = parseFloat(latestInt.gap_to_leader);
+          gapDisplayStr = !isNaN(gVal) ? `+${gVal.toFixed(3)}s` : String(latestInt.gap_to_leader);
+        } else {
+          gapDisplayStr = `${driverPits.length} Stop${driverPits.length !== 1 ? 's' : ''}`;
+        }
+      }
+    } else if (!isRace) {
+      if (finishPos === 1) {
+        gapDisplayStr = isQuali ? 'POLE' : 'P1';
+      } else if (bestLap < Infinity && sessBestLap < Infinity && bestLap >= sessBestLap) {
+        gapDisplayStr = `+${(bestLap - sessBestLap).toFixed(3)}s`;
+      }
+    }
+
+    // ── Helper for Mini Tyre Badges ──
+    const getMiniTyreBadge = (comp, size = 16) => {
       if (!comp) return '<span style="color:var(--text-muted);">—</span>';
       const cClass = getCompoundClass(comp);
-      let bg = 'rgba(255,255,255,0.05)';
-      let color = 'var(--text-muted)';
-      let char = comp[0] || '?';
-      
+      let bg = 'rgba(255,255,255,0.08)', color = 'var(--text-muted)';
+      const char = comp[0] || '?';
       if (cClass.includes('soft')) { bg = 'var(--tyre-soft)'; color = '#fff'; }
       else if (cClass.includes('medium')) { bg = 'var(--tyre-medium)'; color = '#000'; }
       else if (cClass.includes('hard')) { bg = 'var(--tyre-hard)'; color = '#000'; }
       else if (cClass.includes('inter')) { bg = 'var(--tyre-inter)'; color = '#fff'; }
       else if (cClass.includes('wet')) { bg = 'var(--tyre-wet)'; color = '#fff'; }
-      
-      return `<span class="tyre-badge ${cClass}" style="width:14px; height:14px; font-size:0.48rem; border-radius:50%; font-weight:900; display:inline-flex; align-items:center; justify-content:center; background:${bg}; color:${color}; border:1px solid rgba(255,255,255,0.1); line-height: 1;" title="${comp}">${char}</span>`;
+      return `<span class="tyre-badge ${cClass}" style="width:${size}px;height:${size}px;font-size:${size >= 22 ? '0.66rem' : '0.5rem'};border-radius:50%;font-weight:900;display:inline-flex;align-items:center;justify-content:center;background:${bg};color:${color};border:1px solid rgba(255,255,255,0.12);line-height:1;flex-shrink:0;" title="${comp}">${char}</span>`;
     };
 
-    // Build stints timeline content
-    let stintsHtml = '';
-    if (driverStints.length === 0) {
-      stintsHtml = `<div style="color:var(--text-muted); font-size:0.8rem; padding:6px 0;">No tyre compound information available</div>`;
-    } else {
-      stintsHtml = `
-        <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px;">
-          ${driverStints.map(s => {
-            const comp = s.compound || 'UNKNOWN';
-            const cClass = getCompoundClass(comp);
-            let bg = 'var(--text-muted)';
-            let color = '#fff';
-            if (cClass.includes('soft')) { bg = 'var(--tyre-soft)'; color = '#fff'; }
-            else if (cClass.includes('medium')) { bg = 'var(--tyre-medium)'; color = '#000'; }
-            else if (cClass.includes('hard')) { bg = 'var(--tyre-hard)'; color = '#000'; }
-            else if (cClass.includes('inter')) { bg = 'var(--tyre-inter)'; color = '#fff'; }
-            else if (cClass.includes('wet')) { bg = 'var(--tyre-wet)'; color = '#fff'; }
-            const isNew = s.tyre_new === true || s.tyre_new === 'true' || s.tyre_new === 1 ? 'New' : 'Used';
-            const lapStart = s.lap_start || 1;
-            const lapEnd = s.lap_end || lapStart;
-            const lapsCount = lapEnd - lapStart + 1;
+    // ── Enriched Stints & Proportional Strategy Strip ──
+    const enrichedStints = driverStints.map((s, idx) => {
+      const comp = (s.compound || 'UNKNOWN').toUpperCase();
+      const cClass = getCompoundClass(comp);
+      const lapStart = s.lap_start || 1;
+      const lapEnd = s.lap_end || Math.max(lapStart, driverLaps.length || lapStart);
+      const lapsCount = Math.max(1, lapEnd - lapStart + 1);
+      const ageAtStart = typeof s.tyre_age_at_start === 'number' ? s.tyre_age_at_start : 0;
+      const isUsed = s.tyre_new === false || s.tyre_new === 'false' || s.tyre_new === 0 || ageAtStart > 0;
+
+      // Compute clean pace & linear degradation inside this stint
+      const stintClean = cleanLapObjs.filter(cl => cl.lap >= lapStart && cl.lap <= lapEnd);
+      const avgStintPace = stintClean.length > 0
+        ? stintClean.reduce((sum, x) => sum + x.dur, 0) / stintClean.length
+        : null;
+      const bestStintObj = driverLaps
+        .filter(l => l.lap_number >= lapStart && l.lap_number <= lapEnd && l.lap_duration && !l.is_pit_out_lap && (!isRace || l.lap_number > 1))
+        .reduce((best, cur) => (!best || cur.lap_duration < best.lap_duration ? cur : best), null);
+
+      let degSlope = null;
+      if (stintClean.length >= 4) {
+        const n = stintClean.length;
+        const meanX = stintClean.reduce((s0, p0) => s0 + p0.lap, 0) / n;
+        const meanY = avgStintPace;
+        let num = 0, den = 0;
+        for (const pt of stintClean) {
+          num += (pt.lap - meanX) * (pt.dur - meanY);
+          den += (pt.lap - meanX) * (pt.lap - meanX);
+        }
+        if (den > 0) degSlope = num / den;
+      }
+
+      const matchingPit = driverPits.find(p => Math.abs((p.lap_number || 0) - lapEnd) <= 1);
+
+      return {
+        stintNumber: s.stint_number || (idx + 1),
+        comp,
+        cClass,
+        lapStart,
+        lapEnd,
+        lapsCount,
+        ageAtStart,
+        isUsed,
+        avgStintPace,
+        bestStintLap: bestStintObj ? bestStintObj.lap_duration : null,
+        bestStintLapNum: bestStintObj ? bestStintObj.lap_number : null,
+        degSlope,
+        matchingPit
+      };
+    });
+
+    const totalStintSpan = Math.max(1, enrichedStints.reduce((s0, st) => s0 + st.lapsCount, 0));
+    const stintStripHtml = enrichedStints.length > 0 ? `
+      <div class="pm-card-box" style="margin-bottom:var(--space-md);">
+        <div class="pm-card-box-hdr">
+          <span><i class="fa-solid fa-timeline" style="color:${teamColor};margin-right:6px;"></i>Compound Stint Proportion (${driverLaps.length} Laps)</span>
+          <span class="pm-subtle-tag">${enrichedStints.length} Stint${enrichedStints.length !== 1 ? 's' : ''}${isRace ? ` · ${driverPits.length} Stop${driverPits.length !== 1 ? 's' : ''}` : ''}</span>
+        </div>
+        <div class="strategy-bar" style="height:28px;border-radius:6px;overflow:hidden;display:flex;gap:3px;background:rgba(0,0,0,0.3);padding:3px;">
+          ${enrichedStints.map(st => `
+            <div class="strategy-stint enhanced ${st.cClass} ${st.isUsed ? 'used-tyre' : ''}" style="width:${Math.max(5, (st.lapsCount / totalStintSpan) * 100)}%;border-radius:4px;" title="Stint #${st.stintNumber}: ${st.comp} (L${st.lapStart}–L${st.lapEnd}, ${st.lapsCount}L)">
+              <span class="stint-comp-tag">${st.comp[0]}</span>
+              ${st.lapsCount >= 3 ? `<span class="stint-laps-num">${st.lapsCount}L</span>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const stintsCardsHtml = enrichedStints.length === 0
+      ? `<div class="pm-empty-note">No tyre compound stint data recorded for this session.</div>`
+      : `<div style="display:flex;flex-direction:column;gap:10px;">
+          ${enrichedStints.map(st => {
+            const stateTxt = st.isUsed ? `Used${st.ageAtStart > 0 ? ` (+${st.ageAtStart}L)` : ''}` : 'Fresh Set';
+            const degStr = st.degSlope !== null ? `${st.degSlope >= 0 ? '+' : ''}${st.degSlope.toFixed(3)}s/lap` : '—';
+            const degCol = st.degSlope === null ? 'var(--text-muted)' : (st.degSlope <= 0.02 ? '#2ecc71' : st.degSlope <= 0.09 ? '#fbbf24' : '#f87171');
             return `
-              <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-                <div style="display:flex; align-items:center; gap:10px;">
-                  <span class="tyre-badge ${cClass}" style="width:24px; height:24px; font-size:0.65rem; border-radius:50%; font-weight:900; display:flex; align-items:center; justify-content:center; background:${bg}; color:${color}; border:1px solid rgba(255,255,255,0.1);" title="${comp}">${comp[0]}</span>
-                  <div>
-                    <div style="font-size:0.85rem; font-weight:700; color:var(--text-primary);">${comp} compound (${isNew})</div>
-                    <div style="font-size:0.7rem; color:var(--text-muted);">Laps ${lapStart} to ${lapEnd}</div>
+              <div class="pm-stint-detail-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    ${getMiniTyreBadge(st.comp, 26)}
+                    <div>
+                      <div style="font-size:0.86rem;font-weight:800;color:var(--text-primary);">Stint #${st.stintNumber} · ${st.comp} <span class="dm-stint-pill" style="margin-left:4px;">${stateTxt}</span></div>
+                      <div style="font-size:0.72rem;color:var(--text-muted);margin-top:1px;">Lap ${st.lapStart} → Lap ${st.lapEnd} (${st.lapsCount} Lap${st.lapsCount !== 1 ? 's' : ''})</div>
+                    </div>
                   </div>
-                </div>
-                <div style="text-align:right;">
-                  <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary);">${lapsCount} Lap${lapsCount !== 1 ? 's' : ''}</div>
+                  <div class="pm-stint-metrics">
+                    <div><span>Avg Clean</span><strong class="mono">${st.avgStintPace ? formatLapTime(st.avgStintPace) : '—'}</strong></div>
+                    <div><span>Best Lap</span><strong class="mono" style="color:#c084fc;">${st.bestStintLap ? `${formatLapTime(st.bestStintLap)} (L${st.bestStintLapNum})` : '—'}</strong></div>
+                    <div><span>Deg Trend</span><strong class="mono" style="color:${degCol};">${degStr}</strong></div>
+                  </div>
                 </div>
               </div>
             `;
           }).join('')}
-        </div>
-      `;
-    }
+        </div>`;
 
-    // Build pit stop content (only for race)
+    // Pit Stops Section
     let pitsSectionHtml = '';
     if (isRace) {
-      let pitsHtml = '';
-      if (driverPits.length === 0) {
-        pitsHtml = `<div style="color:var(--text-muted); font-size:0.8rem; padding:8px 0;">No pit stops recorded during this Grand Prix</div>`;
-      } else {
-        pitsHtml = `
-          <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
-            ${driverPits.map(p => {
-              const durVal = p.pit_duration ? parseFloat(p.pit_duration) : NaN;
-              const dur = !isNaN(durVal) ? `${durVal.toFixed(2)}s` : '—';
+      const totalPitLaneTime = driverPits.reduce((sum, p) => sum + (parseFloat(p.pit_duration) || 0), 0);
+      const pitCards = driverPits.length === 0
+        ? `<div class="pm-empty-note">Zero pit stops recorded during this ${sessionType}.</div>`
+        : `<div style="display:flex;flex-direction:column;gap:8px;">
+            ${driverPits.map((p, idx) => {
+              const stopDur = p.stop_duration ? `${parseFloat(p.stop_duration).toFixed(2)}s stop` : null;
+              const laneDur = p.pit_duration ? `${parseFloat(p.pit_duration).toFixed(2)}s lane` : null;
+              const beforeSt = enrichedStints.find(s => Math.abs(s.lapEnd - p.lap_number) <= 2);
+              const afterSt = enrichedStints.find(s => Math.abs(s.lapStart - p.lap_number) <= 2 && s !== beforeSt);
+              const transHtml = (beforeSt && afterSt)
+                ? `<span style="display:inline-flex;align-items:center;gap:5px;">${getMiniTyreBadge(beforeSt.comp, 16)} <i class="fa-solid fa-arrow-right" style="font-size:0.6rem;color:var(--text-muted);"></i> ${getMiniTyreBadge(afterSt.comp, 16)}</span>`
+                : '';
               return `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-                  <div>
-                    <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Lap ${p.lap_number}</span>
+                <div class="pm-pit-card">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span class="pm-num-pill" style="color:#fbbf24;border-color:rgba(251,191,36,0.3);">STOP #${idx + 1}</span>
+                    <span style="font-weight:700;font-size:0.84rem;color:var(--text-primary);">Lap ${p.lap_number}</span>
+                    ${transHtml}
                   </div>
-                  <div style="text-align:right; font-family:'JetBrains Mono', monospace; font-size:0.85rem; font-weight:700; color:var(--text-primary);">
-                    <i class="fa-solid fa-stopwatch" style="color: var(--text-muted); margin-right: 4px;"></i> Duration: ${dur}
+                  <div class="mono" style="font-size:0.82rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:10px;">
+                    ${stopDur ? `<span style="color:#fbbf24;"><i class="fa-solid fa-stopwatch"></i> ${stopDur}</span>` : ''}
+                    ${laneDur ? `<span style="color:var(--text-secondary);">${laneDur}</span>` : (!stopDur ? '—' : '')}
                   </div>
                 </div>
               `;
             }).join('')}
-          </div>
-        `;
-      }
-      
+          </div>`;
+
       pitsSectionHtml = `
-        <!-- Pit Stop Records -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-wrench" style="color: var(--text-secondary); width: 14px;"></i> Pit Stop Telemetry
+        <div style="margin-top:var(--space-lg);">
+          <div class="dm-section-title" style="margin-top:0;display:flex;align-items:center;justify-content:space-between;">
+            <span><i class="fa-solid fa-wrench" style="color:#fbbf24;margin-right:6px;"></i>Pit Stop Telemetry (${driverPits.length})</span>
+            ${totalPitLaneTime > 0 ? `<span class="pm-subtle-tag">Total Pit Loss: ${totalPitLaneTime.toFixed(2)}s</span>` : ''}
           </div>
-          ${pitsHtml}
+          ${pitCards}
         </div>
       `;
     }
 
-    // Build qualifying classification segments (only for qualifying)
+    // ── Qualifying Q1 / Q2 / Q3 Progression Section ──
     let qualiSegmentsSectionHtml = '';
+    let q1Laps = [], q2Laps = [], q3Laps = [];
     if (isQuali) {
-      const entry = raceDataCache.order.find(o => o.driver_number === driverNumber) || {};
+      const entry = finishEntry || {};
       const q1Str = entry.q1 ? formatLapTime(entry.q1) : '—';
       const q2Str = entry.q2 ? formatLapTime(entry.q2) : '—';
       const q3Str = entry.q3 ? formatLapTime(entry.q3) : '—';
+      const qProg = (entry.q1 && entry.q3) ? (entry.q3 - entry.q1) : ((entry.q1 && entry.q2) ? (entry.q2 - entry.q1) : null);
 
       qualiSegmentsSectionHtml = `
-        <!-- Qualifying Segments -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-chart-line" style="color: var(--text-secondary); width: 14px;"></i> Qualifying Classification Times
+        <div class="pm-card-box" style="margin-bottom:var(--space-md);">
+          <div class="pm-card-box-hdr">
+            <span><i class="fa-solid fa-layer-group" style="color:#a855f7;margin-right:6px;"></i>Qualifying Knockout Progression</span>
+            ${qProg !== null ? `<span class="pm-subtle-tag" style="color:${qProg <= 0 ? '#2ecc71' : '#f87171'};">${qProg <= 0 ? '' : '+'}${qProg.toFixed(3)}s Evolution</span>` : ''}
           </div>
-          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px;">
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q1 Session</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q1Str}</div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;">
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-label">Q1 / SQ1</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:var(--text-primary);margin-top:4px;">${q1Str}</div>
             </div>
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q2 Session</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q2Str}</div>
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-label">Q2 / SQ2</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q2 ? '#38bdf8' : 'var(--text-muted)'};margin-top:4px;">${q2Str}</div>
             </div>
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-md); text-align: center;">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Q3 Session</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:0.85rem; font-weight:800; color:var(--text-primary); margin-top:4px;">${q3Str}</div>
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-label">Q3 / SQ3</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q3 ? '#c084fc' : 'var(--text-muted)'};margin-top:4px;">${q3Str}</div>
             </div>
           </div>
         </div>
       `;
+
+      if (raceDataCache.laps) {
+        const partitioned = partitionQualiLaps(raceDataCache.laps);
+        q1Laps = partitioned.q1 || [];
+        q2Laps = partitioned.q2 || [];
+        q3Laps = partitioned.q3 || [];
+      }
     }
 
-    // If it is a Qualifying session, partition all laps for Q-sessions to find which Q-segment each lap belongs to
-    let q1Laps = [], q2Laps = [], q3Laps = [];
-    if (isQuali && raceDataCache.laps) {
-      const partitioned = partitionQualiLaps(raceDataCache.laps);
-      q1Laps = partitioned.q1 || [];
-      q2Laps = partitioned.q2 || [];
-      q3Laps = partitioned.q3 || [];
-    }
+    // ── Sector Comparison Cards ──
+    const buildSectorCard = (label, val, lapNum, sessBest) => {
+      if (val >= Infinity) {
+        return `
+          <div class="pm-sector-card">
+            <div class="pm-sector-lbl">${label}</div>
+            <div class="pm-sector-val mono">—</div>
+            <div class="pm-sector-sub">No data</div>
+          </div>
+        `;
+      }
+      const isPurple = sessBest < Infinity && Math.abs(val - sessBest) < 0.0005;
+      const gapToPurple = (sessBest < Infinity && !isPurple && val > sessBest) ? `+${(val - sessBest).toFixed(3)}s` : null;
+      const accent = isPurple ? '#c084fc' : '#2ecc71';
+      return `
+        <div class="pm-sector-card" style="border-color:${isPurple ? 'rgba(192,132,252,0.35)' : 'var(--border-subtle)'};">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+            <span class="pm-sector-lbl">${label}</span>
+            <span class="pm-sector-badge" style="color:${accent};background:${accent}1a;">${isPurple ? '🟣 PURPLE' : '🟢 PB'}</span>
+          </div>
+          <div class="pm-sector-val mono" style="color:${isPurple ? '#c084fc' : 'var(--text-primary)'};">${val.toFixed(3)}s</div>
+          <div class="pm-sector-sub">Lap ${lapNum}${gapToPurple ? ` · <span class="mono">${gapToPurple}</span>` : ''}</div>
+        </div>
+      `;
+    };
 
-    // Build the all-laps table rows
+    const hasSpeedTrap = topSpeed > 0;
+
+    // ── Build Filterable Lap-by-Lap Rows ──
+    const cleanLapNumSet = new Set(cleanLapObjs.map(c => c.lap));
     const lapRowsHtml = driverLaps.map(l => {
       const lapNum = l.lap_number;
-      const isPersonalBest = l.lap_duration && l.lap_duration === bestLap;
-      
-      let qualiSegment = '';
+      const isPB = l.lap_duration && l.lap_duration === bestLap;
+      const isOutLap = Boolean(l.is_pit_out_lap);
+      const isPitIn = pitLapSet.has(lapNum);
+      const isClean = cleanLapNumSet.has(lapNum);
+
+      let tags = '';
       if (isQuali && raceDataCache.laps) {
-        const inQ1 = q1Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
-        const inQ2 = q2Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
-        const inQ3 = q3Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum);
-        
-        if (inQ1) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:var(--text-secondary); background:rgba(255,255,255,0.05); padding:1px 4px; border-radius:2px; margin-left:4px;">Q1</span>';
-        else if (inQ2) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.1); padding:1px 4px; border-radius:2px; margin-left:4px;">Q2</span>';
-        else if (inQ3) qualiSegment = ' <span style="font-family:\'Outfit\',sans-serif; font-size:0.6rem; font-weight:700; color:#a855f7; background:rgba(168,85,247,0.1); padding:1px 4px; border-radius:2px; margin-left:4px;">Q3</span>';
+        if (q1Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum)) tags += ' <span class="pm-lap-tag">Q1</span>';
+        else if (q2Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum)) tags += ' <span class="pm-lap-tag q2">Q2</span>';
+        else if (q3Laps.some(ql => ql.driver_number === driverNumber && ql.lap_number === lapNum)) tags += ' <span class="pm-lap-tag q3">Q3</span>';
       }
-      
-      const timeStr = l.lap_duration 
-        ? (isPersonalBest 
-            ? `<span style="color:#c084fc; font-weight:700;">${formatLapTime(l.lap_duration)} 🟣</span>` 
-            : formatLapTime(l.lap_duration)) 
+      if (isOutLap) tags += ' <span class="pm-lap-tag pit">OUT</span>';
+      else if (isPitIn) tags += ' <span class="pm-lap-tag pit">IN</span>';
+
+      let deltaStr = '';
+      if (l.lap_duration && bestLap < Infinity && !isPB) {
+        const dlt = l.lap_duration - bestLap;
+        if (dlt >= 0 && dlt < 30) deltaStr = ` <span style="font-size:0.64rem;color:var(--text-muted);">+${dlt.toFixed(2)}s</span>`;
+      }
+
+      const timeStr = l.lap_duration
+        ? (isPB
+            ? `<span style="color:${hasSessionFastestLap ? '#c084fc' : '#2ecc71'};font-weight:800;">${formatLapTime(l.lap_duration)} ${hasSessionFastestLap ? '🟣' : '🟢'}</span>`
+            : `${formatLapTime(l.lap_duration)}${deltaStr}`)
         : '—';
-      
-      const s1Str = l.duration_sector_1 
-        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_1 === bestS1 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_1 === bestS1 ? '700' : 'normal'}">${l.duration_sector_1.toFixed(3)}s</span>` 
-        : '—';
-        
-      const s2Str = l.duration_sector_2 
-        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_2 === bestS2 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_2 === bestS2 ? '700' : 'normal'}">${l.duration_sector_2.toFixed(3)}s</span>` 
-        : '—';
-        
-      const s3Str = l.duration_sector_3 
-        ? `<span style="font-family:'JetBrains Mono',monospace; color:${l.duration_sector_3 === bestS3 ? 'var(--f1-green)' : 'var(--text-secondary)'}; font-weight:${l.duration_sector_3 === bestS3 ? '700' : 'normal'}">${l.duration_sector_3.toFixed(3)}s</span>` 
-        : '—';
+
+      const fmtSec = (v, pb, sb) => {
+        if (!v) return '<span style="color:var(--text-muted);">—</span>';
+        const purp = sb < Infinity && Math.abs(v - sb) < 0.0005;
+        const green = v === pb;
+        const col = purp ? '#c084fc' : (green ? '#2ecc71' : 'var(--text-secondary)');
+        return `<span class="mono" style="color:${col};font-weight:${(purp || green) ? '800' : '500'};">${v.toFixed(3)}</span>`;
+      };
 
       const stint = driverStints.find(s => lapNum >= (s.lap_start || 1) && lapNum <= (s.lap_end || 999));
       const comp = stint ? stint.compound : null;
-      const tyreBadge = getMiniTyreBadge(comp);
+      const spd = l.st_speed || l.i2_speed || l.i1_speed || null;
+
+      const filterCat = (isOutLap || isPitIn) ? 'pit' : (isClean ? 'clean' : 'other');
 
       return `
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.02); height: 28px;">
-          <td style="padding: 6px 8px; font-weight: 700; color: var(--text-muted);">Lap ${lapNum}${qualiSegment}</td>
-          <td style="padding: 6px 8px; font-family:'JetBrains Mono',monospace;">${timeStr}</td>
-          <td style="padding: 6px 8px;">${s1Str}</td>
-          <td style="padding: 6px 8px;">${s2Str}</td>
-          <td style="padding: 6px 8px;">${s3Str}</td>
-          <td style="padding: 6px 8px; text-align: center;">${tyreBadge}</td>
+        <tr data-lap-cat="${filterCat}" data-lap-pb="${isPB ? '1' : '0'}">
+          <td class="pm-td-mono" style="font-weight:700;color:var(--text-secondary);white-space:nowrap;">L${lapNum}${tags}</td>
+          <td class="pm-td-mono" style="white-space:nowrap;">${timeStr}</td>
+          <td>${fmtSec(l.duration_sector_1, bestS1, sessBestS1)}</td>
+          <td>${fmtSec(l.duration_sector_2, bestS2, sessBestS2)}</td>
+          <td>${fmtSec(l.duration_sector_3, bestS3, sessBestS3)}</td>
+          ${hasSpeedTrap ? `<td class="pm-td-mono" style="text-align:right;color:${spd === topSpeed ? '#38bdf8' : 'var(--text-muted)'};">${spd ? `${Math.round(spd)}` : '—'}</td>` : ''}
+          <td style="text-align:center;">${getMiniTyreBadge(comp, 16)}</td>
         </tr>
       `;
     }).join('');
 
-    const allLapsAccordionHtml = `
-      <!-- Collapsible Laps & Sector Times Feed -->
-      <div class="dm-accordion-wrapper" style="margin-top: 4px;">
-        <button class="accordion-toggle" id="dm-laps-toggle" style="
-          width: 100%;
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid var(--border-subtle);
-          border-radius: var(--radius-md);
-          padding: 12px 16px;
-          color: var(--text-primary);
-          font-family: 'Outfit', sans-serif;
-          font-size: 0.85rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          cursor: pointer;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          transition: all var(--transition-fast);
-          outline: none;
-        ">
-          <span style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-list-ol" style="color: var(--text-secondary); width:14px;"></i> All Laps & Sector Times</span>
-          <i class="fa-solid fa-chevron-down toggle-icon" id="dm-laps-chevron" style="transition: transform var(--transition-fast); color: var(--text-muted); font-size: 0.8rem;"></i>
-        </button>
-        
-        <div class="accordion-panel" id="dm-laps-panel" style="
-          max-height: 0;
-          overflow: hidden;
-          transition: max-height 300ms cubic-bezier(0.4, 0, 0.2, 1);
-          margin-top: 8px;
-          border-radius: var(--radius-md);
-          background: rgba(0, 0, 0, 0.15);
-          border: 1px solid transparent;
-        ">
-          <div style="padding: 12px; overflow-x: auto; max-height: 320px; overflow-y: auto;" class="custom-scrollbar">
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.72rem; text-align: left;">
-              <thead>
-                <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.62rem; letter-spacing: 0.03em;">
-                  <th style="padding: 6px 8px;">Lap</th>
-                  <th style="padding: 6px 8px;">Lap Time</th>
-                  <th style="padding: 6px 8px;">Sector 1</th>
-                  <th style="padding: 6px 8px;">Sector 2</th>
-                  <th style="padding: 6px 8px;">Sector 3</th>
-                  <th style="padding: 6px 8px; text-align: center;">Tyre</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${lapRowsHtml || '<tr><td colspan="6" style="padding: 12px; text-align: center; color: var(--text-muted);">No laps recorded</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
+    // ── Track Battles (Overtakes) + FIA Stewards Log ──
+    let battlesSectionHtml = '';
+    let driverBattlesCount = 0;
+    if (isRace) {
+      const allOvertakes = raceDataCache.overtakes || [];
+      const myPasses = allOvertakes.filter(o => o.overtaking_driver_number === driverNumber);
+      const passedBy = allOvertakes.filter(o => o.overtaken_driver_number === driverNumber);
+      const netPasses = myPasses.length - passedBy.length;
+      const combinedBattles = allOvertakes
+        .filter(o => o.overtaking_driver_number === driverNumber || o.overtaken_driver_number === driverNumber)
+        .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+      driverBattlesCount = combinedBattles.length;
 
-    // Steward decisions and events filtering
+      const battleFeedHtml = combinedBattles.length === 0
+        ? `<div class="pm-empty-note">No recorded on-track position passes involving ${d.name_acronym} in OpenF1 telemetry.</div>`
+        : `<div class="pm-battle-list custom-scrollbar">
+            ${combinedBattles.map(b => {
+              const isGain = b.overtaking_driver_number === driverNumber;
+              const rivalNum = isGain ? b.overtaken_driver_number : b.overtaking_driver_number;
+              const rival = driverMap.get(rivalNum) || { name_acronym: `#${rivalNum}`, team_colour: '666666' };
+              const rivalCol = getTeamColor(rival.team_colour);
+              const lapLbl = b.lap_number ? `Lap ${b.lap_number}` : 'Race';
+              const posLbl = b.position ? `for P${b.position}` : '';
+              return `
+                <div class="pm-battle-row ${isGain ? 'gain' : 'loss'}">
+                  <span class="pm-battle-lap mono">${lapLbl}</span>
+                  <span class="pm-battle-dir ${isGain ? 'up' : 'down'}">${isGain ? '▲ PASSED' : '▼ PASSED BY'}</span>
+                  <span style="display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--text-primary);">
+                    <span style="width:7px;height:7px;border-radius:50%;background:${rivalCol};"></span>
+                    ${rival.full_name || rival.name_acronym}
+                  </span>
+                  <span class="mono" style="margin-left:auto;font-size:0.72rem;color:var(--text-secondary);font-weight:700;">${posLbl}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>`;
+
+      battlesSectionHtml = `
+        <div style="margin-bottom:var(--space-lg);">
+          <div class="dm-section-title" style="margin-top:0;"><i class="fa-solid fa-arrows-left-right" style="color:#38bdf8;margin-right:6px;"></i>On-Track Overtakes & Battles</div>
+          <div class="dm-stats-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:var(--space-sm);">
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-value" style="color:#2ecc71;font-size:1.25rem;">▲ ${myPasses.length}</div>
+              <div class="dm-stat-label">Passes Made</div>
+            </div>
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-value" style="color:#f87171;font-size:1.25rem;">▼ ${passedBy.length}</div>
+              <div class="dm-stat-label">Times Passed</div>
+            </div>
+            <div class="dm-stat-tile" style="padding:10px 8px;">
+              <div class="dm-stat-value" style="color:${netPasses > 0 ? '#2ecc71' : netPasses < 0 ? '#f87171' : 'var(--text-primary)'};font-size:1.25rem;">${netPasses > 0 ? `+${netPasses}` : netPasses}</div>
+              <div class="dm-stat-label">Net Track Passes</div>
+            </div>
+          </div>
+          ${battleFeedHtml}
+        </div>
+      `;
+    }
+
+    // Steward decisions & Race Control filtering
     const acronym = d.name_acronym || '';
     const lastName = d.full_name ? d.full_name.split(' ').pop().toUpperCase() : '';
     const numberStr = driverNumber.toString();
 
-    const driverIncidents = incidents.filter(inc => {
+    const driverIncidents = (incidents || []).filter(inc => {
+      if (inc.driver_number === driverNumber) return true;
       const msg = (inc.message || '').toUpperCase();
-      return msg.includes(acronym.toUpperCase()) || 
-             (lastName && msg.includes(lastName)) ||
+      return (acronym && !acronym.startsWith('#') && msg.includes(`(${acronym.toUpperCase()})`)) ||
+             (acronym && !acronym.startsWith('#') && new RegExp(`\\b${acronym.toUpperCase()}\\b`).test(msg)) ||
+             (lastName && lastName.length > 2 && msg.includes(lastName)) ||
              msg.includes(`CAR ${numberStr} `) ||
              msg.includes(`CAR ${numberStr},`) ||
              msg.includes(`CAR ${numberStr}.`) ||
-             msg.includes(`CAR ${numberStr}\n`) ||
+             msg.includes(`CAR ${numberStr}(`) ||
              msg.endsWith(`CAR ${numberStr}`);
     });
 
-    let incidentsHtml = '';
-    if (driverIncidents.length === 0) {
-      incidentsHtml = `<div style="color:var(--text-muted); font-size:0.8rem; padding:8px 0;">No steward investigations, penalties, or incidents involving this driver.</div>`;
-    } else {
-      incidentsHtml = `
-        <div class="incidents-feed" style="margin-top:8px;">
+    const incidentsHtml = driverIncidents.length === 0
+      ? `<div class="pm-empty-note">Clean sheet — no FIA steward investigations, track-limit warnings, or penalties logged for Car #${driverNumber}.</div>`
+      : `<div class="incidents-feed" style="margin-top:8px;max-height:320px;">
           ${driverIncidents.map(inc => {
             const msg = inc.message || '';
             const msgUpper = msg.toUpperCase();
             let catClass = 'incident-info';
             let icon = '<i class="fa-solid fa-circle-info" style="color: var(--text-muted);"></i>';
-
-            if (msgUpper.includes('INVESTIGAT') || msgUpper.includes('PENALTY') || msgUpper.includes('TIME PENALTY') || msgUpper.includes('STEWARDS')) {
+            if (msgUpper.includes('PENALTY') || msgUpper.includes('INVESTIGAT') || msgUpper.includes('STEWARDS') || msgUpper.includes('NOTED')) {
               catClass = 'incident-stewards';
-              icon = '<i class="fa-solid fa-magnifying-glass" style="color: #38bdf8;"></i>';
+              icon = '<i class="fa-solid fa-gavel" style="color: #c084fc;"></i>';
+            } else if (msgUpper.includes('DELETED') || msgUpper.includes('TRACK LIMITS') || msgUpper.includes('BLACK AND WHITE')) {
+              catClass = 'incident-flag-yellow';
+              icon = '<i class="fa-solid fa-triangle-exclamation" style="color: #fbbf24;"></i>';
             }
-            const lapText = inc.lap_number ? `Lap ${inc.lap_number}` : 'Pre-Race';
-            const timeStr = new Date(inc.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
+            const lapText = inc.lap_number ? `Lap ${inc.lap_number}` : sessionType;
+            const timeStr = inc.date ? new Date(inc.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
             return `
               <div class="incident-item ${catClass}" style="margin-bottom:8px;">
                 <div class="incident-badge">${icon}</div>
-                <div class="incident-card" style="padding:10px 14px; background:rgba(0,0,0,0.15); border:1px solid rgba(255,255,255,0.03);">
-                  <div class="incident-meta" style="margin-bottom:6px;">
+                <div class="incident-card" style="padding:10px 14px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.05);">
+                  <div class="incident-meta" style="margin-bottom:4px;">
                     <span class="incident-lap">${lapText}</span>
                     <span class="incident-time">${timeStr}</span>
                   </div>
-                  <div class="incident-msg" style="font-size:0.8rem; line-height:1.4;">${msg}</div>
+                  <div class="incident-msg" style="font-size:0.78rem;line-height:1.4;">${msg}</div>
                 </div>
               </div>
             `;
           }).join('')}
-        </div>
-      `;
-    }
+        </div>`;
 
-    // Dynamic stats grid
-    let statsGridHtml = '';
-    if (isRace) {
-      statsGridHtml = `
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Start Grid</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">P${startPos}</div>
+    // ── Primary KPI Tiles ──
+    const bestTimeStr = bestLap < Infinity ? formatLapTime(bestLap) : '—';
+    const optTimeStr = theoreticalBest ? formatLapTime(theoreticalBest) : '—';
+    const medPaceStr = medianCleanPace ? formatLapTime(medianCleanPace) : '—';
+    const stdDevStr = cleanPaceStdDev !== null ? `±${cleanPaceStdDev.toFixed(2)}s` : '—';
+
+    const kpiGridHtml = isRace ? `
+      <div class="dm-stats-grid" style="margin-bottom:var(--space-sm);">
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:var(--text-secondary);">${startPos !== '—' ? `P${startPos}` : '—'}</div>
+          <div class="dm-stat-label">Start Grid</div>
         </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Race Finish</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: ${finishStatus === 'DNF' ? 'var(--f1-red)' : 'var(--text-primary)'}; margin-top: 4px;">
-            ${finishStatus === 'DNS' ? 'DNS' : finishStatus === 'DSQ' ? 'DSQ' : `P${finishPos}`}
-            ${finishStatus === 'DNF' ? '<span style="font-size:0.75rem;color:var(--f1-red);">(DNF)</span>' : ''}
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:${(isDNF || isDSQ) ? 'var(--f1-red)' : (finishPos <= 3 ? '#ffd700' : 'var(--text-primary)')};">
+            ${isDNS ? 'DNS' : isDSQ ? 'DSQ' : `P${finishPos}`}
+          </div>
+          <div class="dm-stat-label">${isDNF ? 'Retired (DNF)' : 'Classification'}</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:${driverPts > 0 ? '#2ecc71' : 'var(--text-secondary)'};">${driverPts > 0 ? `+${driverPts}` : '0'}</div>
+          <div class="dm-stat-label">Points Scored</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value mono" style="font-size:1.05rem;">${gapDisplayStr}</div>
+          <div class="dm-stat-label">${finishPos === 1 ? 'Race Status' : 'Gap / Interval'}</div>
+        </div>
+      </div>
+    ` : `
+      <div class="dm-stats-grid" style="margin-bottom:var(--space-sm);">
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value" style="color:${finishPos <= 3 ? '#ffd700' : 'var(--text-primary)'};">P${finishPos}</div>
+          <div class="dm-stat-label">Classification</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value mono" style="font-size:1.02rem;color:${hasSessionFastestLap ? '#c084fc' : 'var(--text-primary)'};">${bestTimeStr}</div>
+          <div class="dm-stat-label">Best Lap (L${bestLapNum})</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value mono" style="font-size:1.02rem;">${gapDisplayStr}</div>
+          <div class="dm-stat-label">Gap to P1</div>
+        </div>
+        <div class="dm-stat-tile">
+          <div class="dm-stat-value">${driverLaps.length}</div>
+          <div class="dm-stat-label">Laps Run</div>
+        </div>
+      </div>
+    `;
+
+    const paceAnalyticsBoxHtml = `
+      <div class="pm-card-box" style="margin-bottom:var(--space-md);">
+        <div class="pm-card-box-hdr">
+          <span><i class="fa-solid fa-gauge-simple-high" style="color:${teamColor};margin-right:6px;"></i>Lap Pace & Optimal Theoretical Envelope</span>
+          ${topSpeed > 0 ? `<span class="pm-subtle-tag" style="color:#38bdf8;"><i class="fa-solid fa-wind"></i> ${Math.round(topSpeed)} km/h (L${topSpeedLap})</span>` : ''}
+        </div>
+        <div class="pm-micro-kpis">
+          <div class="pm-micro-kpi">
+            <span class="pm-micro-lbl">Personal Best</span>
+            <strong class="pm-micro-val mono" style="color:${hasSessionFastestLap ? '#c084fc' : 'var(--text-primary)'};">${bestTimeStr}${hasSessionFastestLap ? ' 🟣' : ''}</strong>
+          </div>
+          <div class="pm-micro-kpi">
+            <span class="pm-micro-lbl">Optimal (S1+2+3)</span>
+            <strong class="pm-micro-val mono" style="color:#a855f7;">${optTimeStr}</strong>
+          </div>
+          <div class="pm-micro-kpi">
+            <span class="pm-micro-lbl">${isRace ? 'Median Clean Pace' : 'Potential Delta'}</span>
+            <strong class="pm-micro-val mono">${isRace ? medPaceStr : (potentialGain !== null ? `−${potentialGain.toFixed(3)}s` : '—')}</strong>
+          </div>
+          <div class="pm-micro-kpi">
+            <span class="pm-micro-lbl">Clean Consistency</span>
+            <strong class="pm-micro-val mono" style="color:${cleanPaceStdDev !== null && cleanPaceStdDev < 0.45 ? '#2ecc71' : 'var(--text-primary)'};">${stdDevStr}</strong>
           </div>
         </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Completed Laps</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">${driverLaps.length}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Pit Stops</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">${driverPits.length}</div>
-        </div>
-      `;
-    } else {
-      const bestTimeStr = bestLap < Infinity ? formatLapTime(bestLap) : '—';
-      const theoreticalBestStr = theoreticalBest ? formatLapTime(theoreticalBest) : '—';
-      
-      statsGridHtml = `
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Classification</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">P${finishPos}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Best Lap</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.1rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">${bestTimeStr}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Theo. Best</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.1rem; font-weight: 800; color: #a855f7; margin-top: 4px;">${theoreticalBestStr}</div>
-        </div>
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px; text-align: center;">
-          <div style="font-size: 0.68rem; text-transform: uppercase; color: var(--text-muted); font-weight:600; letter-spacing: 0.05em;">Laps Completed</div>
-          <div style="font-family:'Outfit',sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text-secondary); margin-top: 4px;">${driverLaps.length}</div>
-        </div>
-      `;
-    }
+      </div>
+    `;
 
+    const paceChartHtml = cleanLapObjs.length >= 3 ? `
+      <div class="dm-section-title" style="margin-top:var(--space-md);">Clean Lap Pace Trace (${cleanLapObjs.length} Representative Laps)</div>
+      <div class="dm-chart-wrap" style="padding:12px 10px 6px 6px;">
+        <canvas id="rd-driver-pace-canvas" style="width:100%;height:155px;display:block;"></canvas>
+      </div>
+    ` : '';
+
+    // ── Header & Segmented Tabs Assembly ──
     const flagInfo = DRIVER_NATIONALITY[d.name_acronym?.toUpperCase()];
     const flagBgUrl = flagInfo?.code ? `https://flagcdn.com/w320/${flagInfo.code}.png` : '';
+    const rankBadgeTxt = isDNS ? 'DNS' : isDSQ ? 'DSQ' : `P${finishPos}`;
+    const rankBadgeCls = (!isDNS && !isDSQ && finishPos === 1) ? 'pm-rank-p1'
+      : (!isDNS && !isDSQ && finishPos === 2) ? 'pm-rank-p2'
+        : (!isDNS && !isDSQ && finishPos === 3) ? 'pm-rank-p3' : '';
 
-    // Compile beautiful UI with clean styled details
+    const eventsCount = driverBattlesCount + driverIncidents.length;
+
     modal.innerHTML = `
-      <button class="driver-modal-close" id="dm-close" aria-label="Close">✕</button>
-      
-      <!-- Modal Header Banner -->
-      <div class="dm-header-banner" style="--dm-team-color: ${teamColor}; --dm-team-color-alpha: ${teamColor}33;">
-        <div class="dm-header-bar"></div>
-        ${flagBgUrl ? `<img class="dm-header-flag-bg" src="${flagBgUrl}" alt="" aria-hidden="true">` : ''}
-        
-        <div class="dm-header-avatar">
-          <img src="${d.headshot_url || ''}" alt="${d.name_acronym}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/><text y=%2250%%22 x=%2250%%22 font-family=%22sans-serif%22 font-size=%2224%22 fill=%22%23777%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22>${d.name_acronym}</text></svg>'">
+      <div class="pm-topbar">
+        <div class="pm-nav-group">
+          <button type="button" class="pm-nav-btn" id="rd-prev-drv" ${!prevEntry ? 'disabled' : ''} title="${prevEntry ? `Previous: P${prevEntry.position || orderIdx} ${prevDrv.name_acronym} (←)` : 'First classified'}">
+            <i class="fa-solid fa-chevron-left"></i>
+            <span>${prevEntry ? `P${prevEntry.position || orderIdx} ${prevDrv.name_acronym}` : 'Prev'}</span>
+          </button>
+          <span class="pm-nav-indicator">${circuitName} · ${sessionType}</span>
+          <button type="button" class="pm-nav-btn" id="rd-next-drv" ${!nextEntry ? 'disabled' : ''} title="${nextEntry ? `Next: P${nextEntry.position || (orderIdx + 2)} ${nextDrv.name_acronym} (→)` : 'Last classified'}">
+            <span>${nextEntry ? `P${nextEntry.position || (orderIdx + 2)} ${nextDrv.name_acronym}` : 'Next'}</span>
+            <i class="fa-solid fa-chevron-right"></i>
+          </button>
         </div>
-        
-        <div style="flex: 1; min-width: 200px; z-index: 1; position: relative;">
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <span style="font-family:'JetBrains Mono',monospace; font-size:0.9rem; font-weight:800; color:${teamColor}; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:4px;">#${driverNumber}</span>
-            <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:var(--text-muted);">${d.team_name}</span>
+        <button class="driver-modal-close pm-inline-close" id="dm-close" aria-label="Close">✕</button>
+      </div>
+
+      <div class="dm-header pm-hero-header" style="--dm-team-color:${teamColor};color:${teamColor}">
+        <div class="pm-hero-accent" style="background:${teamColor};"></div>
+        ${flagBgUrl ? `<img class="dm-header-flag-bg" src="${flagBgUrl}" alt="" aria-hidden="true">` : ''}
+        <div class="pm-avatar-wrap">
+          <img class="dm-headshot" src="${d.headshot_url || ''}" alt="${d.name_acronym}" style="border-color:${teamColor}"
+               onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22><rect fill=%22%231a1a25%22 width=%2280%22 height=%2280%22/><text y=%2250%%22 x=%2250%%22 font-family=%22sans-serif%22 font-size=%2224%22 fill=%22%23777%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22>${d.name_acronym}</text></svg>'">
+          <span class="pm-avatar-rank ${rankBadgeCls}" style="${finishPos > 3 || isDNS || isDSQ ? `border-color:${(isDNF || isDSQ) ? 'var(--f1-red)' : teamColor};color:${(isDNF || isDSQ) ? '#f87171' : teamColor};` : ''}">${rankBadgeTxt}</span>
+        </div>
+        <div class="dm-header-info">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span class="pm-num-pill" style="color:${teamColor};border-color:${teamColor}44;">#${driverNumber}</span>
+            <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;color:${teamColor};">${d.team_name}</span>
+            ${hasSessionFastestLap ? '<span class="pm-fl-pill"><i class="fa-solid fa-bolt"></i> Fastest Lap</span>' : ''}
             ${d.name_acronym && !d.name_acronym.startsWith('#') ? `
               <button type="button" class="modal-fav-pin-btn ${isFavoriteDriver(d.name_acronym) ? 'active' : ''}" id="rd-modal-fav-btn">
                 <i class="fa-${isFavoriteDriver(d.name_acronym) ? 'solid' : 'regular'} fa-star"></i>
@@ -3698,102 +4161,97 @@ export async function showRaceDriverDetail(driverNumber) {
               </button>
             ` : ''}
           </div>
-          <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; margin: 6px 0 2px 0; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+          <div class="dm-driver-name" style="color:var(--text-primary);margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span>${d.full_name}</span>
-            ${getDriverFlagImg(d.name_acronym, 'width:20px; border-radius:2px;')}
-          </h2>
-          <div ${gainLossClass} style="font-size:0.85rem; margin-top:4px;">${gainLossText || 'Maintained position'}</div>
+            ${getDriverFlagImg(d.name_acronym, 'width:19px;border-radius:2px;')}
+          </div>
+          <div style="margin-top:5px;">${gainLossBadgeHtml}</div>
         </div>
+        <div class="dm-driver-number" aria-hidden="true">${driverNumber}</div>
       </div>
 
-      <!-- Quick Race Stats Metrics -->
-      <div class="dm-grid-stats">
-        ${statsGridHtml}
-      </div>
+      <div class="dm-body">
+        <div class="dm-tabs pm-segmented-tabs" role="tablist">
+          <button type="button" class="dm-tab active" data-tab="pace"><i class="fa-solid fa-stopwatch"></i> Overview & Pace</button>
+          <button type="button" class="dm-tab" data-tab="strategy"><i class="fa-solid fa-circle-notch"></i> ${isRace ? 'Strategy & Pits' : 'Tyre Runs'} (${enrichedStints.length})</button>
+          <button type="button" class="dm-tab" data-tab="laps"><i class="fa-solid fa-list-ol"></i> Laps (${driverLaps.length})</button>
+          <button type="button" class="dm-tab" data-tab="events"><i class="fa-solid fa-${isRace ? 'bolt' : 'flag'}"></i> ${isRace ? 'Battles & FIA' : 'FIA Logs'}${eventsCount > 0 ? ` (${eventsCount})` : ''}</button>
+        </div>
 
-      <!-- Telemetry and Stints Timeline -->
-      <div style="padding: 24px; display: flex; flex-direction: column; gap: 24px;">
-        
-        <!-- Sector Times -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-stopwatch" style="color: var(--text-secondary); width: 14px;"></i> Sector Best Times
+        <!-- TAB 1: Overview & Pace -->
+        <div id="rd-tab-pace" class="dm-tab-content active">
+          ${kpiGridHtml}
+          ${qualiSegmentsSectionHtml}
+          ${paceAnalyticsBoxHtml}
+
+          <div class="dm-section-title" style="margin-top:0;">Sector Best Telemetry</div>
+          <div class="pm-sectors-grid">
+            ${buildSectorCard('Sector 1', bestS1, bestS1Num, sessBestS1)}
+            ${buildSectorCard('Sector 2', bestS2, bestS2Num, sessBestS2)}
+            ${buildSectorCard('Sector 3', bestS3, bestS3Num, sessBestS3)}
           </div>
-          <div class="dm-grid-sector">
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Personal Best Lap</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:1rem; font-weight:800; color:#a855f7; margin-top:4px;">${bestLap < Infinity ? formatLapTime(bestLap) : '—'}</div>
-              <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Lap ${bestLapNum}</div>
+
+          ${paceChartHtml}
+        </div>
+
+        <!-- TAB 2: Strategy & Pit Stops -->
+        <div id="rd-tab-strategy" class="dm-tab-content">
+          ${stintStripHtml}
+          <div class="dm-section-title" style="margin-top:0;">Chronological Stint Breakdown</div>
+          ${stintsCardsHtml}
+          ${pitsSectionHtml}
+        </div>
+
+        <!-- TAB 3: Lap-by-Lap Telemetry -->
+        <div id="rd-tab-laps" class="dm-tab-content">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            <div class="pm-filter-pills" id="rd-lap-filters">
+              <button type="button" class="pm-filter-pill active" data-filter="all">All (${driverLaps.length})</button>
+              <button type="button" class="pm-filter-pill" data-filter="clean">Clean (${cleanLapObjs.length})</button>
+              <button type="button" class="pm-filter-pill" data-filter="pit">In / Out</button>
             </div>
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Best Sector 1</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:1rem; font-weight:800; color:var(--text-secondary); margin-top:4px;">${bestS1 < Infinity ? `${bestS1.toFixed(3)}s` : '—'}</div>
-              <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Lap ${bestS1Num}</div>
-            </div>
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Best Sector 2</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:1rem; font-weight:800; color:var(--text-secondary); margin-top:4px;">${bestS2 < Infinity ? `${bestS2.toFixed(3)}s` : '—'}</div>
-              <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Lap ${bestS2Num}</div>
-            </div>
-            <div style="padding: 10px 14px; background:rgba(255,255,255,0.01); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
-              <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; letter-spacing:0.03em;">Best Sector 3</div>
-              <div style="font-family:'JetBrains Mono',monospace; font-size:1rem; font-weight:800; color:var(--text-secondary); margin-top:4px;">${bestS3 < Infinity ? `${bestS3.toFixed(3)}s` : '—'}</div>
-              <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Lap ${bestS3Num}</div>
-            </div>
+            <span style="font-size:0.68rem;color:var(--text-muted);">🟣 Session Best · 🟢 Personal Best</span>
+          </div>
+          <div class="pm-table-wrap custom-scrollbar" style="max-height:380px;">
+            <table class="pm-data-table">
+              <thead>
+                <tr>
+                  <th>Lap</th>
+                  <th>Lap Time</th>
+                  <th>S1</th>
+                  <th>S2</th>
+                  <th>S3</th>
+                  ${hasSpeedTrap ? '<th style="text-align:right;" title="Speed Trap (km/h)">km/h</th>' : ''}
+                  <th style="text-align:center;">Tyre</th>
+                </tr>
+              </thead>
+              <tbody id="rd-modal-laps-tbody">
+                ${lapRowsHtml || `<tr><td colspan="${hasSpeedTrap ? 7 : 6}" style="text-align:center;color:var(--text-muted);padding:16px;">No laps recorded</td></tr>`}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        ${qualiSegmentsSectionHtml}
-
-        ${allLapsAccordionHtml}
-
-        <!-- Tyre Stints Timeline -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-circle-notch" style="color: var(--text-secondary); width: 14px;"></i> Tyre Stints Timeline
+        <!-- TAB 4: Battles & FIA Stewards -->
+        <div id="rd-tab-events" class="dm-tab-content">
+          ${battlesSectionHtml}
+          <div>
+            <div class="dm-section-title" style="margin-top:0;"><i class="fa-solid fa-gavel" style="color:#c084fc;margin-right:6px;"></i>FIA Race Control & Stewards (${driverIncidents.length})</div>
+            ${incidentsHtml}
           </div>
-          ${stintsHtml}
         </div>
-
-        ${pitsSectionHtml}
-
-        <!-- Stewarding & Personal Incidents Feed -->
-        <div>
-          <div style="font-family:'Outfit',sans-serif; font-size:0.9rem; font-weight:800; color:var(--text-primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-triangle-exclamation" style="color: var(--text-secondary); width: 14px;"></i> Stewards Decisions & Incidents
-          </div>
-          ${incidentsHtml}
-        </div>
-
       </div>
     `;
 
-    // Setup Accordion Toggle Listener
-    const lapsToggle = document.getElementById('dm-laps-toggle');
-    const lapsPanel = document.getElementById('dm-laps-panel');
-    const lapsChevron = document.getElementById('dm-laps-chevron');
-    
-    if (lapsToggle && lapsPanel) {
-      lapsToggle.addEventListener('click', () => {
-        const isCollapsed = lapsPanel.style.maxHeight === '0px' || !lapsPanel.style.maxHeight || lapsPanel.style.maxHeight === '0';
-        if (isCollapsed) {
-          lapsPanel.style.maxHeight = lapsPanel.scrollHeight + 'px';
-          lapsPanel.style.border = '1px solid var(--border-subtle)';
-          lapsChevron.style.transform = 'rotate(180deg)';
-          lapsToggle.style.background = 'rgba(255, 255, 255, 0.05)';
-          lapsToggle.style.borderColor = 'var(--text-muted)';
-        } else {
-          lapsPanel.style.maxHeight = '0px';
-          lapsPanel.style.border = '1px solid transparent';
-          lapsChevron.style.transform = 'rotate(0deg)';
-          lapsToggle.style.background = 'rgba(255, 255, 255, 0.02)';
-          lapsToggle.style.borderColor = 'var(--border-subtle)';
-        }
-      });
-    }
+    // ── Event Bindings ──
+    document.getElementById('dm-close')?.addEventListener('click', closeModal);
+    document.getElementById('rd-prev-drv')?.addEventListener('click', () => {
+      if (prevEntry) showRaceDriverDetail(prevEntry.driver_number);
+    });
+    document.getElementById('rd-next-drv')?.addEventListener('click', () => {
+      if (nextEntry) showRaceDriverDetail(nextEntry.driver_number);
+    });
 
-    // Rebind closing event & favorite pin button
-    document.getElementById('dm-close').addEventListener('click', closeModal);
     const rdFavBtn = document.getElementById('rd-modal-fav-btn');
     if (rdFavBtn && d.name_acronym) {
       rdFavBtn.addEventListener('click', () => {
@@ -3802,6 +4260,65 @@ export async function showRaceDriverDetail(driverNumber) {
         rdFavBtn.innerHTML = `<i class="fa-${nowPinned ? 'solid' : 'regular'} fa-star"></i><span>${nowPinned ? 'Pinned' : 'Pin Driver'}</span>`;
       });
     }
+
+    // Draw Clean Pace Trace Canvas
+    const renderDriverPaceChart = () => {
+      if (cleanLapObjs.length < 3) return;
+      const canvas = document.getElementById('rd-driver-pace-canvas');
+      if (!canvas) return;
+      drawLineChart(
+        canvas,
+        [{
+          label: d.name_acronym,
+          data: cleanLapObjs.map(c => c.dur),
+          color: teamColor
+        }],
+        {
+          padTop: 14,
+          padRight: 14,
+          padBottom: 26,
+          padLeft: 46,
+          lineWidth: 2,
+          showDots: cleanLapObjs.length <= 32,
+          yDecimals: 1,
+          xLabels: cleanLapObjs.map(c => `L${c.lap}`)
+        }
+      );
+    };
+
+    // Segmented Tab Switching
+    const tabs = modal.querySelectorAll('.dm-tab');
+    const panels = modal.querySelectorAll('.dm-tab-content');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.getAttribute('data-tab');
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        panels.forEach(p => p.classList.toggle('active', p.id === `rd-tab-${target}`));
+        if (target === 'pace') {
+          requestAnimationFrame(renderDriverPaceChart);
+        }
+      });
+    });
+
+    // Lap Table Filter Pills
+    const filterContainer = document.getElementById('rd-lap-filters');
+    const lapsTbody = document.getElementById('rd-modal-laps-tbody');
+    if (filterContainer && lapsTbody) {
+      filterContainer.querySelectorAll('.pm-filter-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+          const mode = pill.getAttribute('data-filter');
+          filterContainer.querySelectorAll('.pm-filter-pill').forEach(p => p.classList.toggle('active', p === pill));
+          lapsTbody.querySelectorAll('tr[data-lap-cat]').forEach(tr => {
+            const cat = tr.getAttribute('data-lap-cat');
+            const show = mode === 'all' || (mode === 'clean' && cat === 'clean') || (mode === 'pit' && cat === 'pit');
+            tr.style.display = show ? '' : 'none';
+          });
+        });
+      });
+    }
+
+    modal.scrollTop = 0;
+    requestAnimationFrame(renderDriverPaceChart);
 
   } catch (error) {
     console.error('Failed to load driver race stats deep dive:', error);
@@ -3813,7 +4330,7 @@ export async function showRaceDriverDetail(driverNumber) {
         <p style="font-size: 0.8rem; color: var(--text-muted);">Failed to compile detailed telemetry. Please check your network connection.</p>
       </div>
     `;
-    document.getElementById('dm-close').addEventListener('click', closeModal);
+    document.getElementById('dm-close')?.addEventListener('click', closeModal);
   }
 }
 
@@ -3893,7 +4410,7 @@ async function switchRaceDetailSession(sessionType) {
     if (raceDataCache && raceDataCache.sessionKey === session.session_key) {
       raceDataCache.laps = laps;
       raceDataCache.pits = pits;
-      raceDataCache.overtakes = overtakes;
+      raceDataCache.overtakes = enrichOvertakesWithLaps(overtakes, laps);
       raceDataCache.intervals = intervals;
       
       // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
@@ -3914,6 +4431,8 @@ async function switchRaceDetailSession(sessionType) {
       
       if (currentTab === 'results') {
         renderResults(content);
+      } else if (currentTab === 'overtakes') {
+        renderOvertakes(content);
       }
     }
   } catch (err) {

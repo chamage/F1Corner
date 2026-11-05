@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v140'; // v139: Favorites Pinning & Enhanced Race Telemetry Suite
+const CACHE_NAME = 'pitcorner-shell-v142'; // v142: v3.2 Popup Modals Telemetry Overhaul
 const STATIC_ASSETS = [
   './',
   './index.html',

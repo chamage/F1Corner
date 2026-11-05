@@ -443,10 +443,36 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v3.2.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v3.2.0 <span class="new-badge" style="background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.35); color: #ffd700;">Current</span></div>
+              <div class="changelog-date">November 5, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Driver Profile Modal Overhaul: Redesigned into a high-density segmented telemetry hub (Overview, Qualifying, Sprint, H2H &amp; Badges, and full Season Race Log) with Previous/Next driver arrow navigation, Recent 5-GP Form pills, Finishing Distribution &amp; Streaks, Pole/Front-Row/Racecraft stats, and one-click Constructor &amp; Teammate profile jumping.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Constructor Profile Modal Overhaul: Added Previous/Next constructor switching, Last 5-Weekend Points strip, 1-2 Finishes, Team Poles &amp; Fastest Laps KPIs, stacked Driver Points Share bar, Weekend Points Skyline chart, interactive Driver Roster cards, and a full Round-by-Round Constructor Weekend Matrix.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag improved">Improved</span>
+                <span>Race Driver Deep-Dive Modal Overhaul: Upgraded with Previous/Next session driver navigation, accurate Qualifying-derived Starting Grid deltas, Points &amp; Gap KPIs, Session-Purple vs Personal-Best sector badges, Theoretical Optimal Lap &amp; Clean Consistency (&plusmn;&sigma;), Clean Lap Pace Trace canvas chart, Stint Pace &amp; Degradation breakdown, filterable Lap Telemetry table, and On-Track Overtakes Battle feed.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag fixed">Fixed</span>
+                <span>Overtake Lap Number Interpolation: Correlated OpenF1 overtake timestamps against forward/backward interpolated lap timelines so every pass and Peak Action Lap displays accurate lap numbers.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v3.1.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v3.1.0 <span class="new-badge" style="background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.35); color: #ffd700;">Current</span></div>
+              <div class="changelog-version">v3.1.0</div>
               <div class="changelog-date">November 4, 2026</div>
             </div>
             <ul class="changelog-list">
@@ -460,7 +486,7 @@ export function showChangelogModal() {
               </li>
               <li class="changelog-item">
                 <span class="changelog-tag improved">Improved</span>
-                <span>Full Race Detail Telemetry Overhaul: Upgraded Results (Starting Grid +/- deltas, Biggest Mover badges, Qualifying Q1/Q2/Q3 purple segment highlights, knockout cutoffs &amp; 107% rule), Lap Times (Clean Pace outlier filter, quick-pick presets &amp; Consistency σ ranking table), Positions (Laps Led distribution strip &amp; Biggest Climber/Dropper KPIs), Overtakes (Overtake King, Net Balance chips &amp; zone filters), and Race Control Incidents (instant search &amp; category filter pills).</span>
+                <span>Full Race Detail Telemetry Overhaul: Upgraded Results (Starting Grid +/- deltas, Biggest Mover badges, Qualifying Q1/Q2/Q3 purple segment highlights, knockout cutoffs &amp; 107% rule), Lap Times (Clean Pace outlier filter, quick-pick presets &amp; Consistency &plusmn; ranking table), Positions (Laps Led distribution strip &amp; Biggest Climber/Dropper KPIs), Overtakes (Overtake King, Net Balance chips &amp; zone filters), and Race Control Incidents (instant search &amp; category filter pills).</span>
               </li>
             </ul>
           </div>
