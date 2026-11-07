@@ -585,9 +585,11 @@ async function loadHistoricalSeason(year) {
           status = 'DNF';
         }
 
+        const parsedGrid = res.grid !== undefined && res.grid !== null ? parseInt(res.grid, 10) : null;
         results.push({
           driver_number: dNum,
           position: position,
+          grid: !isNaN(parsedGrid) ? parsedGrid : null,
           status: status,
           points: parseFloat(res.points || 0)
         });
@@ -627,10 +629,18 @@ async function loadHistoricalSeason(year) {
       r.QualifyingResults.forEach((res) => {
         const dNum = parseInt(res.number);
         const position = parseInt(res.position);
+        const q1Sec = res.Q1 ? parseTimeStringToSeconds(res.Q1) : null;
+        const q2Sec = res.Q2 ? parseTimeStringToSeconds(res.Q2) : null;
+        const q3Sec = res.Q3 ? parseTimeStringToSeconds(res.Q3) : null;
         results.push({
           driver_number: dNum,
           position: position,
-          status: 'FINISHED'
+          status: 'FINISHED',
+          q1: q1Sec,
+          q2: q2Sec,
+          q3: q3Sec,
+          bestLap: q3Sec || q2Sec || q1Sec || null,
+          hasOfficialSegments: true
         });
         
         drivers.push(mapDriver(res.Driver, res.Constructor, dNum));
@@ -742,24 +752,105 @@ const inFlight = new Map();
 let minuteRequestCount = 0;
 let minuteResetTime = Date.now() + 60000;
 
+// ── Live Session Lockout Circuit Breaker ──
+const LOCKOUT_COOLDOWN_MS = 3 * 60 * 1000; // 3 min cooldown before re-probing locked OpenF1 API
+let apiLockoutUntil = 0;
+let apiLockoutReason = '';
+let activeLiveSessionInfo = null;
+
+export function isApiLocked() {
+  return Date.now() < apiLockoutUntil;
+}
+
+export function getApiLockoutState() {
+  return {
+    locked: isApiLocked(),
+    until: apiLockoutUntil,
+    reason: apiLockoutReason,
+    liveSession: activeLiveSessionInfo
+  };
+}
+
+export function resetApiLockout() {
+  apiLockoutUntil = 0;
+  apiLockoutReason = '';
+  activeLiveSessionInfo = null;
+}
+
+export function registerKnownSessionsForLockout(sessions) {
+  if (!Array.isArray(sessions) || sessions.length === 0) return;
+  const now = Date.now();
+  const preBufferMs = 5 * 60 * 1000;
+  const postBufferMs = 15 * 60 * 1000;
+  for (const s of sessions) {
+    if (!s || s.is_cancelled || s.is_fallback || !s.date_start || !s.date_end) continue;
+    const startMs = new Date(s.date_start).getTime();
+    const endMs = new Date(s.date_end).getTime();
+    if (!isNaN(startMs) && !isNaN(endMs) && now >= (startMs - preBufferMs) && now <= (endMs + postBufferMs)) {
+      activeLiveSessionInfo = {
+        session_key: s.session_key,
+        session_name: s.session_name || 'Session',
+        circuit_short_name: s.circuit_short_name || s.location || '',
+        country_name: s.country_name || '',
+        date_start: s.date_start,
+        date_end: s.date_end
+      };
+      return;
+    }
+  }
+}
+
+function triggerApiLockout(reason = 'Live F1 session in progress — OpenF1 API temporarily locked') {
+  const wasLocked = isApiLocked();
+  apiLockoutUntil = Date.now() + LOCKOUT_COOLDOWN_MS;
+  apiLockoutReason = reason;
+  if (!wasLocked) {
+    console.warn(`[API] 🔒 Circuit breaker activated (${reason}). Serving cached data without blocking.`);
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('pitcorner:api-lockout', { detail: getApiLockoutState() }));
+      } catch { /* ignore */ }
+    }
+  }
+}
+
+function hasUsableCachedData(data) {
+  if (data === null || data === undefined) return false;
+  if (Array.isArray(data)) return data.length > 0;
+  if (typeof data === 'object') return Object.keys(data).length > 0;
+  return true;
+}
+
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
 // ── IndexedDB helpers ──
 
-async function lsGet(url) {
+/**
+ * Non-destructive cache lookup: returns { data, isExpired, time, ttl }.
+ * Never deletes expired entries upfront so stale data can be served if the API is locked or offline.
+ */
+async function lsGetEntry(url) {
   try {
     const entry = await dbGet('api_cache', url);
-    if (!entry || !entry.data) return null;
-    if (Date.now() - entry.time > entry.ttl) {
-      await dbDelete('api_cache', url);
-      return null;
-    }
-    return entry.data;
+    if (!entry || entry.data === undefined || entry.data === null) return null;
+    const isExpired = (Date.now() - (entry.time || 0)) > (entry.ttl || TTL_FRESH);
+    return {
+      data: entry.data,
+      isExpired,
+      time: entry.time,
+      ttl: entry.ttl
+    };
   } catch {
     return null;
   }
+}
+
+async function lsGet(url) {
+  const entry = await lsGetEntry(url);
+  if (!entry || entry.isExpired) return null;
+  return entry.data;
 }
 
 async function lsSet(url, data, ttl) {
@@ -791,8 +882,8 @@ function getTTL(url) {
 
   // Past race laps/positions/stints/pit/overtakes (session_key is a number)
   // These are immutable once the session is over, EXCEPT if they ended less than 24 hours ago
-  if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather|session_result)\?/.test(url) &&
-      /session_key=(\d+)/.test(url)) {
+  if (/\/(laps|position|stints|pit|overtakes|intervals|race_control|weather|session_result|starting_grid)\?/.test(url) &&
+      /(session_key|meeting_key)=(\d+)/.test(url)) {
     const keyMatch = url.match(/session_key=(\d+)/);
     if (keyMatch) {
       const sessionKey = keyMatch[1];
@@ -857,16 +948,29 @@ async function fetchAPI(endpoint, params = {}) {
   });
 
   const cacheKey = url.toString();
+  const isOpenF1 = cacheKey.includes('api.openf1.org');
 
   // Tier 1: in-memory cache (instant)
   const memCached = memCache.get(cacheKey);
   if (memCached) return memCached;
 
-  // Tier 2: IndexedDB cache (fast, survives reload)
-  const lsCached = await lsGet(cacheKey);
-  if (lsCached) {
-    memCache.set(cacheKey, lsCached); // promote to memory
-    return lsCached;
+  // Tier 2: IndexedDB cache (non-destructive lookup: preserves expired entries as stale fallback)
+  const cacheEntry = await lsGetEntry(cacheKey);
+  if (cacheEntry && !cacheEntry.isExpired) {
+    memCache.set(cacheKey, cacheEntry.data); // promote to memory
+    return cacheEntry.data;
+  }
+
+  let staleData = (cacheEntry && hasUsableCachedData(cacheEntry.data)) ? cacheEntry.data : null;
+
+  // Fast-path circuit breaker: if OpenF1 is currently locked during a live session,
+  // serve stale cached data immediately or fast-resolve [] without waiting in requestQueue!
+  if (isOpenF1 && isApiLocked()) {
+    if (staleData) {
+      memCache.set(cacheKey, staleData);
+      return staleData;
+    }
+    return [];
   }
 
   // Tier 3: in-flight deduplication
@@ -882,30 +986,84 @@ async function fetchAPI(endpoint, params = {}) {
         // Re-check caches (another queued request may have filled them)
         const memNow = memCache.get(cacheKey);
         if (memNow) { resolve(memNow); inFlight.delete(cacheKey); return; }
-        const lsNow = await lsGet(cacheKey);
-        if (lsNow) {
-          memCache.set(cacheKey, lsNow);
-          resolve(lsNow);
+        const entryNow = await lsGetEntry(cacheKey);
+        if (entryNow && !entryNow.isExpired) {
+          memCache.set(cacheKey, entryNow.data);
+          resolve(entryNow.data);
+          inFlight.delete(cacheKey);
+          return;
+        }
+        if (!staleData && entryNow && hasUsableCachedData(entryNow.data)) {
+          staleData = entryNow.data;
+        }
+
+        // Re-check circuit breaker inside queue in case an earlier queued request tripped it
+        if (isOpenF1 && isApiLocked()) {
+          if (staleData) {
+            memCache.set(cacheKey, staleData);
+            resolve(staleData);
+          } else {
+            resolve([]);
+          }
           inFlight.delete(cacheKey);
           return;
         }
 
         await waitForMinuteSlot();
 
+        // If a live session is known to be on track right now, use a shorter timeout & fewer retries
+        // so locked/hanging endpoints trip the circuit breaker quickly instead of stalling for 60s.
+        const maxAttempts = (isOpenF1 && activeLiveSessionInfo) ? 1 : MAX_RETRIES;
+        const timeoutMs = (isOpenF1 && activeLiveSessionInfo) ? 6500 : 20000;
+
         let lastError = null;
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
           try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20000);
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
             const response = await fetch(url.toString(), { signal: controller.signal });
             clearTimeout(timeout);
 
+            // OpenF1 returns HTTP 401 or 403 when the API is locked during a live F1 session
+            if (isOpenF1 && (response.status === 401 || response.status === 403)) {
+              let lockDetail = `OpenF1 live session lock (HTTP ${response.status})`;
+              try {
+                const errJson = await response.json();
+                if (errJson?.detail || errJson?.message) {
+                  lockDetail = String(errJson.detail || errJson.message);
+                }
+              } catch { /* ignore body parse error */ }
+              triggerApiLockout(lockDetail);
+              if (staleData) {
+                memCache.set(cacheKey, staleData);
+                resolve(staleData);
+              } else {
+                resolve([]);
+              }
+              inFlight.delete(cacheKey);
+              return;
+            }
+
             if (response.status === 429) {
+              // If we already have stale cached data during a live session or heavy rate limit,
+              // after 1 retry or during an active live session serve staleData rather than hanging.
+              if (isOpenF1 && activeLiveSessionInfo) {
+                triggerApiLockout('OpenF1 rate-limited/locked during live session (HTTP 429)');
+                if (staleData) {
+                  memCache.set(cacheKey, staleData);
+                  resolve(staleData);
+                } else {
+                  resolve([]);
+                }
+                inFlight.delete(cacheKey);
+                return;
+              }
+
               const retryAfter = response.headers.get('Retry-After');
               const waitMs = retryAfter
                 ? (parseInt(retryAfter) * 1000 || 5000)
                 : RETRY_BASE_DELAY * Math.pow(2, attempt);
-              console.warn(`[API] 429 on ${endpoint}, retry in ${waitMs}ms (${attempt + 1}/${MAX_RETRIES})`);
+              console.warn(`[API] 429 on ${endpoint}, retry in ${waitMs}ms (${attempt + 1}/${maxAttempts})`);
               
               // Force the entire queue to cool down
               minuteRequestCount = 28;
@@ -916,6 +1074,12 @@ async function fetchAPI(endpoint, params = {}) {
             }
 
             if (response.status === 404) {
+              if (staleData) {
+                memCache.set(cacheKey, staleData);
+                resolve(staleData);
+                inFlight.delete(cacheKey);
+                return;
+              }
               const emptyData = [];
               memCache.set(cacheKey, emptyData);
               lsSet(cacheKey, emptyData, TTL_FRESH); // short TTL for 404s
@@ -929,6 +1093,32 @@ async function fetchAPI(endpoint, params = {}) {
             }
 
             const data = await response.json();
+
+            // OpenF1 endpoints always return JSON Arrays. If OpenF1 returns an error/lock object
+            // (e.g. { detail: "Access restricted during live session" }), trigger lockout & fallback!
+            if (isOpenF1 && !Array.isArray(data)) {
+              const lockMsg = data?.detail || data?.message || data?.error || 'OpenF1 live session lock response';
+              triggerApiLockout(String(lockMsg));
+              if (staleData) {
+                memCache.set(cacheKey, staleData);
+                resolve(staleData);
+              } else {
+                resolve([]);
+              }
+              inFlight.delete(cacheKey);
+              return;
+            }
+
+            // Never overwrite non-empty cached data with an unexpected empty [] response
+            if (Array.isArray(data) && data.length === 0 && staleData) {
+              console.warn(`[API] Preserving non-empty cached data for ${endpoint} after empty [] response`);
+              memCache.set(cacheKey, staleData);
+              resolve(staleData);
+              inFlight.delete(cacheKey);
+              await delay(REQUEST_DELAY);
+              return;
+            }
+
             let ttl = getTTL(cacheKey);
             // If the data is empty and we expected records (e.g. race results, stints, laps),
             // do NOT cache it immutably! Instead use a short TTL so it will be retried on next load.
@@ -954,14 +1144,26 @@ async function fetchAPI(endpoint, params = {}) {
             return;
           } catch (err) {
             lastError = err;
-            console.warn(`[API] ${err.name === 'AbortError' ? 'Timeout' : err.message} on ${endpoint} (${attempt + 1}/${MAX_RETRIES})`);
-            if (attempt < MAX_RETRIES - 1) {
+            console.warn(`[API] ${err.name === 'AbortError' ? 'Timeout' : err.message} on ${endpoint} (${attempt + 1}/${maxAttempts})`);
+            if (attempt < maxAttempts - 1) {
               await delay(RETRY_BASE_DELAY * Math.pow(2, attempt));
             }
           }
         }
 
-        console.error(`[API] All ${MAX_RETRIES} attempts failed: ${endpoint}`, lastError?.message);
+        if (isOpenF1 && activeLiveSessionInfo) {
+          triggerApiLockout(`OpenF1 unreachable during live ${activeLiveSessionInfo.session_name}`);
+        }
+
+        if (staleData) {
+          console.warn(`[API] ♻️ Serving preserved stale cache for ${endpoint} after network failure (${lastError?.message})`);
+          memCache.set(cacheKey, staleData);
+          resolve(staleData);
+          inFlight.delete(cacheKey);
+          return;
+        }
+
+        console.error(`[API] All ${maxAttempts} attempts failed: ${endpoint}`, lastError?.message);
         resolve([]);
         inFlight.delete(cacheKey);
         await delay(REQUEST_DELAY);
@@ -974,12 +1176,112 @@ async function fetchAPI(endpoint, params = {}) {
 
 // ── Endpoint Functions ──
 
+async function synthesizeMeetingsFromCompiledSeason(year) {
+  try {
+    const compiled = await dbGet('compiled_races', `season_compiled_${year}`);
+    if (!compiled) return [];
+    const sourceSessions = [
+      ...(compiled.totalRaceSessions || []),
+      ...(compiled.races || []),
+      ...(compiled.qualifying || [])
+    ];
+    if (sourceSessions.length === 0) return [];
+    const byMeeting = new Map();
+    for (const s of sourceSessions) {
+      if (!s || !s.meeting_key) continue;
+      const mk = s.meeting_key;
+      const existing = byMeeting.get(mk);
+      const startStr = s.date_start || s.date_end;
+      const endStr = s.date_end || s.date_start;
+      if (!existing) {
+        const circuit = s.circuit_short_name || s.location || 'Formula 1';
+        const meetingName = s.meeting_name || (circuit.includes('Grand Prix') ? circuit : `${circuit} Grand Prix`);
+        byMeeting.set(mk, {
+          meeting_key: mk,
+          meeting_name: meetingName,
+          circuit_short_name: circuit,
+          location: s.location || circuit,
+          country_name: s.country_name || circuit,
+          country_code: s.country_code || '',
+          country_flag: s.country_flag || '',
+          circuit_image: s.circuit_image || '',
+          gmt_offset: s.gmt_offset || '00:00:00',
+          date_start: startStr,
+          date_end: endStr,
+          year: Number(year),
+          is_synthesized: true
+        });
+      } else {
+        if (startStr && (!existing.date_start || new Date(startStr) < new Date(existing.date_start))) {
+          existing.date_start = startStr;
+        }
+        if (endStr && (!existing.date_end || new Date(endStr) > new Date(existing.date_end))) {
+          existing.date_end = endStr;
+        }
+      }
+    }
+    return Array.from(byMeeting.values()).sort((a, b) => new Date(a.date_start || a.date_end) - new Date(b.date_start || b.date_end));
+  } catch {
+    return [];
+  }
+}
+
+async function synthesizeSessionsFromCompiledSeason(params = {}) {
+  try {
+    const targetYear = params.year ? parseInt(params.year) : null;
+    const candidateYears = targetYear ? [targetYear] : [new Date().getFullYear(), new Date().getFullYear() - 1];
+    for (const y of candidateYears) {
+      const compiled = await dbGet('compiled_races', `season_compiled_${y}`);
+      if (!compiled) continue;
+      const combined = [];
+      const seenKeys = new Set();
+      const pushUnique = (s, defaultType) => {
+        if (!s || !s.session_key || seenKeys.has(String(s.session_key))) return;
+        seenKeys.add(String(s.session_key));
+        combined.push({
+          ...s,
+          session_name: s.session_name || defaultType || 'Race',
+          session_type: s.session_type || (defaultType === 'Qualifying' ? 'Qualifying' : 'Race'),
+          date_start: s.date_start || s.date_end,
+          date_end: s.date_end || s.date_start,
+          year: Number(y)
+        });
+      };
+      for (const s of (compiled.totalRaceSessions || [])) pushUnique(s, s.session_name || 'Race');
+      for (const r of (compiled.races || [])) pushUnique(r, r.session_name || 'Race');
+      for (const q of (compiled.qualifying || [])) pushUnique(q, q.session_name || 'Qualifying');
+
+      let filtered = combined;
+      if (params.meeting_key !== undefined && params.meeting_key !== null) {
+        filtered = filtered.filter(s => String(s.meeting_key) === String(params.meeting_key));
+      }
+      if (params.session_name) {
+        filtered = filtered.filter(s => s.session_name === params.session_name);
+      }
+      if (params.session_type === 'Qualifying') {
+        filtered = filtered.filter(s =>
+          s.session_type === 'Qualifying' ||
+          (s.session_name && (s.session_name.includes('Qualifying') || s.session_name.includes('Shootout')))
+        );
+      }
+      if (filtered.length > 0) return filtered;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getMeetings(year) {
   if (parseInt(year) <= 2022) {
     const data = await loadHistoricalSeason(parseInt(year));
     return data.meetings;
   }
-  return fetchAPI('/meetings', { year });
+  const meetings = await fetchAPI('/meetings', { year });
+  if (Array.isArray(meetings) && meetings.length > 0) {
+    return meetings;
+  }
+  return synthesizeMeetingsFromCompiledSeason(year);
 }
 
 export async function getSessions(params = {}) {
@@ -1001,8 +1303,16 @@ export async function getSessions(params = {}) {
     sessionsData = await fetchAPI('/sessions', params);
   }
 
-  // Populate session end times
+  if ((!Array.isArray(sessionsData) || sessionsData.length === 0) && (!year || year > 2022)) {
+    const fallbackSessions = await synthesizeSessionsFromCompiledSeason(params);
+    if (fallbackSessions.length > 0) {
+      sessionsData = fallbackSessions;
+    }
+  }
+
+  // Populate session end times & check if any session is currently live on track
   if (Array.isArray(sessionsData)) {
+    registerKnownSessionsForLockout(sessionsData);
     for (const s of sessionsData) {
       if (s.session_key && s.date_end) {
         sessionEndTimes.set(s.session_key.toString(), s.date_end);
@@ -1108,6 +1418,195 @@ export async function getWeather(params = {}) {
 
 export async function getSessionResult(params = {}) {
   return fetchAPI('/session_result', params);
+}
+
+/**
+ * Fetch the official post-penalty Starting Grid for a Race or Sprint session.
+ * Uses a 3-tier pipeline:
+ *  1) Historical seasons (<=2022): Official FIA Ergast 'grid' attribute from results.json / sprint.json
+ *  2) Modern seasons (2023+): OpenF1 '/starting_grid' endpoint (by session_key, quali_session_key, or meeting_key)
+ *  3) Jolpi Ergast official FIA 'grid' fallback/enrichment (captures Pit Lane starts where grid === 0 or missing OpenF1 grid records)
+ */
+export async function getStartingGrid(params = {}) {
+  const { session_key, meeting_key, quali_session_key, session_name = 'Race', year, date_end, drivers = [] } = params;
+
+  // 1. Historical seasons (1950-2022)
+  if (session_key && typeof session_key === 'string' && session_key.includes('_')) {
+    const parts = session_key.split('_');
+    const yNum = parseInt(parts[0], 10);
+    const roundNum = parseInt(parts[1], 10);
+    const isSprint = session_key.endsWith('_sprint') || session_name === 'Sprint';
+    if (yNum <= 2022) {
+      const data = await loadHistoricalSeason(yNum);
+      const targetRaceKey = isSprint ? `${yNum}_${roundNum}_sprint` : `${yNum}_${roundNum}_race`;
+      const qualiKey = `${yNum}_${roundNum}_quali`;
+      const raceRes = data.resultsBySession.get(targetRaceKey) || [];
+      const qualiRes = data.resultsBySession.get(qualiKey) || [];
+      const qualiMap = new Map(qualiRes.map(q => [q.driver_number, q]));
+
+      // If cached historical_seasons didn't have .grid yet, read from cached Jolpi results
+      let gridByDriver = new Map();
+      const hasCachedGrid = raceRes.some(r => typeof r.grid === 'number');
+      if (hasCachedGrid) {
+        for (const r of raceRes) {
+          if (typeof r.grid === 'number') gridByDriver.set(r.driver_number, r.grid);
+        }
+      } else {
+        try {
+          const endpoint = isSprint
+            ? `https://api.jolpi.ca/ergast/f1/${yNum}/sprint.json`
+            : `https://api.jolpi.ca/ergast/f1/${yNum}/results.json`;
+          const allRounds = await fetchHistoricalPaginated(endpoint);
+          const roundObj = allRounds.find(r => parseInt(r.round, 10) === roundNum);
+          const list = isSprint ? (roundObj?.SprintResults || []) : (roundObj?.Results || []);
+          for (const item of list) {
+            const dNum = parseInt(item.number, 10);
+            const gVal = parseInt(item.grid, 10);
+            if (!isNaN(dNum) && !isNaN(gVal)) {
+              gridByDriver.set(dNum, gVal);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (gridByDriver.size > 0) {
+        const out = [];
+        for (const [dNum, gPos] of gridByDriver.entries()) {
+          const qEntry = qualiMap.get(dNum);
+          out.push({
+            driver_number: dNum,
+            position: gPos > 0 ? gPos : null,
+            is_pit_lane: gPos === 0,
+            lap_duration: qEntry?.bestLap || qEntry?.q3 || qEntry?.q2 || qEntry?.q1 || null,
+            source: 'fia_ergast'
+          });
+        }
+        out.sort((a, b) => {
+          if (a.position === null && b.position !== null) return 1;
+          if (a.position !== null && b.position === null) return -1;
+          return (a.position || 99) - (b.position || 99);
+        });
+        return out;
+      }
+      return [];
+    }
+  }
+
+  // 2. Modern OpenF1 seasons (2023+)
+  const isSprint = session_name === 'Sprint' || session_name === 'Sprint Qualifying' || session_name === 'Sprint Shootout';
+  let openF1Grid = [];
+
+  if (session_key && !String(session_key).startsWith('upcoming_')) {
+    openF1Grid = await fetchAPI('/starting_grid', { session_key }).catch(() => []);
+  }
+  if ((!Array.isArray(openF1Grid) || openF1Grid.length === 0) && quali_session_key) {
+    openF1Grid = await fetchAPI('/starting_grid', { session_key: quali_session_key }).catch(() => []);
+  }
+  if ((!Array.isArray(openF1Grid) || openF1Grid.length === 0) && meeting_key) {
+    const meetingGrid = await fetchAPI('/starting_grid', { meeting_key }).catch(() => []);
+    if (Array.isArray(meetingGrid) && meetingGrid.length > 0) {
+      const bySk = new Map();
+      for (const row of meetingGrid) {
+        if (!row || row.session_key == null) continue;
+        if (!bySk.has(row.session_key)) bySk.set(row.session_key, []);
+        bySk.get(row.session_key).push(row);
+      }
+      if (session_key && bySk.has(Number(session_key))) {
+        openF1Grid = bySk.get(Number(session_key));
+      } else if (quali_session_key && bySk.has(Number(quali_session_key))) {
+        openF1Grid = bySk.get(Number(quali_session_key));
+      } else {
+        const sortedKeys = Array.from(bySk.keys()).sort((a, b) => Number(a) - Number(b));
+        if (sortedKeys.length > 1) {
+          openF1Grid = isSprint ? bySk.get(sortedKeys[0]) : bySk.get(sortedKeys[sortedKeys.length - 1]);
+        } else if (sortedKeys.length === 1 && !isSprint) {
+          openF1Grid = bySk.get(sortedKeys[0]);
+        }
+      }
+    }
+  }
+
+  // Normalize OpenF1 /starting_grid records
+  const normalizedMap = new Map();
+  if (Array.isArray(openF1Grid) && openF1Grid.length > 0) {
+    for (const item of openF1Grid) {
+      if (!item || item.driver_number == null) continue;
+      const dn = Number(item.driver_number);
+      const pos = item.position != null ? Number(item.position) : null;
+      normalizedMap.set(dn, {
+        driver_number: dn,
+        position: (pos && pos > 0) ? pos : null,
+        is_pit_lane: pos === 0,
+        lap_duration: item.lap_duration || null,
+        source: 'openf1'
+      });
+    }
+  }
+
+  // 3. Jolpi Ergast official FIA grid fallback & Pit-Lane Starter enrichment for 2023+
+  if ((normalizedMap.size === 0 || normalizedMap.size < 20) && year && Number(year) >= 2023 && date_end) {
+    try {
+      const sessionTs = new Date(date_end).getTime();
+      if (!isNaN(sessionTs)) {
+        const schedData = await fetchAPI(`https://api.jolpi.ca/ergast/f1/${year}.json`, { limit: 100 });
+        const races = schedData?.MRData?.RaceTable?.Races || [];
+        let bestRace = null;
+        let bestDiff = Infinity;
+        for (const r of races) {
+          if (!r.date) continue;
+          const diff = Math.abs(new Date(`${r.date}T12:00:00Z`).getTime() - sessionTs);
+          if (diff <= 6 * 24 * 60 * 60 * 1000 && diff < bestDiff) {
+            bestDiff = diff;
+            bestRace = r;
+          }
+        }
+        if (bestRace && bestRace.round) {
+          const endpoint = isSprint
+            ? `https://api.jolpi.ca/ergast/f1/${year}/${bestRace.round}/sprint.json`
+            : `https://api.jolpi.ca/ergast/f1/${year}/${bestRace.round}/results.json`;
+          const resJson = await fetchAPI(endpoint, { limit: 100 });
+          const rawList = isSprint
+            ? (resJson?.MRData?.RaceTable?.Races?.[0]?.SprintResults || [])
+            : (resJson?.MRData?.RaceTable?.Races?.[0]?.Results || []);
+
+          const acronymToNum = new Map();
+          for (const d of (drivers || [])) {
+            if (d && d.name_acronym && d.driver_number != null) {
+              acronymToNum.set(String(d.name_acronym).toUpperCase(), Number(d.driver_number));
+            }
+          }
+
+          for (const item of rawList) {
+            const code = item.Driver?.code ? String(item.Driver.code).toUpperCase() : null;
+            const carNum = item.number != null ? Number(item.number) : null;
+            const dn = (code && acronymToNum.has(code)) ? acronymToNum.get(code) : carNum;
+            const gVal = item.grid != null ? parseInt(item.grid, 10) : NaN;
+            if (dn == null || isNaN(gVal)) continue;
+
+            if (!normalizedMap.has(dn)) {
+              normalizedMap.set(dn, {
+                driver_number: dn,
+                position: gVal > 0 ? gVal : null,
+                is_pit_lane: gVal === 0,
+                lap_duration: null,
+                source: normalizedMap.size > 0 ? 'openf1' : 'fia_ergast'
+              });
+            } else if (gVal === 0 && !normalizedMap.get(dn).position) {
+              normalizedMap.get(dn).is_pit_lane = true;
+            }
+          }
+        }
+      }
+    } catch { /* ignore fallback errors */ }
+  }
+
+  const finalGrid = Array.from(normalizedMap.values());
+  finalGrid.sort((a, b) => {
+    if (a.position === null && b.position !== null) return 1;
+    if (a.position !== null && b.position === null) return -1;
+    return (a.position || 99) - (b.position || 99);
+  });
+  return finalGrid;
 }
 
 export async function getRaceSessions(year) {
@@ -1659,11 +2158,34 @@ export async function getFinishingOrderFromLaps(sessionKey) {
 
 export async function getFinishingOrder(sessionKey) {
   if (typeof sessionKey === 'string' && sessionKey.includes('_')) {
-    const [y] = sessionKey.split('_');
-    const yNum = parseInt(y);
+    const parts = sessionKey.split('_');
+    const yNum = parseInt(parts[0], 10);
+    const roundNum = parseInt(parts[1], 10);
     if (yNum <= 2022) {
       const data = await loadHistoricalSeason(yNum);
-      return data.resultsBySession.get(sessionKey) || [];
+      const res = data.resultsBySession.get(sessionKey) || [];
+      // Backfill Q1/Q2/Q3 times if historical_seasons was cached before q1/q2/q3 fields were stored
+      if (sessionKey.endsWith('_quali') && res.length > 0 && res.every(r => r.q1 === undefined && r.bestLap === undefined)) {
+        try {
+          const allQuali = await fetchHistoricalPaginated(`https://api.jolpi.ca/ergast/f1/${yNum}/qualifying.json`);
+          const roundObj = allQuali.find(r => parseInt(r.round, 10) === roundNum);
+          if (roundObj && Array.isArray(roundObj.QualifyingResults)) {
+            const byNum = new Map();
+            for (const qr of roundObj.QualifyingResults) {
+              const dNum = parseInt(qr.number, 10);
+              const q1 = qr.Q1 ? parseTimeStringToSeconds(qr.Q1) : null;
+              const q2 = qr.Q2 ? parseTimeStringToSeconds(qr.Q2) : null;
+              const q3 = qr.Q3 ? parseTimeStringToSeconds(qr.Q3) : null;
+              byNum.set(dNum, { q1, q2, q3, bestLap: q3 || q2 || q1 || null });
+            }
+            for (const item of res) {
+              const times = byNum.get(item.driver_number);
+              if (times) Object.assign(item, times);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      return res;
     }
   }
   try {
@@ -1696,6 +2218,22 @@ export async function getFinishingOrder(sessionKey) {
         position: finalPosition,
         status: status
       };
+      // OpenF1 /session_result for Qualifying includes duration: [q1, q2, q3]
+      if (Array.isArray(r.duration)) {
+        const q1 = typeof r.duration[0] === 'number' && r.duration[0] > 0 ? r.duration[0] : null;
+        const q2 = typeof r.duration[1] === 'number' && r.duration[1] > 0 ? r.duration[1] : null;
+        const q3 = typeof r.duration[2] === 'number' && r.duration[2] > 0 ? r.duration[2] : null;
+        entry.q1 = q1;
+        entry.q2 = q2;
+        entry.q3 = q3;
+        entry.bestLap = q3 || q2 || q1 || null;
+        entry.hasOfficialSegments = true;
+      } else if (typeof r.duration === 'number' && r.duration > 0) {
+        entry.duration = r.duration;
+      }
+      if (typeof r.number_of_laps === 'number' && r.number_of_laps >= 0) {
+        entry.lapCount = r.number_of_laps;
+      }
       if (typeof r.points === 'number') {
         entry.points = r.points;
       } else if (isUnclassified) {
@@ -1724,6 +2262,7 @@ export async function preloadYear(year) {
  * Clear all caches (memory + IndexedDB)
  */
 export async function clearCache() {
+  resetApiLockout();
   memCache.clear();
   jolpiWeekendCache.clear();
   enrichedSessionDriversCache.clear();
@@ -1740,6 +2279,7 @@ export async function clearCache() {
  * Clear cached entries for a single season only
  */
 export async function clearSingleSeasonAPICache(year) {
+  resetApiLockout();
   memCache.clear();
   jolpiWeekendCache.clear();
   enrichedSessionDriversCache.clear();
@@ -1765,6 +2305,7 @@ export async function clearSingleSeasonAPICache(year) {
  * Clear cached entries (IndexedDB + memory) for specific session keys
  */
 export async function clearSessionsAPICache(sessionKeys) {
+  resetApiLockout();
   jolpiWeekendCache.clear();
   for (const sk of sessionKeys) {
     enrichedSessionDriversCache.delete(String(sk));

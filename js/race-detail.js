@@ -3,7 +3,7 @@
 // Lazy-loads heavy charts and feeds to avoid API timeouts
 // =============================================
 
-import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions, clearSessionsAPICache, getCacheStats } from './api.js';
+import { getLaps, getStints, getPits, getOvertakes, getSessionDrivers, getRaceControl, getWeather, getIntervals, getPositions, getMeetingSessions, getStartingGrid, getFinishingOrder, clearSessionsAPICache, getCacheStats, isApiLocked, getApiLockoutState } from './api.js';
 import { getSeasonData, getResultsForSession, clearMeetingCompilerCache } from './season-data.js';
 import { formatLapTime, formatGap, getTeamColor, getCompoundColor, getCompoundClass, getDriverFlagImg, DRIVER_NATIONALITY, getPointsForPosition, isPast, buildDriverMap, formatDateRange, $, $$ } from './utils.js';
 import { drawLineChart, drawPositionChart } from './charts.js';
@@ -25,8 +25,26 @@ window.addEventListener('pitcorner:favorites-changed', () => {
  */
 function computeStartingGridMap() {
   if (!raceDataCache) return new Map();
-  const { sessions, currentSessionType, laps, driverMap } = raceDataCache;
+  const { sessions, currentSessionType, laps, driverMap, startingGrid } = raceDataCache;
   const gridMap = new Map();
+  const pitLaneDrivers = new Set();
+
+  // 1. Prioritize official post-penalty Starting Grid (/starting_grid or FIA Ergast grid)
+  if (Array.isArray(startingGrid) && startingGrid.length > 0) {
+    for (const sg of startingGrid) {
+      if (!sg || sg.driver_number == null) continue;
+      if (sg.is_pit_lane) {
+        pitLaneDrivers.add(Number(sg.driver_number));
+        continue;
+      }
+      if (typeof sg.position === 'number' && sg.position > 0) {
+        gridMap.set(Number(sg.driver_number), sg.position);
+      }
+    }
+    if (gridMap.size > 0) {
+      return gridMap;
+    }
+  }
 
   let qualiSession = null;
   if (currentSessionType === 'Race') {
@@ -243,10 +261,149 @@ function isQualifyingSession(sessionName) {
  * Intelligent self-correcting partitioning of qualifying laps into Q1, Q2, and Q3.
  * Identifies breaks using standard F1 duration parameters and driver size constraints.
  */
-function partitionQualiLaps(laps) {
+/**
+ * Resolve exact Q3 and Q2 elimination cutoff positions from API Qualifying results & field size.
+ * - Uses explicit API segment participation (entry.q3 / entry.q2 from /session_result or Jolpi Ergast)
+ * - Adapts to 10-team (20-car -> Top 15 Q2 / Top 10 Q3), 11-team (22-car, e.g. 2026 -> Top 16 Q2 / Top 10 Q3),
+ *   and 12-team (24-car -> Top 17 Q2 / Top 10 Q3) grids automatically.
+ */
+export function resolveQualifyingCutoffs(order = [], driverMap = null, laps = null, year = null) {
+  const uniqueDriverNums = new Set();
+  for (const e of (order || [])) {
+    if (e && e.driver_number != null) uniqueDriverNums.add(Number(e.driver_number));
+  }
+  if (driverMap && typeof driverMap.keys === 'function') {
+    for (const dn of driverMap.keys()) {
+      if (dn != null) uniqueDriverNums.add(Number(dn));
+    }
+  }
+  if (Array.isArray(laps)) {
+    for (const l of laps) {
+      if (l && l.driver_number != null) uniqueDriverNums.add(Number(l.driver_number));
+    }
+  }
+  if (raceDataCache?.drivers && Array.isArray(raceDataCache.drivers)) {
+    for (const d of raceDataCache.drivers) {
+      if (d && d.driver_number != null) uniqueDriverNums.add(Number(d.driver_number));
+    }
+  }
+
+  const resolvedYear = Number(
+    year ||
+    raceDataCache?.meetingInfo?.year ||
+    (raceDataCache?.meetingInfo?.date_start ? new Date(raceDataCache.meetingInfo.date_start).getFullYear() : 0)
+  ) || 0;
+
+  // Even if 1–2 cars withdraw or fail to record a lap in Q1, 2026+ has an 11-team (22-car) championship grid
+  const seasonMinCars = resolvedYear >= 2026 ? 22 : 20;
+  const totalCars = Math.max(order ? order.length : 0, uniqueDriverNums.size, seasonMinCars);
+
+  // FIA Qualifying regulation cutoffs by grid size:
+  // - 20 cars (10 teams): Top 15 advance to Q2 (5 out in Q1), Top 10 advance to Q3 (5 out in Q2)
+  // - 22 cars (11 teams, e.g. 2026): Top 16 advance to Q2 (6 out in Q1), Top 10 advance to Q3 (6 out in Q2)
+  // - 24 cars (12 teams): Top 17 advance to Q2 (7 out in Q1), Top 10 advance to Q3 (7 out in Q2)
+  const expectedQ3 = 10;
+  const expectedQ2 = totalCars >= 23 ? 17 : (totalCars >= 21 ? 16 : 15);
+
+  let apiMaxQ3Pos = 0;
+  let apiQ3Count = 0;
+  let apiMaxQ2Pos = 0;
+  let apiQ2Count = 0;
+
+  for (let i = 0; i < (order || []).length; i++) {
+    const e = order[i];
+    if (!e) continue;
+    const pos = typeof e.position === 'number' ? e.position : (i + 1);
+    if (typeof e.q3 === 'number' && e.q3 > 0) {
+      apiQ3Count++;
+      if (pos <= 12 && pos > apiMaxQ3Pos) apiMaxQ3Pos = pos;
+    }
+    if ((typeof e.q2 === 'number' && e.q2 > 0) || (typeof e.q3 === 'number' && e.q3 > 0)) {
+      apiQ2Count++;
+      if (pos <= 18 && pos > apiMaxQ2Pos) apiMaxQ2Pos = pos;
+    }
+  }
+
+  // Use expectedQ3/expectedQ2 as the regulation floor so when a driver who advanced to Q2 or Q3
+  // did not set a timed lap in that segment (e.g. P16 in 2026 has q2: null), the cutoff stays at P16/P10.
+  const q3Cutoff = Math.max(expectedQ3, apiQ3Count, apiMaxQ3Pos);
+  const q2Cutoff = Math.max(expectedQ2, apiQ2Count, apiMaxQ2Pos);
+
+  return {
+    q3Cutoff,
+    q2Cutoff,
+    totalCars: Math.max(totalCars, q2Cutoff)
+  };
+}
+
+/**
+ * Determine a driver's exact Qualifying knockout stage (Q3, Q2, or Q1) and whether they
+ * advanced into that segment without setting a valid lap time (e.g. advanced to Q2 at P15/P16
+ * and had q2: null due to DNS in Q2, red flag, or track-limits lap deletion).
+ */
+export function getDriverQualiStage(entry, pos, q3Cutoff = 10, q2Cutoff = 15) {
+  const rank = typeof pos === 'number' && pos > 0 ? pos : (entry?.position || 99);
+  const isDNS = entry?.status === 'DNS';
+  const hasQ1 = typeof entry?.q1 === 'number' && entry.q1 > 0;
+  const hasQ2 = typeof entry?.q2 === 'number' && entry.q2 > 0;
+  const hasQ3 = typeof entry?.q3 === 'number' && entry.q3 > 0;
+
+  // A driver reached Q3 if they set a Q3 time OR are officially classified within Top q3Cutoff (with at least a Q1/Q2 time)
+  const reachedQ3 = hasQ3 || (!isDNS && rank <= q3Cutoff && (hasQ2 || hasQ1 || entry?.advancedToQ3));
+  // A driver reached Q2 if they reached Q3, set a Q2 time, OR are officially classified within Top q2Cutoff (with a Q1 time)
+  const reachedQ2 = reachedQ3 || hasQ2 || (!isDNS && rank <= q2Cutoff && (hasQ1 || entry?.advancedToQ2));
+
+  if (reachedQ3) {
+    return {
+      stage: 'Q3',
+      reachedQ3: true,
+      reachedQ2: true,
+      hasStageTime: hasQ3,
+      noTimeInQ3: !hasQ3,
+      noTimeInQ2: !hasQ2,
+      noTimeInQ1: !hasQ1,
+      decisiveTime: hasQ3 ? entry.q3 : null,
+      fallbackTime: entry?.q2 || entry?.q1 || entry?.bestLap || null,
+      fallbackSeg: hasQ2 ? 'Q2' : (hasQ1 ? 'Q1' : null),
+      outLabel: hasQ3 ? 'Q3' : 'Q3 • NO TIME'
+    };
+  }
+
+  if (reachedQ2) {
+    return {
+      stage: 'Q2',
+      reachedQ3: false,
+      reachedQ2: true,
+      hasStageTime: hasQ2,
+      noTimeInQ3: false,
+      noTimeInQ2: !hasQ2,
+      noTimeInQ1: !hasQ1,
+      decisiveTime: hasQ2 ? entry.q2 : null,
+      fallbackTime: entry?.q1 || entry?.bestLap || null,
+      fallbackSeg: hasQ1 ? 'Q1' : null,
+      outLabel: hasQ2 ? 'OUT Q2' : 'OUT Q2 • NO TIME'
+    };
+  }
+
+  return {
+    stage: 'Q1',
+    reachedQ3: false,
+    reachedQ2: false,
+    hasStageTime: hasQ1,
+    noTimeInQ3: false,
+    noTimeInQ2: false,
+    noTimeInQ1: !hasQ1,
+    decisiveTime: hasQ1 ? entry.q1 : (entry?.bestLap || null),
+    fallbackTime: null,
+    fallbackSeg: null,
+    outLabel: hasQ1 ? 'OUT Q1' : (isDNS ? 'DNS' : 'OUT Q1 • NO TIME')
+  };
+}
+
+function partitionQualiLaps(laps, expectedTotalDrivers = 0) {
   if (!laps || laps.length === 0) return { q1: [], q2: [], q3: [] };
 
-  const lapsWithTime = laps
+  const allTimedLaps = laps
     .map(lap => ({
       ...lap,
       time: lap.date_start ? new Date(lap.date_start).getTime() : 0
@@ -254,9 +411,27 @@ function partitionQualiLaps(laps) {
     .filter(lap => lap.time > 0 && lap.lap_duration > 0)
     .sort((a, b) => a.time - b.time);
 
-  if (lapsWithTime.length === 0) {
+  if (allTimedLaps.length === 0) {
     return { q1: laps, q2: [], q3: [] };
   }
+
+  // Filter out pit out-laps & slow cooldown/in-laps (>109% of session best) when detecting segment breaks
+  const nonOutDurs = allTimedLaps.filter(l => !l.is_pit_out_lap).map(l => l.lap_duration);
+  const globalBest = nonOutDurs.length > 0 ? Math.min(...nonOutDurs) : Math.min(...allTimedLaps.map(l => l.lap_duration));
+  const flyingCap = globalBest * 1.09;
+  const flyingLaps = allTimedLaps.filter(l => !l.is_pit_out_lap && l.lap_duration <= flyingCap);
+  const lapsWithTime = flyingLaps.length >= 6 ? flyingLaps : allTimedLaps;
+
+  const uniqueInLaps = new Set(allTimedLaps.map(l => l.driver_number)).size;
+  const resolvedYear = Number(
+    raceDataCache?.meetingInfo?.year ||
+    (raceDataCache?.meetingInfo?.date_start ? new Date(raceDataCache.meetingInfo.date_start).getFullYear() : 0)
+  ) || 0;
+  const seasonMinCars = resolvedYear >= 2026 ? 22 : 20;
+  const totalField = Math.max(expectedTotalDrivers || 0, uniqueInLaps, seasonMinCars);
+  const targetQ1Count = Math.min(totalField, Math.max(uniqueInLaps, 15));
+  const targetQ2Count = totalField >= 23 ? 17 : (totalField >= 21 ? 16 : 15);
+  const targetQ3Count = 10;
 
   const minT = lapsWithTime[0].time;
   const maxT = lapsWithTime[lapsWithTime.length - 1].time;
@@ -264,17 +439,17 @@ function partitionQualiLaps(laps) {
 
   // Fallback if session is extremely short (e.g. less than 10 mins)
   if (totalDuration < 10 * 60 * 1000) {
-    return { q1: lapsWithTime, q2: [], q3: [] };
+    return { q1: allTimedLaps, q2: [], q3: [] };
   }
 
-  // Find gaps larger than 1.5 minutes (break candidates)
+  // Find gaps larger than 2.5 minutes between flying laps (inter-segment break candidates)
   const gaps = [];
   for (let i = 1; i < lapsWithTime.length; i++) {
-    const gapMs = lapsWithTime[i].time - lapsWithTime[i-1].time;
-    if (gapMs > 1.5 * 60 * 1000) {
+    const gapMs = lapsWithTime[i].time - lapsWithTime[i - 1].time;
+    if (gapMs > 2.2 * 60 * 1000) {
       gaps.push({
         gapMs,
-        splitTime: lapsWithTime[i-1].time + gapMs / 2
+        splitTime: lapsWithTime[i - 1].time + gapMs / 2
       });
     }
   }
@@ -302,8 +477,17 @@ function partitionQualiLaps(laps) {
   candidates.push([fallbackS1, fallbackS2]);
   candidates.push([fallbackS1, null]);
 
-  let bestScore = -1;
+  let bestScore = -Infinity;
   let selectedSplits = [fallbackS1, fallbackS2];
+
+  // Penalty helper that allows 1-2 drivers who advanced to Q2/Q3 to NOT set a flying lap without heavy penalty,
+  // while strictly penalizing impossible counts above the regulation cap (n2 > targetQ2Count or n3 > targetQ3Count).
+  const segCountPenalty = (actual, cap) => {
+    if (actual > cap) return (actual - cap) * 35; // Exceeding segment cap is invalid under FIA rules
+    const diff = cap - actual;
+    if (diff <= 2) return diff * 3; // 1–2 drivers not setting a lap in Q2/Q3 is common
+    return diff * 10;
+  };
 
   for (const [s1, s2] of candidates) {
     const q1Drivers = new Set();
@@ -328,17 +512,17 @@ function partitionQualiLaps(laps) {
     let score = 0;
 
     if (s2) {
-      if (n1 >= n2 && n2 >= n3 && n1 > 0) {
+      if (n1 >= n2 && n2 >= n3 && n1 > 0 && n2 > 0 && n3 > 0) {
         isValid = true;
-        const p1 = Math.abs(n1 - 20);
-        const p2 = Math.abs(n2 - 15);
-        const p3 = Math.abs(n3 - 10);
-        score = 1000 - (p1 + p2 + p3) * 10;
+        const p1 = Math.abs(n1 - targetQ1Count) * 8;
+        const p2 = segCountPenalty(n2, targetQ2Count);
+        const p3 = segCountPenalty(n3, targetQ3Count);
+        score = 1000 - (p1 + p2 + p3);
       }
     } else {
-      if (n1 >= n2 && n1 > 0) {
+      if (n1 >= n2 && n1 > 0 && n2 > 0) {
         isValid = true;
-        score = 500 - Math.abs(n1 - 20) * 10 - Math.abs(n2 - 15) * 10;
+        score = 500 - Math.abs(n1 - targetQ1Count) * 8 - segCountPenalty(n2, targetQ2Count);
       }
     }
 
@@ -353,7 +537,7 @@ function partitionQualiLaps(laps) {
   const q2 = [];
   const q3 = [];
 
-  for (const lap of lapsWithTime) {
+  for (const lap of allTimedLaps) {
     if (lap.time < s1) {
       q1.push(lap);
     } else if (!s2 || lap.time < s2) {
@@ -368,7 +552,8 @@ function partitionQualiLaps(laps) {
 
 /**
  * Build a qualifying/practice-style classification from lap data.
- * Supports standard practice best-lap ranking, and intelligent multi-segment (Q1, Q2, Q3) elimination grids.
+ * Supports standard practice best-lap ranking, and intelligent multi-segment (Q1, Q2, Q3) elimination grids
+ * including drivers who advanced to Q2 or Q3 and did not set a flying lap in that segment.
  */
 function buildQualifyingOrder(laps, driverMap, sessionType = '') {
   if (!laps) return [];
@@ -415,13 +600,28 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
     }));
   }
 
-  // It is a Qualifying session! Partition laps into Q1, Q2, Q3
-  const { q1, q2, q3 } = partitionQualiLaps(laps);
+  // It is a Qualifying session! Partition laps into Q1, Q2, Q3 using dynamic field size
+  const expectedDriversCount = driverMap ? driverMap.size : 0;
+  const { q1, q2, q3 } = partitionQualiLaps(laps, expectedDriversCount);
 
-  const getBestForSegment = (segmentLaps, dn) => {
-    const lapsForDriver = segmentLaps.filter(l => l.driver_number === dn && l.lap_duration > 0);
-    if (lapsForDriver.length === 0) return null;
-    return Math.min(...lapsForDriver.map(l => l.lap_duration));
+  // Compute segment flying-lap cap so out-laps and aborted in-laps (>109% of segment best)
+  // are never mistaken for a valid flying lap when a driver goes out in Q2/Q3 and boxes without a timed run.
+  const getSegmentFlyingCap = (segmentLaps) => {
+    const valid = segmentLaps.filter(l => !l.is_pit_out_lap && l.lap_duration > 0);
+    if (valid.length === 0) return Infinity;
+    const minDur = Math.min(...valid.map(l => l.lap_duration));
+    return minDur * 1.09;
+  };
+  const q1Cap = getSegmentFlyingCap(q1);
+  const q2Cap = getSegmentFlyingCap(q2);
+  const q3Cap = getSegmentFlyingCap(q3);
+
+  const getBestForSegment = (segmentLaps, dn, cap) => {
+    const flyingForDriver = segmentLaps.filter(
+      l => l.driver_number === dn && !l.is_pit_out_lap && l.lap_duration > 0 && l.lap_duration <= cap
+    );
+    if (flyingForDriver.length === 0) return null;
+    return Math.min(...flyingForDriver.map(l => l.lap_duration));
   };
 
   const getLapCountForDriver = (dn) => {
@@ -433,10 +633,12 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
     ...(driverMap ? Array.from(driverMap.keys()) : [])
   ]));
 
+  const { q3Cutoff, q2Cutoff } = resolveQualifyingCutoffs([], driverMap, laps);
+
   const driverRecords = allDrivers.map(dn => {
-    const q1Best = getBestForSegment(q1, dn);
-    const q2Best = getBestForSegment(q2, dn);
-    const q3Best = getBestForSegment(q3, dn);
+    const q1Best = getBestForSegment(q1, dn, q1Cap);
+    const q2Best = getBestForSegment(q2, dn, q2Cap);
+    const q3Best = getBestForSegment(q3, dn, q3Cap);
     const totalLaps = getLapCountForDriver(dn);
 
     return {
@@ -448,16 +650,42 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
     };
   });
 
-  // Sort drivers based on elimination logic:
-  // Group 3: Drivers who set a time in Q3 (top 10)
-  // Group 2: Drivers who set a time in Q2 but not in Q3 (positions 11-15)
-  // Group 1: Drivers who only set a time in Q1 (positions 16-20)
-  const q3Group = driverRecords.filter(r => r.q3 !== null).sort((a, b) => a.q3 - b.q3);
-  const q2Group = driverRecords.filter(r => r.q3 === null && r.q2 !== null).sort((a, b) => a.q2 - b.q2);
-  const q1Group = driverRecords.filter(r => r.q3 === null && r.q2 === null && r.q1 !== null).sort((a, b) => a.q1 - b.q1);
-  const noTimeGroup = driverRecords.filter(r => r.q3 === null && r.q2 === null && r.q1 === null);
+  // Determine Q1 rank to know which drivers advanced to Q2 (even if they set no time in Q2)
+  const q1Ranked = driverRecords.filter(r => r.q1 !== null).sort((a, b) => a.q1 - b.q1);
+  const advancedToQ2Set = new Set(q1Ranked.slice(0, q2Cutoff).map(r => r.driver_number));
+  for (const r of driverRecords) {
+    if (r.q2 !== null || r.q3 !== null) advancedToQ2Set.add(r.driver_number);
+  }
 
-  const sortedRecords = [...q3Group, ...q2Group, ...q1Group, ...noTimeGroup];
+  // Determine Q2 rank among Q2 participants to know which drivers advanced to Q3 (even if they set no time in Q3)
+  const q2Ranked = driverRecords
+    .filter(r => advancedToQ2Set.has(r.driver_number) && r.q2 !== null)
+    .sort((a, b) => a.q2 - b.q2);
+  const advancedToQ3Set = new Set(q2Ranked.slice(0, q3Cutoff).map(r => r.driver_number));
+  for (const r of driverRecords) {
+    if (r.q3 !== null) advancedToQ3Set.add(r.driver_number);
+  }
+
+  for (const r of driverRecords) {
+    r.advancedToQ3 = advancedToQ3Set.has(r.driver_number);
+    r.advancedToQ2 = advancedToQ2Set.has(r.driver_number) || r.advancedToQ3;
+    if (!r.advancedToQ3) r.q3 = null;
+    if (!r.advancedToQ2) r.q2 = null;
+  }
+
+  // Group 3: Drivers who advanced to Q3 (with Q3 time sorted by Q3, then no-Q3-time sorted by Q2)
+  const q3WithTime = driverRecords.filter(r => r.advancedToQ3 && r.q3 !== null).sort((a, b) => a.q3 - b.q3);
+  const q3NoTime = driverRecords.filter(r => r.advancedToQ3 && r.q3 === null).sort((a, b) => (a.q2 || Infinity) - (b.q2 || Infinity));
+
+  // Group 2: Drivers who advanced to Q2 (not Q3) (with Q2 time sorted by Q2, then no-Q2-time sorted by Q1)
+  const q2WithTime = driverRecords.filter(r => !r.advancedToQ3 && r.advancedToQ2 && r.q2 !== null).sort((a, b) => a.q2 - b.q2);
+  const q2NoTime = driverRecords.filter(r => !r.advancedToQ3 && r.advancedToQ2 && r.q2 === null).sort((a, b) => (a.q1 || Infinity) - (b.q1 || Infinity));
+
+  // Group 1: Drivers eliminated in Q1
+  const q1WithTime = driverRecords.filter(r => !r.advancedToQ2 && r.q1 !== null).sort((a, b) => a.q1 - b.q1);
+  const noTimeGroup = driverRecords.filter(r => !r.advancedToQ2 && r.q1 === null);
+
+  const sortedRecords = [...q3WithTime, ...q3NoTime, ...q2WithTime, ...q2NoTime, ...q1WithTime, ...noTimeGroup];
 
   return sortedRecords.map((r, idx) => ({
     driver_number: r.driver_number,
@@ -467,6 +695,8 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
     q1: r.q1,
     q2: r.q2,
     q3: r.q3,
+    advancedToQ2: r.advancedToQ2,
+    advancedToQ3: r.advancedToQ3,
     lapCount: r.lapCount
   }));
 }
@@ -475,19 +705,128 @@ function buildQualifyingOrder(laps, driverMap, sessionType = '') {
  * Show/hide tabs based on session type.
  * Non-race sessions hide Positions and Overtakes tabs.
  */
+function mergeQualifyingOrderWithTelemetry(existingOrder, officialApiOrder, laps, driverMap, sessionType) {
+  let baseOrder = (Array.isArray(officialApiOrder) && officialApiOrder.length > 0)
+    ? officialApiOrder
+    : (Array.isArray(existingOrder) ? existingOrder : []);
+
+  const telemetryOrder = (Array.isArray(laps) && laps.length > 0)
+    ? buildQualifyingOrder(laps, driverMap, sessionType)
+    : [];
+
+  if (baseOrder.length === 0) {
+    return telemetryOrder;
+  }
+
+  const existingMap = new Map((existingOrder || []).map(r => [r.driver_number, r]));
+  const telMap = new Map(telemetryOrder.map(r => [r.driver_number, r]));
+
+  // First merge any official API q1/q2/q3 with existingOrder
+  const merged = baseOrder.map((entry, idx) => {
+    const prev = existingMap.get(entry.driver_number) || {};
+    const tel = telMap.get(entry.driver_number) || {};
+    const pos = typeof entry.position === 'number' ? entry.position : (idx + 1);
+    const hasOfficial = Boolean(entry.hasOfficialSegments || prev.hasOfficialSegments);
+    return {
+      ...prev,
+      ...entry,
+      position: pos,
+      hasOfficialSegments: hasOfficial,
+      q1: entry.q1 !== undefined ? entry.q1 : (prev.q1 ?? null),
+      q2: entry.q2 !== undefined ? entry.q2 : (prev.q2 ?? null),
+      q3: entry.q3 !== undefined ? entry.q3 : (prev.q3 ?? null),
+      bestLap: entry.bestLap ?? prev.bestLap ?? null,
+      lapCount: entry.lapCount || prev.lapCount || tel.lapCount || 0,
+      _tel: tel
+    };
+  });
+
+  // Check if the official API (/session_result or Jolpi) provided segment times for this session.
+  // When the official API provided segment times, a null in q2 or q3 for a driver who advanced to Q2/Q3
+  // is an authoritative "No Time" (DNS in Q2/Q3 or deleted lap) and must NOT be overwritten by raw /laps!
+  const sessionHasOfficialSegments = merged.some(
+    item => item.hasOfficialSegments || item.q1 > 0 || item.q2 > 0 || item.q3 > 0
+  );
+
+  // Determine cutoffs from official API data + field size
+  const { q3Cutoff, q2Cutoff } = resolveQualifyingCutoffs(merged, driverMap, laps);
+
+  return merged.map((item, idx) => {
+    const tel = item._tel || {};
+    const pos = typeof item.position === 'number' ? item.position : (idx + 1);
+    let q1, q2, q3;
+
+    if (sessionHasOfficialSegments) {
+      q1 = item.q1 ?? null;
+      q2 = pos <= q2Cutoff ? (item.q2 ?? null) : null;
+      q3 = pos <= q3Cutoff ? (item.q3 ?? null) : null;
+    } else {
+      q1 = item.q1 ?? tel.q1 ?? null;
+      q2 = item.q2 ?? (pos <= q2Cutoff ? (tel.q2 ?? null) : null);
+      q3 = item.q3 ?? (pos <= q3Cutoff ? (tel.q3 ?? null) : null);
+    }
+
+    const bestLap = q3 || q2 || q1 || item.bestLap || (!sessionHasOfficialSegments ? tel.bestLap : null) || null;
+    const { _tel, ...clean } = item;
+    return {
+      ...clean,
+      position: pos,
+      q1,
+      q2,
+      q3,
+      bestLap,
+      advancedToQ3: pos <= q3Cutoff || Boolean(q3),
+      advancedToQ2: pos <= q2Cutoff || Boolean(q2) || Boolean(q3)
+    };
+  });
+}
+
+function hasStartingGridTab(sessionName) {
+  return isRaceSession(sessionName) || isQualifyingSession(sessionName);
+}
+
+async function fetchStartingGridForCurrentSession() {
+  if (!raceDataCache) return [];
+  const { sessions, currentSessionType, meetingInfo, drivers, sessionKey } = raceDataCache;
+  const isSprintMode = currentSessionType === 'Sprint' || currentSessionType === 'Sprint Qualifying' || currentSessionType === 'Sprint Shootout';
+  const raceSess = isSprintMode ? sessions?.['Sprint'] : sessions?.['Race'];
+  const qualiSess = isSprintMode
+    ? (sessions?.['Sprint Qualifying'] || sessions?.['Sprint Shootout'])
+    : sessions?.['Qualifying'];
+  const year = meetingInfo?.year || (meetingInfo?.date_start ? new Date(meetingInfo.date_start).getFullYear() : null);
+
+  return getStartingGrid({
+    session_key: raceSess?.session_key || sessionKey,
+    quali_session_key: qualiSess?.session_key || null,
+    meeting_key: meetingInfo?.meeting_key || null,
+    session_name: isSprintMode ? 'Sprint' : 'Race',
+    year,
+    date_end: raceSess?.date_end || qualiSess?.date_end || meetingInfo?.date_end || null,
+    drivers: drivers || []
+  }).catch(() => []);
+}
+
 function updateTabVisibility(sessionName) {
   const tabs = document.querySelectorAll('#race-detail-tabs button');
   const isRace = isRaceSession(sessionName);
+  const isQuali = isQualifyingSession(sessionName);
+  const showGrid = hasStartingGridTab(sessionName);
+  const isSprintMode = sessionName === 'Sprint' || sessionName === 'Sprint Qualifying' || sessionName === 'Sprint Shootout';
   
   tabs.forEach(btn => {
     const tab = btn.dataset.tab;
     if (tab === 'positions' || tab === 'overtakes') {
       btn.style.display = isRace ? '' : 'none';
+    } else if (tab === 'grid') {
+      btn.style.display = showGrid ? '' : 'none';
+    } else if (tab === 'gaps') {
+      btn.style.display = isQuali ? '' : 'none';
+      btn.textContent = isSprintMode ? 'SQ Gaps' : 'Quali Gaps';
     }
   });
 
   // If current tab is hidden, fallback to results
-  if (!isRace && (currentTab === 'positions' || currentTab === 'overtakes')) {
+  if ((!isRace && (currentTab === 'positions' || currentTab === 'overtakes')) || (!showGrid && currentTab === 'grid') || (!isQuali && currentTab === 'gaps')) {
     currentTab = 'results';
     tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === 'results'));
   }
@@ -584,8 +923,14 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       };
     }
 
-    // Default to the Race session (or the initially clicked session)
-    const defaultSessionName = sessions['Race'] ? 'Race' : (completedSessions.length > 0 ? completedSessions[completedSessions.length - 1].session_name : 'Race');
+    // Default to the Race session if it has results (or is only session), otherwise fall back to the latest completed session with results
+    let defaultSessionName = sessions['Race'] ? 'Race' : (completedSessions.length > 0 ? completedSessions[completedSessions.length - 1].session_name : 'Race');
+    if (sessions['Race'] && (!sessions['Race'].results || sessions['Race'].results.length === 0)) {
+      const latestWithResults = [...completedSessions].reverse().find(s => sessions[s.session_name]?.results?.length > 0);
+      if (latestWithResults) {
+        defaultSessionName = latestWithResults.session_name;
+      }
+    }
     const defaultSession = sessions[defaultSessionName] || { session_key: sessionKey, results: getResultsForSession(seasonData, sessionKey) };
 
     if (defaultSession.drivers && defaultSession.drivers.length > 0) {
@@ -650,7 +995,7 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     const scheduleBtn = document.getElementById('race-detail-schedule-btn');
     const scheduleDivider = document.getElementById('race-schedule-divider');
 
-    if (scheduleBtn && completedSessions.length > 0) {
+    if (scheduleBtn) {
       if (scheduleDivider) scheduleDivider.style.display = 'inline';
       scheduleBtn.style.display = 'inline-flex';
 
@@ -751,6 +1096,11 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
       incidents: null,
       weather: null,
       intervals: null,
+      startingGrid: null,
+      gridViewMode: 'formation',
+      gridFilterMode: 'all',
+      qualiGapsOrder: null,
+      gapsSegmentMode: 'overall',
       driverTelemetry: {}
     };
 
@@ -767,40 +1117,55 @@ export async function loadRaceDetail(sessionKey, meetingInfo) {
     renderTab();
     setupTabs();
 
-    // 2. Background Enrichment: fetch detailed lap, pit, and overtake counts asynchronously
+    // 2. Background Enrichment: fetch detailed lap, pit, starting grid, and overtake counts asynchronously
     const activeSessionKey = raceDataCache.sessionKey;
     Promise.all([
       getLaps({ session_key: activeSessionKey }),
       getPits({ session_key: activeSessionKey }),
       isRaceSession(defaultSessionName) ? getOvertakes({ session_key: activeSessionKey }) : Promise.resolve([]),
       isRaceSession(defaultSessionName) ? getIntervals({ session_key: activeSessionKey }) : Promise.resolve([]),
-    ]).then(([laps, pits, overtakes, intervals]) => {
+      hasStartingGridTab(defaultSessionName) ? fetchStartingGridForCurrentSession() : Promise.resolve([]),
+    ]).then(([laps, pits, overtakes, intervals, startingGrid]) => {
       // Safely update cache if we are still viewing the same race session
       if (raceDataCache && raceDataCache.sessionKey === activeSessionKey) {
         raceDataCache.laps = laps;
         raceDataCache.pits = pits;
         raceDataCache.overtakes = enrichOvertakesWithLaps(overtakes, laps);
         raceDataCache.intervals = intervals;
+        raceDataCache.startingGrid = startingGrid;
         
-        // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
+        // For qualifying sessions, enrich with official API /session_result [q1, q2, q3] + lap telemetry
         if (isQualifyingSession(raceDataCache.currentSessionType)) {
-          const telemetryOrder = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
-          if (raceDataCache.order && raceDataCache.order.length > 0) {
-            const telemetryMap = new Map(telemetryOrder.map(r => [r.driver_number, r]));
-            raceDataCache.order = raceDataCache.order.map(entry => {
-              const tel = telemetryMap.get(entry.driver_number);
-              return tel ? { ...entry, q1: tel.q1, q2: tel.q2, q3: tel.q3, bestLap: tel.bestLap || entry.bestLap } : entry;
-            });
-          } else {
-            raceDataCache.order = telemetryOrder;
-          }
+          const hasApiSegments = (raceDataCache.order || []).some(r => r.hasOfficialSegments);
+          const apiOrderPromise = hasApiSegments
+            ? Promise.resolve(raceDataCache.order)
+            : getFinishingOrder(activeSessionKey).catch(() => raceDataCache.order);
+          apiOrderPromise.then(apiOrder => {
+            if (!raceDataCache || raceDataCache.sessionKey !== activeSessionKey) return;
+            raceDataCache.order = mergeQualifyingOrderWithTelemetry(
+              raceDataCache.order,
+              apiOrder,
+              laps,
+              driverMap,
+              raceDataCache.currentSessionType
+            );
+            if (raceDataCache.sessions && raceDataCache.sessions[raceDataCache.currentSessionType]) {
+              raceDataCache.sessions[raceDataCache.currentSessionType].results = raceDataCache.order;
+            }
+            if (currentTab === 'results') renderResults(content);
+            else if (currentTab === 'gaps') loadAndRenderGaps(content);
+          });
         } else if (!isRaceSession(raceDataCache.currentSessionType) && (!raceDataCache.order || raceDataCache.order.length === 0)) {
           raceDataCache.order = buildQualifyingOrder(laps, driverMap, raceDataCache.currentSessionType);
         }
         
-        // Dynamic pop-in: re-render results or overtakes tab if active
+        // Dynamic pop-in: re-render results, grid, gaps, or overtakes tab if active
         if (currentTab === 'results') {
           renderResults(content);
+        } else if (currentTab === 'grid') {
+          renderStartingGrid(content);
+        } else if (currentTab === 'gaps') {
+          loadAndRenderGaps(content);
         } else if (currentTab === 'overtakes') {
           renderOvertakes(content);
         }
@@ -836,6 +1201,8 @@ function renderTab() {
 
   switch (currentTab) {
     case 'results': renderResults(content); break;
+    case 'grid': loadAndRenderStartingGrid(content); break;
+    case 'gaps': loadAndRenderGaps(content); break;
     case 'laptimes': loadAndRenderLapTimes(content); break;
     case 'positions': loadAndRenderPositions(content); break;
     case 'strategy': loadAndRenderStrategy(content); break;
@@ -858,6 +1225,59 @@ function renderResults(container) {
 
   if (!order || order.length === 0) {
     const sessionLabel = SESSION_LABELS[sessionType] || sessionType;
+    const locked = isApiLocked();
+    const lockInfo = getApiLockoutState();
+    const mInfo = raceDataCache.meetingInfo || {};
+    const availableCompleted = Object.values(raceDataCache.sessions || {}).filter(
+      s => s && s.session_name !== sessionType && Array.isArray(s.results) && s.results.length > 0
+    );
+
+    if (locked || (mInfo.date_start && new Date() >= new Date(mInfo.date_start))) {
+      const liveTitle = locked
+        ? `Live F1 Session In Progress — OpenF1 Telemetry Locked`
+        : `${sessionLabel} Telemetry Not Yet Published`;
+      const liveDesc = locked
+        ? `OpenF1 restricts live API telemetry access for unauthenticated users while an F1 session is active on track${lockInfo.liveSession?.session_name ? ` (${lockInfo.liveSession.session_name})` : ''}. All cached championship standings, historical seasons, and previously compiled races remain 100% accessible!`
+        : `Official classification and lap telemetry for ${sessionLabel} at ${mInfo.meeting_name || 'this Grand Prix'} are not yet available from OpenF1.`;
+
+      const otherSessionBtns = availableCompleted.map(s => `
+        <button type="button" class="rd-locked-session-switch" data-target-session="${s.session_name}" style="background:rgba(255,255,255,0.06);border:1px solid var(--border-subtle);color:var(--text-primary);padding:8px 14px;border-radius:8px;font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-flag-checkered" style="color:var(--f1-red);"></i> View ${s.session_name} Results
+        </button>
+      `).join('');
+
+      container.innerHTML = `
+        <div class="no-data" style="padding:32px 24px;border:1px solid rgba(225,6,0,0.22);background:linear-gradient(145deg, rgba(225,6,0,0.06), rgba(15,15,22,0.75));border-radius:14px;max-width:680px;margin:16px auto;">
+          <div style="display:inline-flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;background:rgba(225,6,0,0.14);border:1px solid rgba(225,6,0,0.35);color:#ff5a52;font-family:'Outfit',sans-serif;font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">
+            <span style="width:7px;height:7px;border-radius:50%;background:#e10600;display:inline-block;"></span>
+            ${locked ? 'OpenF1 Live Session Lockout' : 'Weekend In Progress'}
+          </div>
+          <div class="no-data-text" style="font-family:'Outfit',sans-serif;font-size:1.15rem;font-weight:800;color:var(--text-primary);margin-bottom:8px;">${liveTitle}</div>
+          <div style="font-size:0.86rem;color:var(--text-secondary);line-height:1.55;max-width:560px;margin:0 auto 18px auto;">${liveDesc}</div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+            <button type="button" id="rd-locked-schedule-btn" style="background:var(--f1-red);border:none;color:#fff;padding:9px 16px;border-radius:8px;font-family:'Outfit',sans-serif;font-size:0.8rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+              <i class="fa-regular fa-calendar-days"></i> View Weekend Schedule &amp; Countdown
+            </button>
+            ${otherSessionBtns}
+          </div>
+        </div>
+      `;
+
+      const schedBtn = container.querySelector('#rd-locked-schedule-btn');
+      if (schedBtn && mInfo.meeting_key) {
+        schedBtn.addEventListener('click', () => showFutureRaceSchedule(mInfo));
+      }
+      container.querySelectorAll('.rd-locked-session-switch').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetSession = btn.dataset.targetSession;
+          const pills = document.querySelectorAll('#race-session-pills .session-pill-btn');
+          pills.forEach(p => p.classList.toggle('active', p.dataset.session === targetSession));
+          switchRaceDetailSession(targetSession);
+        });
+      });
+      return;
+    }
+
     container.innerHTML = `<div class="no-data"><div class="no-data-icon"><i class="fa-solid fa-car-side fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div><div class="no-data-text">No results data available for ${sessionLabel}</div></div>`;
     return;
   }
@@ -1153,18 +1573,23 @@ function renderSessionResults(container) {
     }
   }
 
-  const p1Best = order.length > 0 && order[0].bestLap ? order[0].bestLap : (driverBestLaps.size > 0 ? Math.min(...driverBestLaps.values()) : null);
-  const p1Driver = order.length > 0 ? driverMap.get(order[0].driver_number) : null;
-
   // Segment fastest times for Q1, Q2, Q3 purple highlights
   let bestQ1 = Infinity, bestQ2 = Infinity, bestQ3 = Infinity;
+  const q3TimedEntries = [];
   if (isQuali) {
     for (const entry of order) {
       if (entry.q1 && entry.q1 < bestQ1) bestQ1 = entry.q1;
       if (entry.q2 && entry.q2 < bestQ2) bestQ2 = entry.q2;
       if (entry.q3 && entry.q3 < bestQ3) bestQ3 = entry.q3;
+      if (entry.q3 && entry.q3 > 0) q3TimedEntries.push(entry.q3);
     }
+    q3TimedEntries.sort((a, b) => a - b);
   }
+
+  const p1Best = isQuali
+    ? (order[0]?.q3 || (bestQ3 < Infinity ? bestQ3 : (order[0]?.bestLap || null)))
+    : (order.length > 0 && order[0].bestLap ? order[0].bestLap : (driverBestLaps.size > 0 ? Math.min(...driverBestLaps.values()) : null));
+  const p1Driver = order.length > 0 ? driverMap.get(order[0].driver_number) : null;
 
   // Mileage leader & Top-10 spread
   let mostLapsDn = null;
@@ -1176,10 +1601,24 @@ function renderSessionResults(container) {
       mostLapsDn = entry.driver_number;
     }
   }
+  const { q3Cutoff, q2Cutoff } = resolveQualifyingCutoffs(order, driverMap, laps);
   const mileageDriver = mostLapsDn ? driverMap.get(mostLapsDn) : null;
-  const p10Entry = order[Math.min(9, order.length - 1)];
-  const p10Time = p10Entry ? (p10Entry.q3 || p10Entry.bestLap || driverBestLaps.get(p10Entry.driver_number)) : null;
-  const top10Spread = (p1Best && p10Time && p10Time >= p1Best) ? `+${(p10Time - p1Best).toFixed(3)}s` : '—';
+
+  let top10Spread = '—';
+  let top10SpreadSub = `P1 to P${Math.min(q3Cutoff, order.length)} Margin`;
+  if (isQuali && q3TimedEntries.length >= 2) {
+    const slowestQ3 = q3TimedEntries[q3TimedEntries.length - 1];
+    top10Spread = `+${(slowestQ3 - q3TimedEntries[0]).toFixed(3)}s`;
+    top10SpreadSub = q3TimedEntries.length < q3Cutoff
+      ? `Q3 P1 to P${q3TimedEntries.length} (${q3Cutoff - q3TimedEntries.length} No Time)`
+      : `Q3 P1 to P${q3Cutoff} Margin`;
+  } else {
+    const pCutoffEntry = order[Math.min(q3Cutoff - 1, order.length - 1)];
+    const pCutoffTime = pCutoffEntry ? (pCutoffEntry.bestLap || driverBestLaps.get(pCutoffEntry.driver_number)) : null;
+    if (p1Best && pCutoffTime && pCutoffTime >= p1Best) {
+      top10Spread = `+${(pCutoffTime - p1Best).toFixed(3)}s`;
+    }
+  }
   const cutoff107 = (isQuali && bestQ1 < Infinity) ? formatLapTime(bestQ1 * 1.07) : null;
 
   const driverCount = order.length;
@@ -1194,9 +1633,9 @@ function renderSessionResults(container) {
         <div class="rd-kpi-sub">${p1Driver ? p1Driver.name_acronym : sessionLabel}</div>
       </div>
       <div class="rd-kpi-tile">
-        <div class="rd-kpi-label"><i class="fa-solid fa-arrows-left-right" style="color:#60a5fa;"></i> Top-10 Spread</div>
+        <div class="rd-kpi-label"><i class="fa-solid fa-arrows-left-right" style="color:#60a5fa;"></i> Top-${q3Cutoff} Spread</div>
         <div class="rd-kpi-val mono">${top10Spread}</div>
-        <div class="rd-kpi-sub">P1 to P${Math.min(10, order.length)} Margin</div>
+        <div class="rd-kpi-sub">${top10SpreadSub}</div>
       </div>
       <div class="rd-kpi-tile">
         <div class="rd-kpi-label"><i class="fa-solid fa-road" style="color:#39b54a;"></i> Total Mileage</div>
@@ -1204,9 +1643,9 @@ function renderSessionResults(container) {
         <div class="rd-kpi-sub">${mileageDriver ? `Most: ${mileageDriver.name_acronym} (${mostLapsVal}L)` : `${driverCount} Cars`}</div>
       </div>
       <div class="rd-kpi-tile">
-        <div class="rd-kpi-label"><i class="fa-solid fa-gauge-high" style="color:#fbbf24;"></i> ${cutoff107 ? '107% Q1 Rule' : 'Classification'}</div>
-        <div class="rd-kpi-val mono">${cutoff107 || `${driverCount} Cars`}</div>
-        <div class="rd-kpi-sub">${sessionLabel} Session</div>
+        <div class="rd-kpi-label"><i class="fa-solid fa-gauge-high" style="color:#fbbf24;"></i> ${isQuali ? 'Knockout Cutoffs' : 'Classification'}</div>
+        <div class="rd-kpi-val mono">${isQuali ? `Top ${q2Cutoff} / Top ${q3Cutoff}` : `${driverCount} Cars`}</div>
+        <div class="rd-kpi-sub">${cutoff107 ? `107% Q1: ${cutoff107}` : `${sessionLabel} Session`}</div>
       </div>
     </div>
   `;
@@ -1249,7 +1688,8 @@ function renderSessionResults(container) {
 
   for (let idx = 0; idx < order.length; idx++) {
     const entry = order[idx];
-    const { driver_number, position, status } = entry;
+    const { driver_number, status } = entry;
+    const position = typeof entry.position === 'number' ? entry.position : (idx + 1);
     const d = driverMap.get(driver_number) || { name_acronym: `#${driver_number}`, team_name: '?', team_colour: '666', full_name: `Driver #${driver_number}`, headshot_url: '' };
     const teamColor = getTeamColor(d.team_colour);
     const { isFavD, isFavT } = isDriverOrTeamFavorite(d);
@@ -1262,43 +1702,115 @@ function renderSessionResults(container) {
 
     let rowContent = '';
     if (isQuali) {
+      const stageInfo = getDriverQualiStage(entry, position, q3Cutoff, q2Cutoff);
       const q1Purp = entry.q1 && entry.q1 === bestQ1;
       const q2Purp = entry.q2 && entry.q2 === bestQ2;
       const q3Purp = entry.q3 && entry.q3 === bestQ3;
-      const q1Str = entry.q1 ? `<span style="${q1Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q1)}${q1Purp ? ' 🟣' : ''}</span>` : '<span style="color:var(--text-muted);">—</span>';
-      const q2Str = entry.q2 ? `<span style="${q2Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q2)}${q2Purp ? ' 🟣' : ''}</span>` : '<span style="color:var(--text-muted);">—</span>';
-      const q3Str = entry.q3 ? `<span style="${q3Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q3)}${q3Purp ? ' 🟣' : ''}</span>` : '<span style="color:var(--text-muted);">—</span>';
 
-      const refBest = entry.q3 || entry.q2 || entry.q1;
+      const noTimeBadge = (segLabel) =>
+        `<span class="quali-no-time-pill" title="Advanced to ${segLabel} but did not record a timed lap">NO TIME</span>`;
+
+      const q1Str = entry.q1
+        ? `<span style="${q1Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q1)}${q1Purp ? ' 🟣' : ''}</span>`
+        : (isDNS ? '<span class="quali-no-time-pill">DNS</span>' : '<span class="quali-no-time-pill">NO TIME</span>');
+
+      const q2Str = entry.q2
+        ? `<span style="${q2Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q2)}${q2Purp ? ' 🟣' : ''}</span>`
+        : (stageInfo.reachedQ2 ? noTimeBadge('Q2') : '<span style="color:var(--text-muted);">—</span>');
+
+      const q3Str = entry.q3
+        ? `<span style="${q3Purp ? 'color:#c084fc;font-weight:800;' : ''}">${formatLapTime(entry.q3)}${q3Purp ? ' 🟣' : ''}</span>`
+        : (stageInfo.reachedQ3 ? noTimeBadge('Q3') : '<span style="color:var(--text-muted);">—</span>');
+
       const poleRef = bestQ3 < Infinity ? bestQ3 : p1Best;
       let qGapHtml = '<span style="color:var(--text-muted);">—</span>';
-      if (position === 1 && refBest) {
+
+      if (position === 1 && (entry.q3 || entry.q2 || entry.q1)) {
         qGapHtml = '<span style="color:#ffd700;font-size:0.72rem;font-weight:800;">POLE</span>';
-      } else if (entry.q3 && poleRef && entry.q3 >= poleRef) {
-        qGapHtml = `<span class="mono" style="font-size:0.75rem;color:var(--text-secondary);">+${(entry.q3 - poleRef).toFixed(3)}s</span>`;
-      } else if (refBest && bestQ1 < Infinity && !entry.q3) {
-        qGapHtml = `<span class="mono" style="font-size:0.72rem;color:var(--text-muted);" title="Eliminated in ${entry.q2 ? 'Q2' : 'Q1'}">${entry.q2 ? 'OUT Q2' : 'OUT Q1'}</span>`;
+      } else if (stageInfo.reachedQ3) {
+        if (entry.q3 && poleRef && entry.q3 >= poleRef) {
+          const delta = entry.q3 - poleRef;
+          const pct = Math.min(100, Math.max(4, (delta / 1.8) * 100));
+          qGapHtml = `
+            <div class="inline-gap-cell">
+              <span class="mono" style="font-size:0.75rem;color:var(--text-secondary);">+${delta.toFixed(3)}s</span>
+              <div class="inline-gap-track"><div class="inline-gap-fill" style="width:${pct.toFixed(1)}%;background:${teamColor};"></div></div>
+            </div>
+          `;
+        } else {
+          // Advanced to Q3, but did not set a timed lap in Q3
+          qGapHtml = `
+            <div class="inline-gap-cell" title="Advanced to Q3 Shootout — No timed lap set in Q3">
+              <span class="quali-no-time-pill q3">NO TIME (Q3)</span>
+            </div>
+          `;
+        }
+      } else if (stageInfo.reachedQ2) {
+        if (entry.q2) {
+          const segRef = bestQ2 < Infinity ? bestQ2 : poleRef;
+          const delta = (segRef && entry.q2 >= segRef) ? (entry.q2 - segRef) : null;
+          const pct = delta !== null ? Math.min(100, Math.max(4, (delta / 2.2) * 100)) : 0;
+          qGapHtml = `
+            <div class="inline-gap-cell" title="${delta !== null ? `+${delta.toFixed(3)}s to Q2 P1` : 'Eliminated in Q2'}">
+              <span class="mono" style="font-size:0.71rem;color:var(--text-muted);">${delta !== null ? `+${delta.toFixed(3)}s` : ''} <span style="opacity:0.75;font-size:0.64rem;">(OUT Q2)</span></span>
+              ${delta !== null ? `<div class="inline-gap-track"><div class="inline-gap-fill" style="width:${pct.toFixed(1)}%;background:${teamColor};opacity:0.65;"></div></div>` : ''}
+            </div>
+          `;
+        } else {
+          // Advanced to Q2 from Q1, but did not set a timed lap in Q2!
+          qGapHtml = `
+            <div class="inline-gap-cell" title="Advanced to Q2 (Top ${q2Cutoff} in Q1) — No timed lap set in Q2">
+              <span class="quali-no-time-pill q2">NO TIME (OUT Q2)</span>
+            </div>
+          `;
+        }
+      } else {
+        // Eliminated in Q1
+        if (entry.q1) {
+          const segRef = bestQ1 < Infinity ? bestQ1 : poleRef;
+          const delta = (segRef && entry.q1 >= segRef) ? (entry.q1 - segRef) : null;
+          const pct = delta !== null ? Math.min(100, Math.max(4, (delta / 2.5) * 100)) : 0;
+          qGapHtml = `
+            <div class="inline-gap-cell" title="${delta !== null ? `+${delta.toFixed(3)}s to Q1 P1` : 'Eliminated in Q1'}">
+              <span class="mono" style="font-size:0.71rem;color:var(--text-muted);">${delta !== null ? `+${delta.toFixed(3)}s` : ''} <span style="opacity:0.75;font-size:0.64rem;">(OUT Q1)</span></span>
+              ${delta !== null ? `<div class="inline-gap-track"><div class="inline-gap-fill" style="width:${pct.toFixed(1)}%;background:${teamColor};opacity:0.55;"></div></div>` : ''}
+            </div>
+          `;
+        } else {
+          qGapHtml = `
+            <div class="inline-gap-cell" title="Eliminated in Q1 — No timed lap set">
+              <span class="quali-no-time-pill q1">${isDNS ? 'DNS (OUT Q1)' : 'NO TIME (OUT Q1)'}</span>
+            </div>
+          `;
+        }
       }
 
       rowContent = `
         <td class="mono" style="font-size:0.8rem;">${q1Str}</td>
         <td class="mono" style="font-size:0.8rem;">${q2Str}</td>
         <td class="mono" style="font-size:0.8rem;">${q3Str}</td>
-        <td style="text-align:center;">${qGapHtml}</td>
+        <td style="text-align:center;min-width:130px;">${qGapHtml}</td>
       `;
     } else {
-      const bestLap = entry.bestLap || driverBestLaps.get(driver_number) || null;
+      const bestLap = entry.bestLap || driverBestLaps.get(driver_number);
       const isFastest = position === 1;
       let gapText = '<span style="color:var(--text-muted);">—</span>';
       if (position === 1 && bestLap) {
         gapText = '<span style="color:#ffd700;font-size:0.72rem;font-weight:700;text-transform:uppercase;">P1</span>';
       } else if (bestLap && p1Best) {
-        gapText = `<span style="color:var(--text-secondary);font-size:0.8rem;font-family:'JetBrains Mono',monospace;">+${(bestLap - p1Best).toFixed(3)}s</span>`;
+        const delta = bestLap - p1Best;
+        const pct = Math.min(100, Math.max(4, (delta / 2.5) * 100));
+        gapText = `
+          <div class="inline-gap-cell">
+            <span style="color:var(--text-secondary);font-size:0.8rem;font-family:'JetBrains Mono',monospace;">+${delta.toFixed(3)}s</span>
+            <div class="inline-gap-track"><div class="inline-gap-fill" style="width:${pct.toFixed(1)}%;background:${teamColor};"></div></div>
+          </div>
+        `;
       }
 
       rowContent = `
         <td class="mono ${isFastest ? 'fastest-lap' : ''}" style="font-size:0.8rem;">${bestLap ? formatLapTime(bestLap) : '—'} ${isFastest ? '<span style="color:#a855f7;font-size:0.65rem;margin-left:4px;" title="Fastest">🟣</span>' : ''}</td>
-        <td style="text-align:center;">${gapText}</td>
+        <td style="text-align:center;min-width:125px;">${gapText}</td>
       `;
     }
 
@@ -1323,8 +1835,11 @@ function renderSessionResults(container) {
       </tr>
     `;
 
-    if (isQuali && order.length >= 16 && (position === 10 || position === 15)) {
-      const label = position === 10 ? 'Q3 Shootout Cutoff — Top 10 Advance' : 'Q2 Elimination Cutoff — Top 15 Advance';
+    const rowRank = idx + 1;
+    if (isQuali && order.length > q3Cutoff && (rowRank === q3Cutoff || (order.length > q2Cutoff && rowRank === q2Cutoff))) {
+      const label = rowRank === q3Cutoff
+        ? `Q3 Shootout Cutoff — Top ${q3Cutoff} Advance`
+        : `Q2 Elimination Cutoff — Top ${q2Cutoff} Advance`;
       html += `<tr class="quali-cutoff-row"><td colspan="8"><span>${label}</span></td></tr>`;
     }
   }
@@ -1350,6 +1865,1236 @@ function bindDriverRowClicks(container) {
 
 
 // ── Lazy-Load Tab Wrappers ──
+
+async function loadAndRenderStartingGrid(container) {
+  if (raceDataCache.startingGrid !== null) {
+    renderStartingGrid(container);
+    return;
+  }
+  container.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
+  try {
+    const [startingGrid, laps] = await Promise.all([
+      fetchStartingGridForCurrentSession(),
+      raceDataCache.laps ? Promise.resolve(raceDataCache.laps) : getLaps({ session_key: raceDataCache.sessionKey }).catch(() => [])
+    ]);
+    raceDataCache.startingGrid = startingGrid || [];
+    if (!raceDataCache.laps && laps) raceDataCache.laps = laps;
+    renderStartingGrid(container);
+  } catch (e) {
+    console.warn('[Starting Grid] Failed to load starting grid:', e);
+    raceDataCache.startingGrid = [];
+    renderStartingGrid(container);
+  }
+}
+
+function renderStartingGrid(container) {
+  if (!raceDataCache) return;
+  const { sessions, currentSessionType, driverMap, startingGrid, laps } = raceDataCache;
+  const isSprintMode = currentSessionType === 'Sprint' || currentSessionType === 'Sprint Qualifying' || currentSessionType === 'Sprint Shootout';
+  const raceLabel = isSprintMode ? 'Sprint' : 'Grand Prix';
+  const qualiLabel = isSprintMode ? 'Sprint Qualifying' : 'Qualifying';
+
+  const raceSess = isSprintMode ? sessions?.['Sprint'] : sessions?.['Race'];
+  const qualiSess = isSprintMode
+    ? (sessions?.['Sprint Qualifying'] || sessions?.['Sprint Shootout'])
+    : sessions?.['Qualifying'];
+
+  // Gather Qualifying order (either from compiled qualiSess, or currentSessionType if viewing Quali)
+  let qualiOrder = [];
+  if (qualiSess && Array.isArray(qualiSess.results) && qualiSess.results.length > 0) {
+    qualiOrder = qualiSess.results;
+  } else if (isQualifyingSession(currentSessionType) && Array.isArray(raceDataCache.order) && raceDataCache.order.length > 0) {
+    qualiOrder = raceDataCache.order;
+  } else if (isQualifyingSession(currentSessionType) && Array.isArray(laps) && laps.length > 0) {
+    qualiOrder = buildQualifyingOrder(laps, driverMap, currentSessionType);
+  }
+
+  // Gather Race/Sprint finishing order
+  let raceOrder = [];
+  if (raceSess && Array.isArray(raceSess.results) && raceSess.results.length > 0) {
+    raceOrder = raceSess.results;
+  } else if (isRaceSession(currentSessionType) && Array.isArray(raceDataCache.order) && raceDataCache.order.length > 0) {
+    raceOrder = raceDataCache.order;
+  }
+
+  // Build lookup maps (with acronym bridge in case driver_number differed or driverMap needs cross-session lookup)
+  const qualiByDriver = new Map();
+  const qualiDriversList = qualiSess?.drivers || [];
+  for (const q of qualiOrder) {
+    if (!q || q.driver_number == null) continue;
+    qualiByDriver.set(Number(q.driver_number), q);
+    const qDrv = qualiDriversList.find(d => Number(d.driver_number) === Number(q.driver_number));
+    if (qDrv?.name_acronym && driverMap) {
+      for (const [dn, rDrv] of driverMap.entries()) {
+        if (rDrv.name_acronym === qDrv.name_acronym && !qualiByDriver.has(Number(dn))) {
+          qualiByDriver.set(Number(dn), q);
+        }
+      }
+    }
+  }
+
+  const finishByDriver = new Map();
+  for (const r of raceOrder) {
+    if (r && r.driver_number != null) {
+      finishByDriver.set(Number(r.driver_number), r);
+    }
+  }
+
+  const hasOfficialGrid = Array.isArray(startingGrid) && startingGrid.length > 0;
+  let gridSourceLabel = 'Starting Grid';
+  let isProvisional = false;
+
+  // Build unified grid entries list
+  const gridEntries = [];
+  const seenDrivers = new Set();
+
+  if (hasOfficialGrid) {
+    const srcTag = startingGrid[0]?.source;
+    gridSourceLabel = srcTag === 'fia_ergast'
+      ? 'Starting Grid (Post-Penalties)'
+      : 'Starting Grid (Post-Penalties)';
+
+    for (const sg of startingGrid) {
+      const dn = Number(sg.driver_number);
+      seenDrivers.add(dn);
+      const qEntry = qualiByDriver.get(dn) || null;
+      const fEntry = finishByDriver.get(dn) || null;
+      const qPos = (qEntry && typeof qEntry.position === 'number' && qEntry.status !== 'DNS') ? qEntry.position : null;
+      const gPos = (typeof sg.position === 'number' && sg.position > 0 && !sg.is_pit_lane) ? sg.position : null;
+      const isPitLane = Boolean(sg.is_pit_lane || gPos === null);
+      const lapTime = sg.lap_duration || qEntry?.bestLap || qEntry?.q3 || qEntry?.q2 || qEntry?.q1 || null;
+
+      // gridDelta: positive = promoted on grid (e.g. Quali P5 -> Grid P3 = +2); negative = penalized/dropped (e.g. Quali P2 -> Grid P7 = -5)
+      let gridDelta = null;
+      if (qPos !== null && gPos !== null) {
+        gridDelta = qPos - gPos;
+      }
+
+      gridEntries.push({
+        driver_number: dn,
+        gridPos: gPos,
+        isPitLane,
+        qualiPos: qPos,
+        gridDelta,
+        lapTime,
+        finishPos: (fEntry && typeof fEntry.position === 'number' && fEntry.status === 'FINISHED') ? fEntry.position : null,
+        finishStatus: fEntry?.status || null,
+        finishPoints: fEntry?.points || 0
+      });
+    }
+
+    // Check if any driver from raceOrder or qualiOrder was omitted from /starting_grid (e.g. Pit Lane start or late withdrawal)
+    for (const r of raceOrder) {
+      const dn = Number(r.driver_number);
+      if (seenDrivers.has(dn)) continue;
+      seenDrivers.add(dn);
+      const qEntry = qualiByDriver.get(dn) || null;
+      const qPos = (qEntry && typeof qEntry.position === 'number' && qEntry.status !== 'DNS') ? qEntry.position : null;
+      gridEntries.push({
+        driver_number: dn,
+        gridPos: null,
+        isPitLane: r.status !== 'DNS',
+         isDns: r.status === 'DNS',
+        qualiPos: qPos,
+        gridDelta: null,
+        lapTime: qEntry?.bestLap || qEntry?.q3 || qEntry?.q2 || qEntry?.q1 || null,
+        finishPos: (typeof r.position === 'number' && r.status === 'FINISHED') ? r.position : null,
+        finishStatus: r.status || null,
+        finishPoints: r.points || 0
+      });
+    }
+  } else if (qualiOrder.length > 0) {
+    isProvisional = true;
+    gridSourceLabel = `Provisional Starting Grid (From ${qualiLabel} Classification)`;
+    for (const q of qualiOrder) {
+      const dn = Number(q.driver_number);
+      seenDrivers.add(dn);
+      const fEntry = finishByDriver.get(dn) || null;
+      const gPos = (typeof q.position === 'number' && q.status !== 'DNS') ? q.position : null;
+      gridEntries.push({
+        driver_number: dn,
+        gridPos: gPos,
+        isPitLane: false,
+        isDns: q.status === 'DNS',
+        qualiPos: gPos,
+        gridDelta: 0,
+        lapTime: q.bestLap || q.q3 || q.q2 || q.q1 || null,
+        finishPos: (fEntry && typeof fEntry.position === 'number' && fEntry.status === 'FINISHED') ? fEntry.position : null,
+        finishStatus: fEntry?.status || null,
+        finishPoints: fEntry?.points || 0
+      });
+    }
+  }
+
+  if (gridEntries.length === 0) {
+    container.innerHTML = `
+      <div class="no-data">
+        <div class="no-data-icon"><i class="fa-solid fa-Grip-vertical fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
+        <div class="no-data-text">No Starting Grid data available yet for this ${raceLabel}</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Sort: numbered grid slots ascending (1..20), followed by Pit Lane / DNS starters
+  gridEntries.sort((a, b) => {
+    if (a.gridPos !== null && b.gridPos === null) return -1;
+    if (a.gridPos === null && b.gridPos !== null) return 1;
+    if (a.gridPos !== null && b.gridPos !== null) return a.gridPos - b.gridPos;
+    return (a.qualiPos || 99) - (b.qualiPos || 99);
+  });
+
+  const resolveDrv = (dn) => {
+    if (driverMap && driverMap.has(dn)) return driverMap.get(dn);
+    const qDrv = qualiDriversList.find(d => Number(d.driver_number) === Number(dn));
+    if (qDrv) return qDrv;
+    return { driver_number: dn, name_acronym: `#${dn}`, full_name: `Driver #${dn}`, team_name: '—', team_colour: '666666' };
+  };
+
+  // Compute KPI telemetry metrics
+  const poleEntry = gridEntries.find(e => e.gridPos === 1) || gridEntries[0];
+  const p2Entry = gridEntries.find(e => e.gridPos === 2) || null;
+  const poleDrv = poleEntry ? resolveDrv(poleEntry.driver_number) : null;
+  const p2Drv = p2Entry ? resolveDrv(p2Entry.driver_number) : null;
+  const isFrontRowLockout = Boolean(poleDrv && p2Drv && poleDrv.team_name && poleDrv.team_name !== '—' && poleDrv.team_name === p2Drv.team_name);
+  const frontRowGap = (poleEntry?.lapTime && p2Entry?.lapTime && p2Entry.lapTime >= poleEntry.lapTime)
+    ? `+${(p2Entry.lapTime - poleEntry.lapTime).toFixed(3)}s`
+    : null;
+
+  const penalizedList = gridEntries.filter(e => (e.gridDelta !== null && e.gridDelta < 0) || (e.isPitLane && !e.isDns && e.qualiPos !== null));
+  const promotedList = gridEntries.filter(e => e.gridDelta !== null && e.gridDelta > 0);
+  const changedCount = penalizedList.length + promotedList.length;
+
+  // Biggest Grid-to-Finish climber in Race/Sprint
+  let biggestClimber = null;
+  for (const e of gridEntries) {
+    if (e.gridPos !== null && e.finishPos !== null) {
+      const gain = e.gridPos - e.finishPos;
+      if (gain > 0 && (!biggestClimber || gain > biggestClimber.gain)) {
+        biggestClimber = { entry: e, drv: resolveDrv(e.driver_number), gain };
+      }
+    }
+  }
+
+  const viewMode = raceDataCache.gridViewMode || 'formation';
+  const filterMode = raceDataCache.gridFilterMode || 'all';
+
+  const filteredEntries = gridEntries.filter(e => {
+    if (filterMode === 'changed') {
+      return (e.gridDelta !== null && e.gridDelta !== 0) || (e.isPitLane && !e.isDns);
+    }
+    if (filterMode === 'top10') {
+      return e.gridPos !== null && e.gridPos <= 10;
+    }
+    return true;
+  });
+
+  const penaltySummaryPills = penalizedList.slice(0, 4).map(e => {
+    const d = resolveDrv(e.driver_number);
+    const label = e.isPitLane ? `${d.name_acronym} (PIT)` : `${d.name_acronym} (${e.gridDelta})`;
+    return `<span class="sg-mini-pill penalty">${label}</span>`;
+  }).join(' ');
+
+  let poleConversionSub = 'Race result pending';
+  if (poleEntry && poleEntry.finishPos !== null) {
+    poleConversionSub = poleEntry.finishPos === 1
+      ? '<span style="color:#2ecc71;font-weight:700;">Converted Pole to P1 Win 🏆</span>'
+      : `Finished P${poleEntry.finishPos} (${poleEntry.finishPos > 1 ? '▼' + (poleEntry.finishPos - 1) : '—'})`;
+  } else if (poleEntry && poleEntry.finishStatus && poleEntry.finishStatus !== 'FINISHED') {
+    poleConversionSub = `Pole Sitter ${poleEntry.finishStatus}`;
+  }
+
+  let html = `
+    <!-- Starting Grid Telemetry KPI Strip -->
+    <div class="rd-kpi-strip" style="margin-bottom: 16px;">
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-crown" style="color:#ffd700;"></i> Pole Position (P1)</div>
+        <div class="rd-kpi-value" style="display:flex;align-items:center;gap:6px;">
+          ${poleDrv ? `${getDriverFlagImg(poleDrv.name_acronym)} <span>${poleDrv.full_name || poleDrv.name_acronym}</span>` : '—'}
+        </div>
+        <div class="rd-kpi-sub">${poleDrv?.team_name || ''}${poleEntry?.lapTime ? ` • <span class="mono" style="color:#a855f7;font-weight:700;">${formatLapTime(poleEntry.lapTime)}</span>` : ''}${poleEntry?.qualiPos && poleEntry.qualiPos !== 1 ? ` • <span style="color:#2ecc71;">Promoted from Q P${poleEntry.qualiPos}</span>` : ''}</div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-road" style="color:#3b82f6;"></i> Front Row Partner (P2)</div>
+        <div class="rd-kpi-value" style="display:flex;align-items:center;gap:6px;">
+          ${p2Drv ? `${getDriverFlagImg(p2Drv.name_acronym)} <span>${p2Drv.full_name || p2Drv.name_acronym}</span>` : '—'}
+        </div>
+        <div class="rd-kpi-sub">${isFrontRowLockout ? `<span style="color:#ffd700;font-weight:700;">🔒 ${poleDrv.team_name} Front Row Lockout</span>` : (p2Drv?.team_name || '—')}${frontRowGap ? ` • <span class="mono">${frontRowGap}</span>` : ''}</div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-scale-unbalanced" style="color:var(--f1-red);"></i> Grid Penalties &amp; Drops</div>
+        <div class="rd-kpi-value">${penalizedList.length > 0 ? `${penalizedList.length} Driver${penalizedList.length > 1 ? 's' : ''} Dropped` : '0 Grid Drops'}</div>
+        <div class="rd-kpi-sub" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+          ${penalizedList.length > 0 ? penaltySummaryPills : '<span style="color:#2ecc71;">Grid matches Qualifying order</span>'}
+        </div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-flag-checkered" style="color:#2ecc71;"></i> Pole Outcome &amp; Top Charger</div>
+        <div class="rd-kpi-value" style="font-size:0.92rem;">${poleConversionSub}</div>
+        <div class="rd-kpi-sub">${biggestClimber ? `Top Gain: <strong>${biggestClimber.drv.name_acronym}</strong> (P${biggestClimber.entry.gridPos} → P${biggestClimber.entry.finishPos}, <span style="color:#2ecc71;font-weight:700;">▲${biggestClimber.gain}</span>)` : 'Click any starter card for session deep-dive'}</div>
+      </div>
+    </div>
+
+    <!-- Starting Grid Controls Toolbar -->
+    <div class="sg-toolbar">
+      <div class="sg-source-badge ${isProvisional ? 'provisional' : 'official'}">
+        <i class="fa-solid ${isProvisional ? 'fa-clock' : 'fa-shield-halved'}"></i>
+        <span>${gridSourceLabel}</span>
+      </div>
+
+      <div class="sg-controls-right">
+        <div class="sg-filter-pills" id="sg-filter-pills">
+          <button type="button" class="sg-pill ${filterMode === 'all' ? 'active' : ''}" data-filter="all">All (${gridEntries.length})</button>
+          <button type="button" class="sg-pill ${filterMode === 'changed' ? 'active' : ''}" data-filter="changed">
+            <i class="fa-solid fa-arrows-up-down"></i> Grid Shifts (${changedCount})
+          </button>
+          <button type="button" class="sg-pill ${filterMode === 'top10' ? 'active' : ''}" data-filter="top10">Top 10</button>
+        </div>
+
+        <div class="sg-view-toggle" id="sg-view-toggle">
+          <button type="button" class="sg-view-btn ${viewMode === 'formation' ? 'active' : ''}" data-view="formation" title="2x2 Staggered Track Grid">
+            <i class="fa-solid fa-Grip"></i> Track Grid
+          </button>
+          <button type="button" class="sg-view-btn ${viewMode === 'table' ? 'active' : ''}" data-view="table" title="Qualifying vs Grid Comparison Table">
+            <i class="fa-solid fa-table-list"></i> Table
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const formatQualiShiftBadge = (entry) => {
+    if (entry.isDns) {
+      return `<span class="sg-shift-badge dns">DNS • Did Not Start</span>`;
+    }
+    if (entry.isPitLane) {
+      const qText = entry.qualiPos ? `Quali P${entry.qualiPos} • ` : '';
+      return `<span class="sg-shift-badge penalty"><i class="fa-solid fa-wrench"></i> ${qText}Pit Lane Start</span>`;
+    }
+    if (entry.qualiPos === null) {
+      return `<span class="sg-shift-badge neutral">No Quali Time</span>`;
+    }
+    if (entry.gridDelta < 0) {
+      const drop = Math.abs(entry.gridDelta);
+      return `<span class="sg-shift-badge penalty" title="Qualified P${entry.qualiPos}, dropped ${drop} grid slot${drop > 1 ? 's' : ''} due to penalty"><i class="fa-solid fa-arrow-down"></i> Quali P${entry.qualiPos} (▼${drop} Penalty)</span>`;
+    }
+    if (entry.gridDelta > 0) {
+      return `<span class="sg-shift-badge promoted" title="Qualified P${entry.qualiPos}, promoted ${entry.gridDelta} slot${entry.gridDelta > 1 ? 's' : ''} due to penalties ahead"><i class="fa-solid fa-arrow-up"></i> Quali P${entry.qualiPos} (▲${entry.gridDelta} Promoted)</span>`;
+    }
+    return `<span class="sg-shift-badge neutral">Quali P${entry.qualiPos} (—)</span>`;
+  };
+
+  const formatFinishOutcomeBadge = (entry) => {
+    if (!entry.finishStatus && entry.finishPos === null) return '';
+    if (entry.finishStatus && entry.finishStatus !== 'FINISHED') {
+      return `<span class="sg-finish-pill dnf">${raceLabel}: ${entry.finishStatus}</span>`;
+    }
+    if (entry.finishPos !== null) {
+      let deltaHtml = '';
+      if (entry.gridPos !== null) {
+        const diff = entry.gridPos - entry.finishPos;
+        if (diff > 0) deltaHtml = ` <strong style="color:#2ecc71;">▲${diff}</strong>`;
+        else if (diff < 0) deltaHtml = ` <strong style="color:var(--f1-red);">▼${Math.abs(diff)}</strong>`;
+      } else if (entry.isPitLane) {
+        deltaHtml = ` <strong style="color:#2ecc71;">from PIT</strong>`;
+      }
+      return `<span class="sg-finish-pill">Finished <strong>P${entry.finishPos}</strong>${deltaHtml}</span>`;
+    }
+    return '';
+  };
+
+  if (filteredEntries.length === 0) {
+    html += `
+      <div class="no-data" style="padding:28px;">
+        <div class="no-data-text">No drivers match the selected filter (0 grid shifts between ${qualiLabel} and Starting Grid).</div>
+      </div>
+    `;
+  } else if (viewMode === 'formation') {
+    const onGridEntries = filteredEntries.filter(e => e.gridPos !== null && !e.isPitLane);
+    const pitLaneEntries = filteredEntries.filter(e => e.gridPos === null || e.isPitLane);
+
+    // Pair into rows of 2 (Left = odd index / pole side, Right = even index / staggered side)
+    const pairs = [];
+    if (filterMode === 'all' || filterMode === 'top10') {
+      const maxPos = onGridEntries.reduce((m, e) => Math.max(m, e.gridPos || 0), 0);
+      const byGridPos = new Map(onGridEntries.map(e => [e.gridPos, e]));
+      const totalRows = Math.ceil(maxPos / 2);
+      for (let r = 1; r <= totalRows; r++) {
+        const leftEntry = byGridPos.get(r * 2 - 1) || null;
+        const rightEntry = byGridPos.get(r * 2) || null;
+        if (leftEntry || rightEntry) {
+          pairs.push({ rowNum: r, left: leftEntry, right: rightEntry });
+        }
+      }
+    } else {
+      // Filtered mode (e.g. Grid Shifts only): pair sequentially while keeping true gridPos numbers
+      for (let i = 0; i < onGridEntries.length; i += 2) {
+        const leftEntry = onGridEntries[i];
+        const rightEntry = onGridEntries[i + 1] || null;
+        const rowNum = Math.ceil((leftEntry.gridPos || (i + 1)) / 2);
+        pairs.push({ rowNum, left: leftEntry, right: rightEntry });
+      }
+    }
+
+    const renderSlotCard = (entry, side) => {
+      if (!entry) {
+        return `<div class="sg-slot-card empty ${side}"><span>Vacant Grid Slot</span></div>`;
+      }
+      const d = resolveDrv(entry.driver_number);
+      const teamColor = getTeamColor(d.team_colour);
+      const { isFavD, isFavT } = isDriverOrTeamFavorite(d);
+      const favClass = isFavD ? 'fav-driver-row' : (isFavT ? 'fav-team-row' : '');
+      const isPole = entry.gridPos === 1;
+      const gapToPole = (!isPole && poleEntry?.lapTime && entry.lapTime && entry.lapTime >= poleEntry.lapTime)
+        ? `+${(entry.lapTime - poleEntry.lapTime).toFixed(3)}s`
+        : '';
+
+      return `
+        <div class="sg-slot-card ${side} ${isPole ? 'is-pole' : ''} ${entry.gridDelta < 0 ? 'has-penalty' : ''} ${favClass} clickable-driver-row" data-driver-number="${entry.driver_number}" style="--sg-team-color:${teamColor};" title="Click for ${d.full_name || d.name_acronym} session deep-dive">
+          <div class="sg-slot-bracket"></div>
+          <div class="sg-slot-top">
+            <div class="sg-pos-pill ${isPole ? 'pole' : (entry.gridPos <= 3 ? 'front' : '')}">
+              <span>P${entry.gridPos}</span>
+              ${isPole ? '<span class="sg-pole-tag">POLE</span>' : ''}
+            </div>
+            <div class="sg-lap-box mono">
+              ${entry.lapTime ? `<span class="sg-lap-val">${formatLapTime(entry.lapTime)}</span>` : '<span class="sg-lap-muted">No Q Time</span>'}
+              ${gapToPole ? `<span class="sg-lap-gap">${gapToPole}</span>` : ''}
+            </div>
+          </div>
+
+          <div class="sg-driver-main">
+            <img class="sg-driver-avatar" src="${d.headshot_url || ''}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'">
+            <div class="sg-driver-meta">
+              <div class="sg-driver-name-line">
+                ${getDriverFlagImg(d.name_acronym)}
+                <span class="sg-driver-name">${d.full_name || d.name_acronym}</span>
+                ${isFavD ? '<i class="fa-solid fa-star fav-inline-star" title="Pinned Favorite Driver"></i>' : ''}
+              </div>
+              <div class="sg-driver-team-line">
+                <span class="sg-team-dot" style="background:${teamColor};"></span>
+                <span>${d.team_name}</span>
+                <span class="sg-car-num mono">#${entry.driver_number}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="sg-slot-footer">
+            ${formatQualiShiftBadge(entry)}
+            ${formatFinishOutcomeBadge(entry)}
+          </div>
+        </div>
+      `;
+    };
+
+    html += `
+      <div class="sg-formation-track">
+        <div class="sg-start-line-banner">
+          <div class="sg-checkered-strip"></div>
+          <span><i class="fa-solid fa-traffic-light" style="color:var(--f1-red);margin-right:6px;"></i> STARTING LINE • ${raceLabel.toUpperCase()} GRID FORMATION</span>
+          <div class="sg-checkered-strip"></div>
+        </div>
+        <div class="sg-rows-container">
+          ${pairs.map(p => `
+            <div class="sg-grid-row">
+              <div class="sg-row-label">ROW ${p.rowNum}</div>
+              <div class="sg-row-pair">
+                ${renderSlotCard(p.left, 'left-slot')}
+                ${renderSlotCard(p.right, 'right-slot')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    if (pitLaneEntries.length > 0) {
+      html += `
+        <div class="sg-pitlane-box">
+          <div class="sg-pitlane-header">
+            <i class="fa-solid fa-warehouse" style="color:var(--f1-red);"></i>
+            <span>Pit Lane / Non-Grid Starters (${pitLaneEntries.length})</span>
+          </div>
+          <div class="sg-pitlane-grid">
+            ${pitLaneEntries.map(entry => {
+              const d = resolveDrv(entry.driver_number);
+              const teamColor = getTeamColor(d.team_colour);
+              return `
+                <div class="sg-slot-card pit-slot clickable-driver-row" data-driver-number="${entry.driver_number}" style="--sg-team-color:${teamColor};">
+                  <div class="sg-slot-top">
+                    <div class="sg-pos-pill pit">${entry.isDns ? 'DNS' : 'PIT LANE'}</div>
+                    <div class="sg-lap-box mono">${entry.lapTime ? formatLapTime(entry.lapTime) : '—'}</div>
+                  </div>
+                  <div class="sg-driver-main">
+                    <img class="sg-driver-avatar" src="${d.headshot_url || ''}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'">
+                    <div class="sg-driver-meta">
+                      <div class="sg-driver-name-line">
+                        ${getDriverFlagImg(d.name_acronym)}
+                        <span class="sg-driver-name">${d.full_name || d.name_acronym}</span>
+                      </div>
+                      <div class="sg-driver-team-line">
+                        <span class="sg-team-dot" style="background:${teamColor};"></span>
+                        <span>${d.team_name}</span>
+                        <span class="sg-car-num mono">#${entry.driver_number}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="sg-slot-footer">
+                    ${formatQualiShiftBadge(entry)}
+                    ${formatFinishOutcomeBadge(entry)}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+  } else {
+    // Table View
+    html += `
+      <div style="overflow-x:auto;">
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>Grid</th>
+              <th>Driver</th>
+              <th>Team</th>
+              <th style="text-align:center;">${qualiLabel} Pos</th>
+              <th>Quali → Grid Shift</th>
+              <th>Qualifying Lap</th>
+              <th style="text-align:center;">${raceLabel} Finish</th>
+              <th style="text-align:center;">Grid → Finish</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredEntries.map(entry => {
+              const d = resolveDrv(entry.driver_number);
+              const teamColor = getTeamColor(d.team_colour);
+              const { isFavD, isFavT } = isDriverOrTeamFavorite(d);
+              const rowFavClass = isFavD ? 'fav-driver-row' : (isFavT ? 'fav-team-row' : '');
+              const posClass = entry.gridPos === 1 ? 'p1' : entry.gridPos === 2 ? 'p2' : entry.gridPos === 3 ? 'p3' : '';
+              const gridDisplay = entry.gridPos !== null ? entry.gridPos : (entry.isDns ? 'DNS' : 'PIT');
+
+              let raceGainHtml = '<span style="color:var(--text-muted);">—</span>';
+              if (entry.finishPos !== null && entry.gridPos !== null) {
+                const diff = entry.gridPos - entry.finishPos;
+                if (diff > 0) raceGainHtml = `<span style="color:#2ecc71;font-weight:700;">▲${diff}</span>`;
+                else if (diff < 0) raceGainHtml = `<span style="color:var(--f1-red);font-weight:700;">▼${Math.abs(diff)}</span>`;
+                else raceGainHtml = `<span style="color:var(--text-muted);">—</span>`;
+              }
+
+              const finishDisplay = entry.finishPos !== null
+                ? `<strong>P${entry.finishPos}</strong>`
+                : (entry.finishStatus ? `<span style="color:var(--f1-red);font-weight:700;">${entry.finishStatus}</span>` : '—');
+
+              return `
+                <tr class="clickable-driver-row ${rowFavClass}" data-driver-number="${entry.driver_number}" style="cursor:pointer;">
+                  <td><span class="position-badge ${posClass}">${gridDisplay}</span></td>
+                  <td>
+                    <div class="driver-cell">
+                      <div class="team-color-bar" style="background:${teamColor}"></div>
+                      <img class="driver-headshot" src="${d.headshot_url || ''}" alt="${d.name_acronym}" loading="lazy" onerror="this.style.display='none'" style="width:32px;height:32px;">
+                      <div class="driver-info">
+                        <div class="driver-name" style="display:flex;align-items:center;gap:6px;">
+                          ${getDriverFlagImg(d.name_acronym)}
+                          <span>${d.full_name || d.name_acronym}</span>
+                          ${isFavD ? '<i class="fa-solid fa-star fav-inline-star"></i>' : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="color:var(--text-muted);font-size:0.8rem;">${d.team_name}</td>
+                  <td class="mono" style="text-align:center;font-weight:700;">${entry.qualiPos ? 'P' + entry.qualiPos : '—'}</td>
+                  <td>${formatQualiShiftBadge(entry)}</td>
+                  <td class="mono" style="font-size:0.8rem;">${entry.lapTime ? formatLapTime(entry.lapTime) : '—'}</td>
+                  <td class="mono" style="text-align:center;">${finishDisplay}</td>
+                  <td class="mono" style="text-align:center;">${raceGainHtml}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+
+  // Wire filter pills & view mode switcher
+  container.querySelectorAll('#sg-filter-pills .sg-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      raceDataCache.gridFilterMode = btn.dataset.filter;
+      renderStartingGrid(container);
+    });
+  });
+
+  container.querySelectorAll('#sg-view-toggle .sg-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      raceDataCache.gridViewMode = btn.dataset.view;
+      renderStartingGrid(container);
+    });
+  });
+
+  bindDriverRowClicks(container);
+}
+
+async function loadAndRenderGaps(container) {
+  if (!raceDataCache) return;
+  const { currentSessionType, sessions, driverMap } = raceDataCache;
+  const isRace = isRaceSession(currentSessionType);
+  const isQuali = isQualifyingSession(currentSessionType);
+  const isSprintMode = currentSessionType === 'Sprint' || currentSessionType === 'Sprint Qualifying' || currentSessionType === 'Sprint Shootout';
+
+  // If currently on Race/Sprint, resolve the weekend's Qualifying / Sprint Qualifying session data & laps
+  if (isRace) {
+    const targetQualiName = isSprintMode
+      ? (sessions?.['Sprint Qualifying'] ? 'Sprint Qualifying' : (sessions?.['Sprint Shootout'] ? 'Sprint Shootout' : 'Qualifying'))
+      : 'Qualifying';
+    const qualiSess = sessions?.[targetQualiName];
+
+    if (!raceDataCache.qualiGapsOrder) {
+      container.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
+      try {
+        let qOrder = qualiSess?.results ? [...qualiSess.results] : [];
+        const hasSegmentTimes = qOrder.some(r => r.hasOfficialSegments);
+        if (qualiSess?.session_key && !hasSegmentTimes) {
+          const [apiOrder, qLaps] = await Promise.all([
+            getFinishingOrder(qualiSess.session_key).catch(() => qOrder),
+            getLaps({ session_key: qualiSess.session_key }).catch(() => [])
+          ]);
+          qOrder = mergeQualifyingOrderWithTelemetry(qOrder, apiOrder, qLaps, driverMap, targetQualiName);
+          if (qualiSess) qualiSess.results = qOrder;
+        }
+        raceDataCache.qualiGapsOrder = qOrder;
+        raceDataCache.qualiGapsSessionName = targetQualiName;
+        raceDataCache.qualiGapsDrivers = qualiSess?.drivers || [];
+      } catch (e) {
+        console.warn('[Quali Gaps] Failed to load qualifying gaps:', e);
+        raceDataCache.qualiGapsOrder = [];
+      }
+    }
+    renderGaps(container);
+    return;
+  }
+
+  // Currently on Qualifying or Practice session: ensure official API segment times & laps are loaded
+  const hasTimes = (raceDataCache.order || []).some(r => r.q1 || r.q2 || r.q3 || r.bestLap);
+  if (!hasTimes) {
+    container.innerHTML = Array(5).fill('<div class="skeleton skeleton-row"></div>').join('');
+    try {
+      const [apiOrder, laps] = await Promise.all([
+        isQuali ? getFinishingOrder(raceDataCache.sessionKey).catch(() => raceDataCache.order) : Promise.resolve(raceDataCache.order),
+        raceDataCache.laps ? Promise.resolve(raceDataCache.laps) : getLaps({ session_key: raceDataCache.sessionKey }).catch(() => [])
+      ]);
+      raceDataCache.laps = laps;
+      if (isQuali) {
+        raceDataCache.order = mergeQualifyingOrderWithTelemetry(raceDataCache.order, apiOrder, laps, driverMap, currentSessionType);
+      } else if (!raceDataCache.order || raceDataCache.order.length === 0) {
+        raceDataCache.order = buildQualifyingOrder(laps, driverMap, currentSessionType);
+      }
+    } catch (e) {
+      console.warn('[Pace Gaps] Failed to fetch session laps:', e);
+    }
+  }
+  renderGaps(container);
+}
+
+function renderGaps(container) {
+  if (!raceDataCache) return;
+  const { currentSessionType, driverMap, laps } = raceDataCache;
+  const isRace = isRaceSession(currentSessionType);
+  const isPractice = !isRace && !isQualifyingSession(currentSessionType);
+
+  const activeSessionLabel = isRace
+    ? (raceDataCache.qualiGapsSessionName || 'Qualifying')
+    : currentSessionType;
+  const isQualiMode = !isPractice;
+
+  // Resolve order & driver lookup
+  let sourceOrder = isRace ? (raceDataCache.qualiGapsOrder || []) : (raceDataCache.order || []);
+  const extraDrivers = isRace ? (raceDataCache.qualiGapsDrivers || []) : [];
+
+  // If Practice or Qualifying order is missing bestLap, compute from laps
+  if (sourceOrder.length === 0 && laps && laps.length > 0) {
+    sourceOrder = buildQualifyingOrder(laps, driverMap, activeSessionLabel);
+  } else if (isPractice && laps && laps.length > 0) {
+    const bestMap = new Map();
+    for (const l of laps) {
+      if (l.lap_duration > 0) {
+        const prev = bestMap.get(l.driver_number);
+        if (!prev || l.lap_duration < prev) bestMap.set(l.driver_number, l.lap_duration);
+      }
+    }
+    sourceOrder = sourceOrder.map(e => ({
+      ...e,
+      bestLap: e.bestLap || bestMap.get(e.driver_number) || null
+    }));
+  }
+
+  const resolveDrv = (dn) => {
+    if (driverMap && driverMap.has(Number(dn))) return driverMap.get(Number(dn));
+    const ext = extraDrivers.find(d => Number(d.driver_number) === Number(dn));
+    if (ext) return ext;
+    return { driver_number: dn, name_acronym: `#${dn}`, full_name: `Driver #${dn}`, team_name: '—', team_colour: '666666' };
+  };
+
+  const hasAnyTime = sourceOrder.some(e => e.q1 || e.q2 || e.q3 || e.bestLap);
+  if (!sourceOrder || sourceOrder.length === 0 || !hasAnyTime) {
+    container.innerHTML = `
+      <div class="no-data">
+        <div class="no-data-icon"><i class="fa-solid fa-chart-bar fa-3x" style="color: var(--border-subtle); margin-bottom: var(--space-xs);"></i></div>
+        <div class="no-data-text">No Qualifying / Session lap time deltas available for ${activeSessionLabel}</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Check if Q1/Q2/Q3 segment times exist
+  const hasSegments = isQualiMode && sourceOrder.some(e => e.q1 || e.q2 || e.q3);
+  let segMode = raceDataCache.gapsSegmentMode || 'overall';
+  if (!hasSegments && (segMode === 'q3' || segMode === 'q2' || segMode === 'q1' || segMode === 'evolution')) {
+    segMode = 'overall';
+  }
+
+  // Dynamically resolve Q3 and Q2 elimination cutoffs (e.g. Top 10 / Top 16 in 22-car 2026 grid, Top 10 / Top 15 in 20-car grid)
+  const { q3Cutoff, q2Cutoff } = resolveQualifyingCutoffs(sourceOrder, driverMap, laps);
+
+  // Compute segment reference bests & full segment participant lists (including drivers who advanced to Q2/Q3 but set NO TIME)
+  const q1Valid = sourceOrder.filter(e => e.q1 && e.q1 > 0).sort((a, b) => a.q1 - b.q1);
+  const q2Valid = sourceOrder.filter(e => e.q2 && e.q2 > 0).sort((a, b) => a.q2 - b.q2);
+  const q3Valid = sourceOrder.filter(e => e.q3 && e.q3 > 0).sort((a, b) => a.q3 - b.q3);
+
+  const q3NoTimeEntries = sourceOrder.filter((e, idx) => {
+    const pos = typeof e.position === 'number' ? e.position : (idx + 1);
+    const st = getDriverQualiStage(e, pos, q3Cutoff, q2Cutoff);
+    return st.reachedQ3 && !st.hasStageTime;
+  });
+  const q2NoTimeEntries = sourceOrder.filter((e, idx) => {
+    const pos = typeof e.position === 'number' ? e.position : (idx + 1);
+    const st = getDriverQualiStage(e, pos, q3Cutoff, q2Cutoff);
+    return st.reachedQ2 && !(e.q2 && e.q2 > 0);
+  });
+  const q1NoTimeEntries = sourceOrder.filter(e => !(e.q1 && e.q1 > 0));
+
+  const q3ParticipantsCount = q3Valid.length + q3NoTimeEntries.length;
+  const q2ParticipantsCount = q2Valid.length + q2NoTimeEntries.length;
+  const q1ParticipantsCount = q1Valid.length + q1NoTimeEntries.length;
+
+  const bestQ1 = q1Valid.length > 0 ? q1Valid[0].q1 : null;
+  const bestQ2 = q2Valid.length > 0 ? q2Valid[0].q2 : null;
+  const bestQ3 = q3Valid.length > 0 ? q3Valid[0].q3 : null;
+
+  // Pole margin (P1 vs P2 in Q3 or overall)
+  const overallWithTime = sourceOrder
+    .map(e => ({ ...e, time: e.q3 || e.q2 || e.q1 || e.bestLap || null }))
+    .filter(e => e.time && e.time > 0);
+  const poleTime = q3Valid.length > 0 ? q3Valid[0].q3 : (overallWithTime[0]?.time || null);
+  const p1Entry = q3Valid.length > 0 ? q3Valid[0] : overallWithTime[0];
+  const p2Entry = q3Valid.length > 1 ? q3Valid[1] : overallWithTime[1];
+  const poleMargin = (p1Entry && p2Entry && p2Entry.time !== undefined)
+    ? ((q3Valid.length > 1 ? (q3Valid[1].q3 - q3Valid[0].q3) : (p2Entry.time - p1Entry.time)))
+    : (q3Valid.length > 1 ? (q3Valid[1].q3 - q3Valid[0].q3) : null);
+
+  // Q3 Knockout Bubble (P{q3Cutoff} vs P{q3Cutoff+1} in Q2) & Q2 Knockout Bubble (P{q2Cutoff} vs P{q2Cutoff+1} in Q1)
+  const q3BubbleMargin = (q2Valid.length > q3Cutoff) ? (q2Valid[q3Cutoff].q2 - q2Valid[q3Cutoff - 1].q2) : null;
+  const q2BubbleMargin = (q1Valid.length > q2Cutoff) ? (q1Valid[q2Cutoff].q1 - q1Valid[q2Cutoff - 1].q1) : null;
+
+  // Check if the bubble elimination spot was decided by a driver who set NO TIME in Q2 or Q1
+  const q3BubbleInDrv = q2Valid.length >= q3Cutoff ? resolveDrv(q2Valid[q3Cutoff - 1].driver_number) : null;
+  const q3BubbleOutNoTimeDrv = (q3BubbleMargin === null && q2NoTimeEntries.length > 0) ? resolveDrv(q2NoTimeEntries[0].driver_number) : null;
+  const q2BubbleInDrv = q1Valid.length >= q2Cutoff ? resolveDrv(q1Valid[q2Cutoff - 1].driver_number) : null;
+  const q2BubbleOutNoTimeDrv = (q2BubbleMargin === null && q1NoTimeEntries.length > 0) ? resolveDrv(q1NoTimeEntries[0].driver_number) : null;
+
+  // Track evolution: average improvement from Q1 to Q3 among Q3 drivers
+  const evoDrivers = sourceOrder.filter(e => e.q1 > 0 && e.q3 > 0);
+  let avgEvoGain = null;
+  let bestEvoDriver = null;
+  if (evoDrivers.length > 0) {
+    let sumGain = 0;
+    for (const e of evoDrivers) {
+      const gain = e.q1 - e.q3; // positive = faster in Q3 than Q1
+      sumGain += gain;
+      if (!bestEvoDriver || gain > bestEvoDriver.gain) {
+        bestEvoDriver = { drv: resolveDrv(e.driver_number), gain, q1: e.q1, q3: e.q3 };
+      }
+    }
+    avgEvoGain = sumGain / evoDrivers.length;
+  }
+
+  // Top-10 spread
+  const p10Ref = q3Valid.length >= 2 ? q3Valid[q3Valid.length - 1].q3 : (overallWithTime[Math.min(q3Cutoff - 1, overallWithTime.length - 1)]?.time || null);
+  const topSpread = (poleTime && p10Ref && p10Ref >= poleTime) ? (p10Ref - poleTime) : null;
+
+  const p1Drv = p1Entry ? resolveDrv(p1Entry.driver_number) : null;
+  const p2Drv = p2Entry ? resolveDrv(p2Entry.driver_number) : null;
+
+  const q3BubbleTitle = (q3BubbleMargin !== null || q3BubbleOutNoTimeDrv)
+    ? `Q3 Knockout Bubble (P${q3Cutoff}/P${q3Cutoff + 1})`
+    : `Top-${q3Cutoff} Field Spread`;
+  const q3BubbleVal = q3BubbleMargin !== null
+    ? `+${q3BubbleMargin.toFixed(3)}s`
+    : (q3BubbleOutNoTimeDrv ? 'No Q2 Lap' : (topSpread !== null ? `+${topSpread.toFixed(3)}s` : '—'));
+  const q3BubbleSub = q3BubbleMargin !== null
+    ? `<strong>${resolveDrv(q2Valid[q3Cutoff - 1].driver_number).name_acronym}</strong> (IN) vs <strong>${resolveDrv(q2Valid[q3Cutoff].driver_number).name_acronym}</strong> (OUT)`
+    : (q3BubbleOutNoTimeDrv && q3BubbleInDrv
+        ? `<strong>${q3BubbleInDrv.name_acronym}</strong> (IN) • <strong>${q3BubbleOutNoTimeDrv.name_acronym}</strong> (No Time in Q2)`
+        : `P1 to Top-${q3Cutoff} spread`);
+
+  const q2BubbleTitle = (q2BubbleMargin !== null || q2BubbleOutNoTimeDrv)
+    ? `Q2 Knockout Bubble (P${q2Cutoff}/P${q2Cutoff + 1})`
+    : 'Field Spread (P1 to Last)';
+  const q2BubbleVal = q2BubbleMargin !== null
+    ? `+${q2BubbleMargin.toFixed(3)}s`
+    : (q2BubbleOutNoTimeDrv ? 'No Q1 Lap' : (overallWithTime.length > 1 ? `+${(overallWithTime[overallWithTime.length - 1].time - overallWithTime[0].time).toFixed(3)}s` : '—'));
+  const q2BubbleSub = q2BubbleMargin !== null
+    ? `<strong>${resolveDrv(q1Valid[q2Cutoff - 1].driver_number).name_acronym}</strong> (IN) vs <strong>${resolveDrv(q1Valid[q2Cutoff].driver_number).name_acronym}</strong> (OUT)`
+    : (q2BubbleOutNoTimeDrv && q2BubbleInDrv
+        ? `<strong>${q2BubbleInDrv.name_acronym}</strong> (P${q2Cutoff} IN) • <strong>${q2BubbleOutNoTimeDrv.name_acronym}</strong> (No Time in Q1)`
+        : `Across ${overallWithTime.length} classified cars`);
+
+  let html = `
+    <!-- Qualifying / Pace Gap KPI Telemetry Strip -->
+    <div class="rd-kpi-strip" style="margin-bottom: 16px;">
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-bolt" style="color:#ffd700;"></i> ${isPractice ? 'P1 vs P2 Margin' : 'Pole Margin (P1 vs P2)'}</div>
+        <div class="rd-kpi-value mono" style="color:#ffd700;">${poleMargin !== null && poleMargin >= 0 ? `+${poleMargin.toFixed(3)}s` : '—'}</div>
+        <div class="rd-kpi-sub">${p1Drv && p2Drv ? `<strong>${p1Drv.name_acronym}</strong> (${formatLapTime(poleTime)}) vs <strong>${p2Drv.name_acronym}</strong>` : (p1Drv ? p1Drv.full_name : activeSessionLabel)}</div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-scissors" style="color:var(--f1-red);"></i> ${q3BubbleTitle}</div>
+        <div class="rd-kpi-value mono">${q3BubbleVal}</div>
+        <div class="rd-kpi-sub">${q3BubbleSub}</div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-filter-circle-xmark" style="color:#f59e0b;"></i> ${q2BubbleTitle}</div>
+        <div class="rd-kpi-value mono">${q2BubbleVal}</div>
+        <div class="rd-kpi-sub">${q2BubbleSub}</div>
+      </div>
+
+      <div class="rd-kpi-card">
+        <div class="rd-kpi-label"><i class="fa-solid fa-chart-line" style="color:#a855f7;"></i> ${avgEvoGain !== null ? 'Q1 → Q3 Track Evolution' : 'Fastest Lap Benchmark'}</div>
+        <div class="rd-kpi-value mono" style="color:#c084fc;">${avgEvoGain !== null ? `${avgEvoGain >= 0 ? '-' : '+'}${Math.abs(avgEvoGain).toFixed(3)}s` : (poleTime ? formatLapTime(poleTime) : '—')}</div>
+        <div class="rd-kpi-sub">${bestEvoDriver ? `Max jump: <strong>${bestEvoDriver.drv.name_acronym}</strong> (-${bestEvoDriver.gain.toFixed(3)}s in Q3)` : activeSessionLabel}</div>
+      </div>
+    </div>
+
+    <!-- Segment & Visualization Mode Switcher -->
+    <div class="sg-toolbar" style="margin-bottom: 16px;">
+      <div class="sg-source-badge official">
+        <i class="fa-solid fa-stopwatch-20"></i>
+        <span>${activeSessionLabel} Pace &amp; Gap Visualizer${hasSegments ? ` • Top ${q2Cutoff} Q2 / Top ${q3Cutoff} Q3` : ''}</span>
+      </div>
+
+      <div class="sg-controls-right">
+        <div class="sg-filter-pills" id="qg-segment-pills">
+          <button type="button" class="sg-pill ${segMode === 'overall' ? 'active' : ''}" data-seg="overall">Overall Ladder</button>
+          ${hasSegments ? `
+            <button type="button" class="sg-pill ${segMode === 'q3' ? 'active' : ''}" data-seg="q3">Q3 Shootout (${q3ParticipantsCount})</button>
+            <button type="button" class="sg-pill ${segMode === 'q2' ? 'active' : ''}" data-seg="q2">Q2 Cutoff (${q2ParticipantsCount})</button>
+            <button type="button" class="sg-pill ${segMode === 'q1' ? 'active' : ''}" data-seg="q1">Q1 All (${q1ParticipantsCount})</button>
+            <button type="button" class="sg-pill ${segMode === 'evolution' ? 'active' : ''}" data-seg="evolution">Q1→Q3 Evolution</button>
+          ` : ''}
+          <button type="button" class="sg-pill ${segMode === 'teammates' ? 'active' : ''}" data-seg="teammates">Teammate Deltas</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (segMode === 'teammates') {
+    // Group drivers by constructor and compare their fastest comparable qualifying segment (Q3 > Q2 > Q1 > bestLap)
+    const byTeam = new Map();
+    for (const entry of sourceOrder) {
+      const d = resolveDrv(entry.driver_number);
+      if (!d.team_name || d.team_name === '—' || d.team_name === '?') continue;
+      if (!byTeam.has(d.team_name)) byTeam.set(d.team_name, []);
+      byTeam.get(d.team_name).push({ entry, drv: d });
+    }
+
+    const pairs = [];
+    for (const [teamName, members] of byTeam.entries()) {
+      if (members.length < 2) continue;
+      const [m1, m2] = members;
+      let sharedSeg = 'Best';
+      let t1 = null, t2 = null;
+      if (m1.entry.q3 > 0 && m2.entry.q3 > 0) {
+        sharedSeg = 'Q3'; t1 = m1.entry.q3; t2 = m2.entry.q3;
+      } else if (m1.entry.q2 > 0 && m2.entry.q2 > 0) {
+        sharedSeg = 'Q2'; t1 = m1.entry.q2; t2 = m2.entry.q2;
+      } else if (m1.entry.q1 > 0 && m2.entry.q1 > 0) {
+        sharedSeg = 'Q1'; t1 = m1.entry.q1; t2 = m2.entry.q1;
+      } else {
+        t1 = m1.entry.q3 || m1.entry.q2 || m1.entry.q1 || m1.entry.bestLap || null;
+        t2 = m2.entry.q3 || m2.entry.q2 || m2.entry.q1 || m2.entry.bestLap || null;
+        sharedSeg = hasSegments ? 'Q1' : 'Best';
+      }
+      if (!t1 && !t2) continue;
+
+      if (t1 && t2) {
+        const faster = t1 <= t2 ? { ...m1, time: t1 } : { ...m2, time: t2 };
+        const slower = t1 <= t2 ? { ...m2, time: t2 } : { ...m1, time: t1 };
+        const gap = slower.time - faster.time;
+        pairs.push({
+          teamName,
+          teamColor: getTeamColor(faster.drv.team_colour),
+          sharedSeg,
+          faster,
+          slower,
+          gap,
+          hasBothTimes: true
+        });
+      } else {
+        const faster = t1 ? { ...m1, time: t1 } : { ...m2, time: t2 };
+        const slower = t1 ? { ...m2, time: null } : { ...m1, time: null };
+        pairs.push({
+          teamName,
+          teamColor: getTeamColor(faster.drv.team_colour),
+          sharedSeg,
+          faster,
+          slower,
+          gap: Infinity,
+          hasBothTimes: false
+        });
+      }
+    }
+
+    pairs.sort((a, b) => a.gap - b.gap);
+    const validPairGaps = pairs.filter(p => p.hasBothTimes).map(p => Math.min(p.gap, 1.8));
+    const maxTeamGap = Math.max(0.6, ...validPairGaps);
+
+    html += `
+      <div class="qg-ladder-card">
+        <div class="qg-section-subtitle">
+          <span>Constructor Teammate Qualifying Gaps (Compared in Deepest Shared Segment • Sorted Tightest → Widest)</span>
+        </div>
+        <div class="qg-teammate-list">
+          ${pairs.map(p => {
+            const pct = p.hasBothTimes ? Math.min(100, Math.max(4, (p.gap / maxTeamGap) * 100)) : 0;
+            return `
+              <div class="qg-tm-row" style="--qg-color:${p.teamColor};">
+                <div class="qg-tm-header">
+                  <div class="qg-tm-team">
+                    <span class="sg-team-dot" style="background:${p.teamColor};"></span>
+                    <strong>${p.teamName}</strong>
+                    <span class="qg-seg-tag">${p.sharedSeg}</span>
+                  </div>
+                  <div class="qg-tm-delta mono">${p.hasBothTimes ? `+<span>${p.gap.toFixed(3)}s</span>` : '<span style="color:var(--text-muted);font-size:0.74rem;">NO TIME</span>'}</div>
+                </div>
+                <div class="qg-tm-duel-grid">
+                  <div class="qg-tm-driver faster clickable-driver-row" data-driver-number="${p.faster.entry.driver_number}">
+                    <span class="qg-pos-chip">P${p.faster.entry.position}</span>
+                    ${getDriverFlagImg(p.faster.drv.name_acronym)}
+                    <strong>${p.faster.drv.name_acronym}</strong>
+                    <span class="mono qg-tm-time">${formatLapTime(p.faster.time)}</span>
+                  </div>
+                  <div class="qg-tm-bar-wrap">
+                    ${p.hasBothTimes ? `<div class="qg-tm-bar-fill" style="width:${pct.toFixed(1)}%;background:${p.teamColor};"></div>` : ''}
+                  </div>
+                  <div class="qg-tm-driver slower clickable-driver-row" data-driver-number="${p.slower.entry.driver_number}">
+                    <span class="qg-pos-chip muted">P${p.slower.entry.position}</span>
+                    ${getDriverFlagImg(p.slower.drv.name_acronym)}
+                    <strong>${p.slower.drv.name_acronym}</strong>
+                    <span class="mono qg-tm-time muted">${p.slower.time ? formatLapTime(p.slower.time) : 'NO TIME'}</span>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  } else if (segMode === 'evolution') {
+    const evoRows = sourceOrder
+      .filter((e, idx) => {
+        const pos = typeof e.position === 'number' ? e.position : (idx + 1);
+        const st = getDriverQualiStage(e, pos, q3Cutoff, q2Cutoff);
+        return st.reachedQ2 && e.q1 > 0;
+      })
+      .map(e => {
+        const finalTime = e.q3 || e.q2 || null;
+        const totalImprovement = finalTime ? (e.q1 - finalTime) : null; // positive = improved (faster)
+        const noTimeSeg = !e.q3 && e.position <= q3Cutoff ? 'Q3' : (!e.q2 ? 'Q2' : null);
+        return { entry: e, drv: resolveDrv(e.driver_number), totalImprovement, finalTime, noTimeSeg };
+      })
+      .sort((a, b) => {
+        if (a.totalImprovement === null && b.totalImprovement !== null) return 1;
+        if (a.totalImprovement !== null && b.totalImprovement === null) return -1;
+        return (b.totalImprovement || 0) - (a.totalImprovement || 0);
+      });
+
+    const maxImp = Math.max(0.5, ...evoRows.filter(r => r.totalImprovement !== null).map(r => Math.abs(r.totalImprovement)));
+
+    html += `
+      <div class="qg-ladder-card">
+        <div class="qg-section-subtitle">
+          <span>Session Track Evolution — Lap Time Gained from Q1 to Final Segment (Ranked by Biggest Improvement)</span>
+        </div>
+        <div class="qg-ladder-rows">
+          ${evoRows.map(r => {
+            const teamColor = getTeamColor(r.drv.team_colour);
+            const imp = r.totalImprovement;
+            const hasImp = imp !== null;
+            const pct = hasImp ? Math.min(100, Math.max(5, (Math.abs(imp) / maxImp) * 100)) : 0;
+            const isFaster = hasImp && imp >= 0;
+            return `
+              <div class="qg-row clickable-driver-row" data-driver-number="${r.entry.driver_number}">
+                <div class="qg-row-left">
+                  <span class="qg-pos-chip">P${r.entry.position}</span>
+                  <span class="qg-team-bar" style="background:${teamColor};"></span>
+                  ${getDriverFlagImg(r.drv.name_acronym)}
+                  <span class="qg-drv-code">${r.drv.name_acronym}</span>
+                  <span class="qg-drv-team">${r.drv.team_name}</span>
+                </div>
+                <div class="qg-bar-stage">
+                  <div class="qg-bar-track">
+                    ${hasImp ? `<div class="qg-bar-fill" style="width:${pct.toFixed(1)}%;background:${isFaster ? teamColor : 'var(--f1-red)'};"></div>` : ''}
+                  </div>
+                </div>
+                <div class="qg-row-right mono">
+                  ${hasImp
+                    ? `
+                      <span style="color:${isFaster ? '#2ecc71' : 'var(--f1-red)'};font-weight:800;">${isFaster ? '-' : '+'}${Math.abs(imp).toFixed(3)}s</span>
+                      <span class="qg-interval-sub">Q1 ${formatLapTime(r.entry.q1)} → ${r.entry.q3 ? 'Q3 ' + formatLapTime(r.entry.q3) : 'Q2 ' + formatLapTime(r.entry.q2)}${r.noTimeSeg ? ` (${r.noTimeSeg} No Time)` : ''}</span>
+                    `
+                    : `
+                      <span class="quali-no-time-pill q2">NO ${r.noTimeSeg || 'Q2'} TIME</span>
+                      <span class="qg-interval-sub">Q1 ${formatLapTime(r.entry.q1)} → Advanced to Q2</span>
+                    `
+                  }
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  } else {
+    // Visual Gap Ladder for 'overall', 'q3', 'q2', or 'q1'
+    let ladderItems = [];
+    let refTime = null;
+    let cutoffIndex = null;
+    let cutoffLabel = '';
+
+    if (segMode === 'q3') {
+      const timed = q3Valid.map((e, idx) => ({
+        entry: e,
+        rank: idx + 1,
+        time: e.q3,
+        segTag: 'Q3',
+        noTimeNote: null
+      }));
+      const untimed = q3NoTimeEntries.map((e, idx) => ({
+        entry: e,
+        rank: timed.length + idx + 1,
+        time: null,
+        segTag: 'Q3 • NO TIME',
+        noTimeNote: e.q2 ? `No Q3 Lap (Q2: ${formatLapTime(e.q2)})` : 'No Q3 Lap'
+      }));
+      ladderItems = [...timed, ...untimed];
+      refTime = bestQ3;
+    } else if (segMode === 'q2') {
+      // Determine which drivers officially advanced to Q3 so the Q2 ladder keeps Q3 qualifiers & Q2-eliminated drivers clear
+      const timed = q2Valid.map((e, idx) => {
+        const rank = idx + 1;
+        const advQ3 = rank <= q3Cutoff || Boolean(e.q3);
+        return {
+          entry: e,
+          rank,
+          time: e.q2,
+          segTag: advQ3 ? 'ADV Q3' : 'OUT Q2',
+          noTimeNote: null
+        };
+      });
+      const untimed = q2NoTimeEntries.map((e, idx) => ({
+        entry: e,
+        rank: timed.length + idx + 1,
+        time: null,
+        segTag: 'OUT Q2 • NO TIME',
+        noTimeNote: e.q1 ? `No Q2 Lap (Q1: ${formatLapTime(e.q1)})` : 'No Q2 Lap'
+      }));
+      ladderItems = [...timed, ...untimed];
+      refTime = bestQ2;
+      if (ladderItems.length > q3Cutoff) {
+        cutoffIndex = q3Cutoff;
+        if (q2Valid.length > q3Cutoff) {
+          const margin = q2Valid[q3Cutoff].q2 - q2Valid[q3Cutoff - 1].q2;
+          cutoffLabel = `Q3 SHOOTOUT CUTOFF LINE — P${q3Cutoff} (${formatLapTime(q2Valid[q3Cutoff - 1].q2)}) vs P${q3Cutoff + 1} (+${margin.toFixed(3)}s)`;
+        } else {
+          cutoffLabel = `Q3 SHOOTOUT CUTOFF LINE — TOP ${q3Cutoff} ADVANCE TO Q3`;
+        }
+      }
+    } else if (segMode === 'q1') {
+      const timed = q1Valid.map((e, idx) => {
+        const rank = idx + 1;
+        const advQ2 = rank <= q2Cutoff || Boolean(e.q2) || Boolean(e.q3);
+        return {
+          entry: e,
+          rank,
+          time: e.q1,
+          segTag: advQ2 ? 'ADV Q2' : 'OUT Q1',
+          noTimeNote: null
+        };
+      });
+      const untimed = q1NoTimeEntries.map((e, idx) => ({
+        entry: e,
+        rank: timed.length + idx + 1,
+        time: null,
+        segTag: e.status === 'DNS' ? 'DNS' : 'OUT Q1 • NO TIME',
+        noTimeNote: 'No Q1 Timed Lap'
+      }));
+      ladderItems = [...timed, ...untimed];
+      refTime = bestQ1;
+      if (ladderItems.length > q2Cutoff) {
+        cutoffIndex = q2Cutoff;
+        if (q1Valid.length > q2Cutoff) {
+          const margin = q1Valid[q2Cutoff].q1 - q1Valid[q2Cutoff - 1].q1;
+          cutoffLabel = `Q2 ADVANCEMENT CUTOFF LINE — P${q2Cutoff} (${formatLapTime(q1Valid[q2Cutoff - 1].q1)}) vs P${q2Cutoff + 1} (+${margin.toFixed(3)}s)`;
+        } else {
+          cutoffLabel = `Q2 ADVANCEMENT CUTOFF LINE — TOP ${q2Cutoff} ADVANCE TO Q2`;
+        }
+      }
+    } else {
+      // Overall mode: all drivers ranked by official qualifying/session position
+      // Respect each driver's true knockout stage (so a driver who advanced to Q2 or Q3 without setting a lap
+      // is badged as Q2 • NO TIME or Q3 • NO TIME rather than mislabeled as Q1 or Q2).
+      ladderItems = sourceOrder.map((e, idx) => {
+        const rank = typeof e.position === 'number' ? e.position : (idx + 1);
+        if (!hasSegments) {
+          const time = e.bestLap || e.q3 || e.q2 || e.q1 || null;
+          return { entry: e, rank, time, segTag: isPractice ? 'BEST' : 'LAP', noTimeNote: null };
+        }
+        const st = getDriverQualiStage(e, rank, q3Cutoff, q2Cutoff);
+        if (st.reachedQ3) {
+          return {
+            entry: e,
+            rank,
+            time: st.hasStageTime ? e.q3 : null,
+            segTag: st.hasStageTime ? 'Q3' : 'Q3 • NO TIME',
+            noTimeNote: !st.hasStageTime ? (e.q2 ? `No Q3 Lap (Q2: ${formatLapTime(e.q2)})` : 'No Q3 Lap') : null
+          };
+        }
+        if (st.reachedQ2) {
+          return {
+            entry: e,
+            rank,
+            time: st.hasStageTime ? e.q2 : null,
+            segTag: st.hasStageTime ? 'Q2' : 'Q2 • NO TIME',
+            noTimeNote: !st.hasStageTime ? (e.q1 ? `No Q2 Lap (Q1: ${formatLapTime(e.q1)})` : 'No Q2 Lap') : null
+          };
+        }
+        return {
+          entry: e,
+          rank,
+          time: st.hasStageTime ? e.q1 : null,
+          segTag: st.hasStageTime ? 'Q1' : (e.status === 'DNS' ? 'DNS' : 'Q1 • NO TIME'),
+          noTimeNote: !st.hasStageTime ? 'No Q1 Timed Lap' : null
+        };
+      });
+      const validTimes = ladderItems.map(i => i.time).filter(t => t && t > 0);
+      refTime = poleTime || (validTimes.length > 0 ? Math.min(...validTimes) : null);
+    }
+
+    // Compute max delta (cap outlier laps at 3.5s so normal field spread fills the visual bar nicely)
+    const deltas = ladderItems
+      .map(item => (item.time && refTime) ? Math.max(0, item.time - refTime) : null)
+      .filter(d => d !== null);
+    const nonOutlierDeltas = deltas.filter(d => d <= 3.5);
+    const scaleMax = Math.max(0.5, ...(nonOutlierDeltas.length > 1 ? nonOutlierDeltas : (deltas.length > 0 ? deltas : [1.0])));
+
+    let rowsHtml = '';
+    for (let i = 0; i < ladderItems.length; i++) {
+      if (cutoffIndex !== null && i === cutoffIndex) {
+        rowsHtml += `<div class="qg-cutoff-divider"><span>${cutoffLabel}</span></div>`;
+      }
+      if (segMode === 'overall' && hasSegments && ladderItems.length > q3Cutoff && (i === q3Cutoff || (ladderItems.length > q2Cutoff && i === q2Cutoff))) {
+        const divText = i === q3Cutoff
+          ? `Q3 Shootout Cutoff (Top ${q3Cutoff} Advance)`
+          : `Q2 Elimination Cutoff (Top ${q2Cutoff} Advance)`;
+        rowsHtml += `<div class="qg-cutoff-divider subtle"><span>${divText}</span></div>`;
+      }
+
+      const item = ladderItems[i];
+      const d = resolveDrv(item.entry.driver_number);
+      const teamColor = getTeamColor(d.team_colour);
+      const { isFavD, isFavT } = isDriverOrTeamFavorite(d);
+      const favClass = isFavD ? 'fav-driver-row' : (isFavT ? 'fav-team-row' : '');
+
+      const deltaToP1 = (item.time && refTime) ? (item.time - refTime) : null;
+      const prevTime = i > 0 ? ladderItems[i - 1].time : null;
+      const intervalAhead = (i > 0 && item.time && prevTime && item.time >= prevTime) ? (item.time - prevTime) : null;
+
+      const isLeader = i === 0 && item.time;
+      const barPct = isLeader
+        ? 2.5
+        : (deltaToP1 !== null ? Math.min(100, Math.max(3.5, (Math.min(Math.max(0, deltaToP1), scaleMax) / scaleMax) * 100)) : 0);
+
+      const segBadgeClass = item.segTag.startsWith('Q3') || item.segTag.startsWith('ADV')
+        ? 'q3'
+        : (item.segTag.startsWith('Q2') || item.segTag.startsWith('OUT Q2') ? 'q2' : 'q1');
+
+      rowsHtml += `
+        <div class="qg-row ${favClass} clickable-driver-row" data-driver-number="${item.entry.driver_number}" title="Click for ${d.full_name || d.name_acronym} session deep-dive">
+          <div class="qg-row-left">
+            <span class="qg-pos-chip ${item.rank <= 3 ? 'p' + item.rank : ''}">P${item.rank}</span>
+            <span class="qg-team-bar" style="background:${teamColor};"></span>
+            ${getDriverFlagImg(d.name_acronym)}
+            <span class="qg-drv-code">${d.name_acronym}</span>
+            <span class="qg-drv-team">${d.team_name}</span>
+            ${hasSegments ? `<span class="qg-seg-badge ${segBadgeClass}">${item.segTag}</span>` : ''}
+          </div>
+
+          <div class="qg-bar-stage">
+            <div class="qg-bar-track">
+              ${item.time ? `
+                <div class="qg-bar-fill ${isLeader ? 'leader' : ''}" style="width:${barPct.toFixed(1)}%;background:${isLeader ? '#ffd700' : teamColor};"></div>
+              ` : ''}
+            </div>
+          </div>
+
+          <div class="qg-row-right mono">
+            ${isLeader
+              ? `<span class="qg-leader-pill">P1 • ${formatLapTime(item.time)}</span>`
+              : (item.time && deltaToP1 !== null
+                  ? `
+                    <span class="qg-delta-main">${deltaToP1 >= 0 ? '+' : ''}${deltaToP1.toFixed(3)}s</span>
+                    <span class="qg-interval-sub">${formatLapTime(item.time)}${intervalAhead !== null ? ` (${intervalAhead >= 0 ? '+' : ''}${intervalAhead.toFixed(3)}s)` : ''}</span>
+                  `
+                  : `<span style="color:var(--text-muted);font-size:0.74rem;">${item.noTimeNote || 'No Time'}</span>`)
+            }
+          </div>
+        </div>
+      `;
+    }
+
+    html += `
+      <div class="qg-ladder-card">
+        <div class="qg-section-subtitle">
+          <span><i class="fa-solid fa-ruler-horizontal" style="color:var(--f1-red);margin-right:6px;"></i> Gap to Benchmark (Bar Length) • Lap Time &amp; Interval to Car Ahead in Parentheses</span>
+          <span class="mono" style="color:var(--text-muted);font-size:0.72rem;">Benchmark: ${refTime ? formatLapTime(refTime) : '—'}</span>
+        </div>
+        <div class="qg-ladder-rows">
+          ${rowsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('#qg-segment-pills .sg-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      raceDataCache.gapsSegmentMode = btn.dataset.seg;
+      renderGaps(container);
+    });
+  });
+
+  bindDriverRowClicks(container);
+}
 
 async function loadAndRenderLapTimes(container) {
   if (raceDataCache.laps) {
@@ -3514,7 +5259,14 @@ export async function showRaceDriverDetail(driverNumber) {
         }
       }
     } else if (isQuali) {
-      gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-stopwatch"></i> Qualified P${finishPos}</span>`;
+      const { q3Cutoff: modalQ3Cut, q2Cutoff: modalQ2Cut } = resolveQualifyingCutoffs(order, driverMap, raceDataCache.laps);
+      const modalStage = getDriverQualiStage(finishEntry || {}, typeof finishPos === 'number' ? finishPos : 99, modalQ3Cut, modalQ2Cut);
+      const stageDesc = modalStage.reachedQ3
+        ? (modalStage.hasStageTime ? 'Q3 Shootout' : 'Q3 Shootout • No Q3 Time')
+        : (modalStage.reachedQ2
+            ? (modalStage.hasStageTime ? `Eliminated in Q2 (Top ${modalQ2Cut})` : `Advanced to Q2 (Top ${modalQ2Cut}) • No Q2 Time`)
+            : 'Eliminated in Q1');
+      gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-stopwatch"></i> Qualified P${finishPos} · ${stageDesc}</span>`;
     } else {
       gainLossBadgeHtml = `<span class="pm-hero-delta neutral"><i class="fa-solid fa-gauge-high"></i> Classified P${finishPos} in ${sessionType}</span>`;
     }
@@ -3803,36 +5555,38 @@ export async function showRaceDriverDetail(driverNumber) {
     let q1Laps = [], q2Laps = [], q3Laps = [];
     if (isQuali) {
       const entry = finishEntry || {};
-      const q1Str = entry.q1 ? formatLapTime(entry.q1) : '—';
-      const q2Str = entry.q2 ? formatLapTime(entry.q2) : '—';
-      const q3Str = entry.q3 ? formatLapTime(entry.q3) : '—';
+      const { q3Cutoff: modalQ3Cut, q2Cutoff: modalQ2Cut } = resolveQualifyingCutoffs(order, driverMap, raceDataCache.laps);
+      const modalStage = getDriverQualiStage(entry, typeof finishPos === 'number' ? finishPos : 99, modalQ3Cut, modalQ2Cut);
+      const q1Str = entry.q1 ? formatLapTime(entry.q1) : 'NO TIME';
+      const q2Str = entry.q2 ? formatLapTime(entry.q2) : (modalStage.reachedQ2 ? 'NO TIME' : '—');
+      const q3Str = entry.q3 ? formatLapTime(entry.q3) : (modalStage.reachedQ3 ? 'NO TIME' : '—');
       const qProg = (entry.q1 && entry.q3) ? (entry.q3 - entry.q1) : ((entry.q1 && entry.q2) ? (entry.q2 - entry.q1) : null);
 
       qualiSegmentsSectionHtml = `
         <div class="pm-card-box" style="margin-bottom:var(--space-md);">
           <div class="pm-card-box-hdr">
-            <span><i class="fa-solid fa-layer-group" style="color:#a855f7;margin-right:6px;"></i>Qualifying Knockout Progression</span>
+            <span><i class="fa-solid fa-layer-group" style="color:#a855f7;margin-right:6px;"></i>Qualifying Knockout Progression (Top ${modalQ2Cut} Q2 · Top ${modalQ3Cut} Q3)</span>
             ${qProg !== null ? `<span class="pm-subtle-tag" style="color:${qProg <= 0 ? '#2ecc71' : '#f87171'};">${qProg <= 0 ? '' : '+'}${qProg.toFixed(3)}s Evolution</span>` : ''}
           </div>
           <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;">
             <div class="dm-stat-tile" style="padding:10px 8px;">
               <div class="dm-stat-label">Q1 / SQ1</div>
-              <div class="mono" style="font-size:0.9rem;font-weight:800;color:var(--text-primary);margin-top:4px;">${q1Str}</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q1 ? 'var(--text-primary)' : 'var(--text-muted)'};margin-top:4px;">${q1Str}</div>
             </div>
             <div class="dm-stat-tile" style="padding:10px 8px;">
               <div class="dm-stat-label">Q2 / SQ2</div>
-              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q2 ? '#38bdf8' : 'var(--text-muted)'};margin-top:4px;">${q2Str}</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q2 ? '#38bdf8' : (modalStage.reachedQ2 ? '#f59e0b' : 'var(--text-muted)')};margin-top:4px;">${q2Str}</div>
             </div>
             <div class="dm-stat-tile" style="padding:10px 8px;">
               <div class="dm-stat-label">Q3 / SQ3</div>
-              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q3 ? '#c084fc' : 'var(--text-muted)'};margin-top:4px;">${q3Str}</div>
+              <div class="mono" style="font-size:0.9rem;font-weight:800;color:${entry.q3 ? '#c084fc' : (modalStage.reachedQ3 ? '#f59e0b' : 'var(--text-muted)')};margin-top:4px;">${q3Str}</div>
             </div>
           </div>
         </div>
       `;
 
       if (raceDataCache.laps) {
-        const partitioned = partitionQualiLaps(raceDataCache.laps);
+        const partitioned = partitionQualiLaps(raceDataCache.laps, driverMap ? driverMap.size : 0);
         q1Laps = partitioned.q1 || [];
         q2Laps = partitioned.q2 || [];
         q3Laps = partitioned.q3 || [];
@@ -4364,6 +6118,8 @@ async function switchRaceDetailSession(sessionType) {
   raceDataCache.overtakes = null;
   raceDataCache.incidents = null;
   raceDataCache.intervals = null;
+  raceDataCache.startingGrid = null;
+  raceDataCache.qualiGapsOrder = null;
   raceDataCache.driverTelemetry = {};
   raceDataCache.selectedLapDrivers = null;
   raceDataCache.selectedPositionDrivers = null;
@@ -4399,12 +6155,13 @@ async function switchRaceDetailSession(sessionType) {
     // Render current active tab layout in skeleton state
     renderTab();
     
-    // Background enrichment — only fetch overtakes/intervals for race sessions
-    const [laps, pits, overtakes, intervals] = await Promise.all([
+    // Background enrichment — fetch laps, pits, overtakes, intervals, and startingGrid
+    const [laps, pits, overtakes, intervals, startingGrid] = await Promise.all([
       getLaps({ session_key: session.session_key }),
       getPits({ session_key: session.session_key }),
       isRace ? getOvertakes({ session_key: session.session_key }) : Promise.resolve([]),
       isRace ? getIntervals({ session_key: session.session_key }) : Promise.resolve([]),
+      hasStartingGridTab(sessionType) ? fetchStartingGridForCurrentSession() : Promise.resolve([]),
     ]);
     
     if (raceDataCache && raceDataCache.sessionKey === session.session_key) {
@@ -4412,18 +6169,23 @@ async function switchRaceDetailSession(sessionType) {
       raceDataCache.pits = pits;
       raceDataCache.overtakes = enrichOvertakesWithLaps(overtakes, laps);
       raceDataCache.intervals = intervals;
+      raceDataCache.startingGrid = startingGrid;
       
-      // For qualifying sessions, always enrich the existing order with Q1/Q2/Q3 times from telemetry
+      // For qualifying sessions, enrich with official API /session_result [q1, q2, q3] + lap telemetry
       if (isQualifyingSession(sessionType)) {
-        const telemetryOrder = buildQualifyingOrder(laps, raceDataCache.driverMap, sessionType);
-        if (raceDataCache.order && raceDataCache.order.length > 0) {
-          const telemetryMap = new Map(telemetryOrder.map(r => [r.driver_number, r]));
-          raceDataCache.order = raceDataCache.order.map(entry => {
-            const tel = telemetryMap.get(entry.driver_number);
-            return tel ? { ...entry, q1: tel.q1, q2: tel.q2, q3: tel.q3, bestLap: tel.bestLap || entry.bestLap } : entry;
-          });
-        } else {
-          raceDataCache.order = telemetryOrder;
+        const hasApiSegments = (raceDataCache.order || []).some(r => r.hasOfficialSegments);
+        const apiOrder = hasApiSegments
+          ? raceDataCache.order
+          : await getFinishingOrder(session.session_key).catch(() => raceDataCache.order);
+        raceDataCache.order = mergeQualifyingOrderWithTelemetry(
+          raceDataCache.order,
+          apiOrder,
+          laps,
+          raceDataCache.driverMap,
+          sessionType
+        );
+        if (raceDataCache.sessions && raceDataCache.sessions[sessionType]) {
+          raceDataCache.sessions[sessionType].results = raceDataCache.order;
         }
       } else if (!isRace && (!raceDataCache.order || raceDataCache.order.length === 0)) {
         raceDataCache.order = buildQualifyingOrder(laps, raceDataCache.driverMap, sessionType);
@@ -4431,6 +6193,10 @@ async function switchRaceDetailSession(sessionType) {
       
       if (currentTab === 'results') {
         renderResults(content);
+      } else if (currentTab === 'grid') {
+        renderStartingGrid(content);
+      } else if (currentTab === 'gaps') {
+        loadAndRenderGaps(content);
       } else if (currentTab === 'overtakes') {
         renderOvertakes(content);
       }

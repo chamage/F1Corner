@@ -299,8 +299,12 @@ export async function initCalendar(year) {
         container.scrollLeft = scrollOffset;
       }, 150);
       
-      // Auto-click to default open the newest/current race weekend session details
-      scrollTarget.click();
+      // Auto-load Race Deep-Dive for the latest started/completed card without popping open the future schedule modal on initial load
+      if (!scrollTarget.classList.contains('upcoming')) {
+        scrollTarget.click();
+      } else if (lastCompletedCards.length > 0) {
+        lastCompletedCards[lastCompletedCards.length - 1].click();
+      }
     }
 
   } catch (err) {

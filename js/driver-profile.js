@@ -153,8 +153,9 @@ export function showDriverProfile(driver, standings, raceSessions) {
   const polesCount = qr.filter(q => q === 1).length;
   const frontRowCount = qr.filter(q => q <= 2).length;
   const top3QualiCount = qr.filter(q => q <= 3).length;
-  const q2OutCount = qr.filter(q => q > 10 && q <= 15).length;
-  const q1OutCount = qr.filter(q => q > 15).length;
+  const seasonQ2Cutoff = ((standings?.constructors?.length || 0) >= 12 || driversList.length >= 23) ? 17 : (((standings?.constructors?.length || 0) >= 11 || driversList.length >= 21 || Number(standings?.year) >= 2026) ? 16 : 15);
+  const q2OutCount = qr.filter(q => q > 10 && q <= seasonQ2Cutoff).length;
+  const q1OutCount = qr.filter(q => q > seasonQ2Cutoff).length;
 
   // Net Racecraft indicator (Avg Grid vs Avg Finish)
   let racecraftVal = '—';
@@ -721,7 +722,7 @@ export function showDriverProfile(driver, standings, raceSessions) {
       const barColor = pos === 1 ? '#ffd700'
         : pos <= 3 ? '#a855f7'
           : pos <= 10 ? 'rgba(168, 85, 247, 0.65)'
-            : pos <= 15 ? 'rgba(56, 189, 248, 0.55)'
+            : pos <= seasonQ2Cutoff ? 'rgba(56, 189, 248, 0.55)'
               : 'var(--bg-tertiary)';
       return `
         <div class="dm-race-bar-wrap" title="Qualifying #${idx + 1}: P${pos}">
@@ -744,8 +745,8 @@ export function showDriverProfile(driver, standings, raceSessions) {
       { label: 'Pole (P1)', count: polesCount, color: '#ffd700' },
       { label: 'P2–P3', count: top3QualiCount - polesCount, color: '#c084fc' },
       { label: 'Q3 (P4–P10)', count: Math.max(0, q3Count - top3QualiCount), color: '#8b5cf6' },
-      { label: 'Q2 (P11–P15)', count: q2OutCount, color: '#38bdf8' },
-      { label: 'Q1 (P16+)', count: q1OutCount, color: 'rgba(148,163,184,0.45)' },
+      { label: `Q2 (P11–P${seasonQ2Cutoff})`, count: q2OutCount, color: '#38bdf8' },
+      { label: `Q1 (P${seasonQ2Cutoff + 1}+)`, count: q1OutCount, color: 'rgba(148,163,184,0.45)' },
     ];
     qualiTierHtml = `
       <div class="pm-card-box" style="margin-top:var(--space-md);">

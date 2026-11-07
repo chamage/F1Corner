@@ -7,7 +7,7 @@ import { initStandings, getStandingsData, drawStandingsSparklines } from './stan
 import { initCalendar, setRaceSelectHandler } from './calendar.js';
 import { loadRaceDetail } from './race-detail.js';
 import { initH2H } from './h2h.js';
-import { getCacheStats, clearCache, clearSingleSeasonAPICache } from './api.js';
+import { getCacheStats, clearCache, clearSingleSeasonAPICache, isApiLocked, getApiLockoutState } from './api.js';
 import { clearSeasonCache, isSeasonPreliminary, clearSingleSeasonCache } from './season-data.js';
 import { setupRevealAnimations, $ } from './utils.js';
 import { initFeedbackSupport, showClearCacheModal } from './feedback-support.js';
@@ -25,6 +25,40 @@ let currentYear = MAX_SEASON_YEAR;
 
 // Generation counter — prevents stale loads when switching years rapidly
 let loadGeneration = 0;
+
+let lockoutBannerTimer = null;
+
+function showLiveLockoutBanner(lockState = getApiLockoutState()) {
+  const loadingBanner = $('#api-loading-banner');
+  if (!loadingBanner) return;
+  const textEl = loadingBanner.querySelector('.api-loading-text');
+  if (!textEl) return;
+
+  const liveSession = lockState?.liveSession;
+  const liveLabel = liveSession && liveSession.session_name
+    ? ` (${liveSession.session_name}${liveSession.circuit_short_name ? ' • ' + liveSession.circuit_short_name : ''})`
+    : '';
+
+  loadingBanner.classList.add('show');
+  loadingBanner.style.cursor = 'pointer';
+  loadingBanner.title = 'Click to dismiss';
+  textEl.innerHTML = `
+    <strong>🔴 Live F1 Session in Progress${liveLabel} — OpenF1 API Locked</strong>
+    <span>OpenF1 restricts live telemetry during active track sessions. Serving cached standings &amp; historical data — full app unlocked! 🏁</span>
+  `;
+
+  if (!loadingBanner.dataset.dismissWired) {
+    loadingBanner.dataset.dismissWired = 'true';
+    loadingBanner.addEventListener('click', () => {
+      loadingBanner.classList.remove('show');
+    });
+  }
+
+  if (lockoutBannerTimer) clearTimeout(lockoutBannerTimer);
+  lockoutBannerTimer = setTimeout(() => {
+    loadingBanner.classList.remove('show');
+  }, 7500);
+}
 
 async function init() {
   // Determine default year — use last selected year from localStorage, fallback to current year
@@ -106,6 +140,11 @@ async function init() {
 
   // Load everything
   loadAll(currentYear);
+
+  // Listen for live session API lockout circuit breaker events
+  window.addEventListener('pitcorner:api-lockout', (e) => {
+    showLiveLockoutBanner(e.detail);
+  });
 
   // Setup background refresh listener
   document.addEventListener('pitcorner:season-updated', async (e) => {
@@ -215,9 +254,11 @@ async function loadAll(year) {
   // Update cache stats in footer
   await updateCacheStatus();
 
-  // Hide loading banner when loaded successfully, or update text if preliminary
+  // Hide loading banner when loaded successfully, or show lockout / preliminary status
   const isPrelim = isSeasonPreliminary(year);
-  if (!isPrelim && loadingBanner) {
+  if (isApiLocked() && parseInt(year) > 2022) {
+    showLiveLockoutBanner(getApiLockoutState());
+  } else if (!isPrelim && loadingBanner) {
     loadingBanner.classList.remove('show');
   } else if (isPrelim && loadingBanner) {
     const textEl = loadingBanner.querySelector('.api-loading-text');

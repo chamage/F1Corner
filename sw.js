@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pitcorner-shell-v142'; // v142: v3.2 Popup Modals Telemetry Overhaul
+const CACHE_NAME = 'pitcorner-shell-v148'; // v146: Dynamic API-Driven Qualifying Cutoffs (22-Car / 11-Team 2026 Grid Support)
 const STATIC_ASSETS = [
   './',
   './index.html',

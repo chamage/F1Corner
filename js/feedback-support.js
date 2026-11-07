@@ -443,10 +443,28 @@ export function showChangelogModal() {
       <div style="flex: 1; overflow-y: auto; padding-right: 8px;" class="custom-scrollbar">
         <div class="changelog-timeline">
 
+          <!-- v3.3.0 -->
+          <div class="changelog-card">
+            <div class="changelog-header">
+              <div class="changelog-version">v3.3.0 <span class="new-badge" style="background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.35); color: #ffd700;">Current</span></div>
+              <div class="changelog-date">November 8, 2026</div>
+            </div>
+            <ul class="changelog-list">
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Official Starting Grid Tab (Race Detail): Added a dedicated Starting Grid tab in Race Deep-Dive powered by OpenF1 <code>/starting_grid</code> and FIA/Ergast grid records — featuring a staggered 2&times;2 F1 track formation view, Qualifying-vs-Grid penalty &amp; promotion badges, Pit Lane starter callouts, Front-Row Lockout detection, and true post-penalty Grid +/- deltas across Results and Driver Modals.</span>
+              </li>
+              <li class="changelog-item">
+                <span class="changelog-tag added">Added</span>
+                <span>Live-Session API Lockout Resilience: Added Stale-While-Revalidate IndexedDB cache preservation, an automatic OpenF1 live-session circuit breaker, and compiled season fallback hydration so the entire app stays fast, interactive, and unlocked with cached data while an F1 session is live on track.</span>
+              </li>
+            </ul>
+          </div>
+
           <!-- v3.2.0 -->
           <div class="changelog-card">
             <div class="changelog-header">
-              <div class="changelog-version">v3.2.0 <span class="new-badge" style="background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.35); color: #ffd700;">Current</span></div>
+              <div class="changelog-version">v3.2.0</div>
               <div class="changelog-date">November 5, 2026</div>
             </div>
             <ul class="changelog-list">

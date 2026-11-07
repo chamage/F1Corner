@@ -5,12 +5,12 @@
 // Dynamic standings are built from individual race records.
 // =============================================
 
-import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps, safeEnrichDrivers, registerDriverNationalityFromRecord } from './api.js';
+import { getMeetings, getRaceSessions, getSessionDrivers, getFinishingOrder, getStints, getSessions, getLaps, safeEnrichDrivers, registerDriverNationalityFromRecord, isApiLocked } from './api.js';
 import { isPast, getPointsForPosition } from './utils.js';
 import { dbGet, dbSet, dbDelete, dbClear, dbGetAllKeys, dbGetMultiple } from './db.js';
 
 const LS_RACE_PREFIX = 'f1c_compiled_race_';
-const LS_RACE_VERSION = 29; // Bump race cache to v29 for dynamic API/grid resolution of reserve drivers with null team_name
+const LS_RACE_VERSION = 30; // v30: include official Qualifying Q1/Q2/Q3 segment times & dynamic 11-team cutoffs
 const LS_QUALI_VERSION = 24; // Bump quali cache to v24 for enriched reserve driver team & nationality metadata
 
 function hasUnresolvedSessionTeam(compiled) {
@@ -76,34 +76,35 @@ async function loadRaceFromStorage(sessionKey, isQuali = false) {
       }
     }
 
+    if (isApiLocked() && compiled && Array.isArray(compiled.results) && compiled.results.length > 0) {
+      return compiled;
+    }
+
     // Auto-expiration for recent races:
     // If the session ended less than 24 hours ago, expire it after 15 minutes to allow post-race penalty/disqualification updates.
-    if (compiled && compiled.date_end) {
+    if (compiled && compiled.date_end && !isApiLocked()) {
       const timeSinceEnd = Date.now() - new Date(compiled.date_end).getTime();
       const oneDay = 24 * 60 * 60 * 1000;
       if (timeSinceEnd > 0 && timeSinceEnd < oneDay) {
         const timeSinceCompiled = Date.now() - (compiled.compiledAt || 0);
         if (timeSinceCompiled > 15 * 60 * 1000) {
-          console.log(`[Season] 🔄 Expiring cache for recent session ${sessionKey} (compiled ${Math.round(timeSinceCompiled / 60000)} mins ago) to check for penalty updates`);
-          await dbDelete('compiled_races', key);
+          console.log(`[Season] 🔄 Revalidating cache for recent session ${sessionKey} (compiled ${Math.round(timeSinceCompiled / 60000)} mins ago) to check for penalty updates`);
           return null;
         }
       }
     }
 
-    if (compiled && hasUnresolvedSessionTeam(compiled)) {
+    if (compiled && hasUnresolvedSessionTeam(compiled) && !isApiLocked()) {
       if (Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000) {
-        await dbDelete('compiled_races', key);
         return null;
       }
     }
 
     if (compiled && compiled.is_incomplete) {
-      // Expire incomplete placeholders after 30 minutes to check for new data
-      if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) {
+      if (Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000 && !isApiLocked()) {
         await dbDelete('compiled_races', key);
-        return null;
       }
+      return null;
     }
     return compiled;
   } catch {
@@ -200,10 +201,66 @@ export function getSeasonData(year) {
         getMeetings(year).catch(() => [])
       ]);
 
-      const [cachedSeason, [gpSessions, sprintSessions, qualifyingSessions, meetings]] = await Promise.all([
+      let [cachedSeason, [gpSessions, sprintSessions, qualifyingSessions, meetings]] = await Promise.all([
         dbSeasonPromise,
         sessionsPromise
       ]);
+
+      const hydrateCachedSeason = (seasonObj) => {
+        const driversMap = new Map();
+        if (seasonObj.drivers) {
+          if (seasonObj.drivers instanceof Map) {
+            seasonObj.drivers.forEach((v, k) => driversMap.set(k, v));
+          } else if (Array.isArray(seasonObj.drivers)) {
+            for (const [k, v] of seasonObj.drivers) {
+              driversMap.set(k, v);
+            }
+          } else {
+            for (const [k, v] of Object.entries(seasonObj.drivers)) {
+              driversMap.set(k, v);
+            }
+          }
+        }
+        for (const d of driversMap.values()) {
+          registerDriverNationalityFromRecord(d);
+        }
+        seasonObj.drivers = driversMap;
+
+        for (const race of (seasonObj.races || [])) {
+          if (race && !race.is_incomplete) {
+            raceCache.set(race.session_key, race);
+          }
+        }
+        for (const quali of (seasonObj.qualifying || [])) {
+          if (quali && !quali.is_incomplete) {
+            raceCache.set(quali.session_key, quali);
+          }
+        }
+        return seasonObj;
+      };
+
+      // Pre-seed raceCache from cachedSeason so previously compiled rounds are never lost
+      // even if session counts change or OpenF1 locks during an active race weekend!
+      if (cachedSeason) {
+        hydrateCachedSeason(cachedSeason);
+        if ((!gpSessions || gpSessions.length === 0) && Array.isArray(cachedSeason.totalRaceSessions)) {
+          gpSessions = cachedSeason.totalRaceSessions.filter(s => s.session_name === 'Race' && !s.is_fallback);
+        }
+        if ((!sprintSessions || sprintSessions.length === 0) && Array.isArray(cachedSeason.totalRaceSessions)) {
+          sprintSessions = cachedSeason.totalRaceSessions.filter(s => s.session_name === 'Sprint');
+        }
+        if ((!qualifyingSessions || qualifyingSessions.length === 0) && Array.isArray(cachedSeason.qualifying)) {
+          qualifyingSessions = cachedSeason.qualifying.map(q => ({
+            session_key: q.session_key,
+            session_name: q.session_name || 'Qualifying',
+            session_type: 'Qualifying',
+            meeting_key: q.meeting_key,
+            circuit_short_name: q.circuit_short_name,
+            date_start: q.date_start || q.date_end,
+            date_end: q.date_end
+          }));
+        }
+      }
 
       // Synthesize upcoming GP session entries for future meetings whose session schedule isn't published yet
       const gpMeetings = (meetings || []).filter(m =>
@@ -234,8 +291,18 @@ export function getSeasonData(year) {
       const activeQuali = qualifyingSessions.filter(s => !s.is_cancelled);
       const completedQuali = activeQuali.filter(s => isPast(s.date_end));
 
-      // Validate single-key cache
+      // Validate single-key cache (or serve immediately if API is locked / offline)
       if (cachedSeason) {
+        // If OpenF1 is currently locked or session list failed, serve cachedSeason immediately!
+        if ((isApiLocked() || allRaceSessions.length === 0) && Array.isArray(cachedSeason.races) && cachedSeason.races.length > 0) {
+          cachedSeason.is_preliminary = false;
+          cachedSeason.is_fetching_background = false;
+          cachedSeason.has_live_lockout = isApiLocked();
+          seasonCache.set(year, cachedSeason);
+          console.log(`[Season] 🔒 ${year} served instantly from cachedSeason during API lockout/offline (${cachedSeason.races.length} races)`);
+          return cachedSeason;
+        }
+
         const completedRaceCount = completedSessions.length;
         const completedQualiCount = completedQuali.length;
         const totalSessionCountMatches = (cachedSeason.totalRaceSessions || []).length === allRaceSessions.length;
@@ -243,48 +310,8 @@ export function getSeasonData(year) {
         if (cachedSeason.version === LS_RACE_VERSION && totalSessionCountMatches && cachedSeason.races.length === completedRaceCount && cachedSeason.qualifying.length === completedQualiCount) {
           const hasIncomplete = cachedSeason.races.some(r => r.is_incomplete || hasUnresolvedSessionTeam(r))
             || cachedSeason.qualifying.some(q => q.is_incomplete || hasUnresolvedSessionTeam(q));
-          
-          let hasRecentSession = false;
-          const oneDay = 24 * 60 * 60 * 1000;
-          for (const s of [...cachedSeason.races, ...cachedSeason.qualifying]) {
-            if (s.date_end) {
-              const timeSinceEnd = Date.now() - new Date(s.date_end).getTime();
-              if (timeSinceEnd > 0 && timeSinceEnd < oneDay) {
-                hasRecentSession = true;
-                break;
-              }
-            }
-          }
 
-          if (!hasIncomplete && !hasRecentSession) {
-            // Re-construct drivers Map
-            const driversMap = new Map();
-            if (cachedSeason.drivers) {
-              if (cachedSeason.drivers instanceof Map) {
-                cachedSeason.drivers.forEach((v, k) => driversMap.set(k, v));
-              } else if (Array.isArray(cachedSeason.drivers)) {
-                for (const [k, v] of cachedSeason.drivers) {
-                  driversMap.set(k, v);
-                }
-              } else {
-                for (const [k, v] of Object.entries(cachedSeason.drivers)) {
-                  driversMap.set(k, v);
-                }
-              }
-            }
-            for (const d of driversMap.values()) {
-              registerDriverNationalityFromRecord(d);
-            }
-            cachedSeason.drivers = driversMap;
-
-            // Warm up in-memory race cache
-            for (const race of cachedSeason.races) {
-              raceCache.set(race.session_key, race);
-            }
-            for (const quali of cachedSeason.qualifying) {
-              raceCache.set(quali.session_key, quali);
-            }
-
+          if (!hasIncomplete) {
             seasonCache.set(year, cachedSeason);
             console.log(`[Season] ✅ ${year} served from compiled season IDB cache (1 read, ${(performance.now() - t0).toFixed(0)}ms)`);
             return cachedSeason;
@@ -312,12 +339,13 @@ export function getSeasonData(year) {
         ? await dbGetMultiple('compiled_races', allKeys) 
         : new Map();
 
-      // Populate raceCache from the database results
+      const staleRaceFallback = new Map();
+
+      // Populate raceCache from the database results (never destructively delete valid data before re-fetch!)
       for (const session of missingRaceSessions) {
         const key = lsRaceKey(session.session_key, false);
         const compiled = dbResults.get(key);
         if (compiled) {
-          // Invalidation check for retro seasons to ensure they have the new 'points' field
           let isValid = true;
           if (!compiled.is_incomplete && parseInt(year) <= 2022) {
             const hasPoints = compiled.results && compiled.results.length > 0 && compiled.results[0].points !== undefined;
@@ -326,10 +354,14 @@ export function getSeasonData(year) {
               isValid = false;
             }
           }
-          if ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
-              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000)) {
-            await dbDelete('compiled_races', key);
+          if (!isApiLocked() && ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
+              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000))) {
+            if (compiled.results && compiled.results.length > 0) {
+              staleRaceFallback.set(session.session_key, compiled);
+            }
             isValid = false;
+          } else if (isApiLocked() && compiled.results && compiled.results.length > 0) {
+            isValid = true;
           }
           if (isValid) {
             raceCache.set(session.session_key, compiled);
@@ -342,10 +374,14 @@ export function getSeasonData(year) {
         const compiled = dbResults.get(key);
         if (compiled) {
           let isValid = true;
-          if ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
-              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000)) {
-            await dbDelete('compiled_races', key);
+          if (!isApiLocked() && ((compiled.is_incomplete && Date.now() - (compiled.compiledAt || 0) > 30 * 60 * 1000) ||
+              (hasUnresolvedSessionTeam(compiled) && Date.now() - (compiled.compiledAt || 0) > 15 * 60 * 1000))) {
+            if (compiled.results && compiled.results.length > 0) {
+              staleRaceFallback.set(session.session_key, compiled);
+            }
             isValid = false;
+          } else if (isApiLocked() && compiled.results && compiled.results.length > 0) {
+            isValid = true;
           }
           if (isValid) {
             raceCache.set(session.session_key, compiled);
@@ -378,11 +414,33 @@ export function getSeasonData(year) {
         }
       }
 
-      const hasMissing = missingSessions.length > 0 || missingQuali.length > 0;
+      // If the API is currently locked, rescue any stale fallback entries immediately and skip network background load
+      if (isApiLocked()) {
+        for (let i = missingSessions.length - 1; i >= 0; i--) {
+          const s = missingSessions[i];
+          const fallback = staleRaceFallback.get(s.session_key);
+          if (fallback) {
+            raceCache.set(s.session_key, fallback);
+            races.push(fallback);
+            missingSessions.splice(i, 1);
+          }
+        }
+        for (let i = missingQuali.length - 1; i >= 0; i--) {
+          const s = missingQuali[i];
+          const fallback = staleRaceFallback.get(s.session_key);
+          if (fallback) {
+            raceCache.set(s.session_key, fallback);
+            qualifying.push(fallback);
+            missingQuali.splice(i, 1);
+          }
+        }
+      }
+
+      const hasMissing = !isApiLocked() && (missingSessions.length > 0 || missingQuali.length > 0);
 
       if (hasMissing) {
         // Start background fetching of missing sessions asynchronously
-        startBackgroundLoad(year, missingSessions, missingQuali, allRaceSessions, completedSessions, completedQuali);
+        startBackgroundLoad(year, missingSessions, missingQuali, allRaceSessions, completedSessions, completedQuali, staleRaceFallback);
       }
 
       races.sort((a, b) => new Date(a.date_end) - new Date(b.date_end));
@@ -417,8 +475,12 @@ export function getSeasonData(year) {
       seasonCache.set(year, finalSeason);
       console.log(`[Season] ✅ ${year} returned (preliminary=${hasMissing}) in ${(performance.now() - t0).toFixed(0)}ms — ${cacheHits} cache hits, ${missingSessions.length + missingQuali.length} background fetches queued`);
 
-      // Cache the complete compiled season under a single key in IndexedDB for fast lookup next time
-      if (!hasMissing) {
+      // Cache the compiled season under a single key in IndexedDB for fast lookup & lockout resilience
+      const prevCompleteRaces = cachedSeason && Array.isArray(cachedSeason.races)
+        ? cachedSeason.races.filter(r => !r.is_incomplete).length
+        : 0;
+      const curCompleteRaces = finalSeason.races.filter(r => !r.is_incomplete).length;
+      if (!hasMissing || (curCompleteRaces > 0 && curCompleteRaces >= prevCompleteRaces)) {
         try {
           const serialized = {
             ...finalSeason,
@@ -426,7 +488,7 @@ export function getSeasonData(year) {
             drivers: Array.from(finalSeason.drivers.entries())
           };
           await dbSet('compiled_races', `season_compiled_${year}`, serialized);
-          console.log(`[Season] Saved compiled season ${year} to IndexedDB`);
+          console.log(`[Season] Saved compiled season ${year} to IndexedDB (${curCompleteRaces} complete races)`);
         } catch (e) {
           console.warn(`[Season] Failed to save compiled season ${year} to IndexedDB:`, e);
         }
@@ -1955,7 +2017,7 @@ export async function clearMeetingCompilerCache(year, sessions) {
 
 // ── Background loader & compiler helpers ──
 
-async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSessions, completedSessions, completedQuali) {
+async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSessions, completedSessions, completedQuali, staleRaceFallback = new Map()) {
   if (runningBackgroundLoads.has(year)) {
     return;
   }
@@ -1965,12 +2027,22 @@ async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSes
   try {
     for (const session of missingRaces) {
       const sessionKey = session.session_key;
+      if (isApiLocked()) {
+        const fallback = staleRaceFallback.get(sessionKey);
+        if (fallback) {
+          raceCache.set(sessionKey, fallback);
+        }
+        continue;
+      }
       console.log(`[Season] 🌐 Background fetching race ${sessionKey} (${session.circuit_short_name})`);
       const compiledRace = await fetchRaceData(session);
       if (compiledRace) {
         raceCache.set(sessionKey, compiledRace);
         await saveRaceToStorage(sessionKey, compiledRace, false);
-      } else {
+      } else if (staleRaceFallback.has(sessionKey)) {
+        const fallback = staleRaceFallback.get(sessionKey);
+        raceCache.set(sessionKey, fallback);
+      } else if (!isApiLocked()) {
         const placeholder = {
           session_key: sessionKey,
           session_name: session.session_name,
@@ -1986,6 +2058,8 @@ async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSes
         await saveRaceToStorage(sessionKey, placeholder, false);
       }
 
+      if (isApiLocked()) break;
+
       // Trigger update
       await triggerSeasonUpdate(year, allRaceSessions, completedSessions, completedQuali);
 
@@ -1995,12 +2069,22 @@ async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSes
 
     for (const session of missingQualis) {
       const sessionKey = session.session_key;
+      if (isApiLocked()) {
+        const fallback = staleRaceFallback.get(sessionKey);
+        if (fallback) {
+          raceCache.set(sessionKey, fallback);
+        }
+        continue;
+      }
       console.log(`[Season] 🌐 Background fetching qualifying ${sessionKey} (${session.circuit_short_name})`);
       const compiledQuali = await fetchQualiData(session);
       if (compiledQuali) {
         raceCache.set(sessionKey, compiledQuali);
         await saveRaceToStorage(sessionKey, compiledQuali, true);
-      } else {
+      } else if (staleRaceFallback.has(sessionKey)) {
+        const fallback = staleRaceFallback.get(sessionKey);
+        raceCache.set(sessionKey, fallback);
+      } else if (!isApiLocked()) {
         const placeholder = {
           session_key: sessionKey,
           session_name: session.session_name,
@@ -2014,6 +2098,8 @@ async function startBackgroundLoad(year, missingRaces, missingQualis, allRaceSes
         raceCache.set(sessionKey, placeholder);
         await saveRaceToStorage(sessionKey, placeholder, true);
       }
+
+      if (isApiLocked()) break;
 
       // Trigger update
       await triggerSeasonUpdate(year, allRaceSessions, completedSessions, completedQuali);
@@ -2107,16 +2193,23 @@ async function triggerSeasonUpdate(year, allRaceSessions, completedSessions, com
 
   seasonCache.set(year, finalSeason);
 
-  // Cache compiled season to IndexedDB if it is fully complete and not preliminary
-  if (!finalSeason.is_preliminary) {
+  // Cache compiled season to IndexedDB if it is complete or has valid compiled races
+  const validRaceCount = finalSeason.races.filter(r => r && !r.is_incomplete && r.results && r.results.length > 0).length;
+  if (!finalSeason.is_preliminary || validRaceCount > 0) {
     try {
-      const serialized = {
-        ...finalSeason,
-        version: LS_RACE_VERSION,
-        drivers: Array.from(finalSeason.drivers.entries())
-      };
-      await dbSet('compiled_races', `season_compiled_${year}`, serialized);
-      console.log(`[Season] Saved compiled season ${year} to IndexedDB after background update`);
+      const existing = await dbGet('compiled_races', `season_compiled_${year}`);
+      const prevValidCount = existing && Array.isArray(existing.races)
+        ? existing.races.filter(r => r && !r.is_incomplete && r.results && r.results.length > 0).length
+        : 0;
+      if (!finalSeason.is_preliminary || validRaceCount >= prevValidCount) {
+        const serialized = {
+          ...finalSeason,
+          version: LS_RACE_VERSION,
+          drivers: Array.from(finalSeason.drivers.entries())
+        };
+        await dbSet('compiled_races', `season_compiled_${year}`, serialized);
+        console.log(`[Season] Saved compiled season ${year} to IndexedDB after background update (${validRaceCount} valid races)`);
+      }
     } catch (e) {
       console.warn(`[Season] Failed to save compiled season ${year} to IndexedDB:`, e);
     }
